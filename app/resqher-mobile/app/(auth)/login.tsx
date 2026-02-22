@@ -32,7 +32,7 @@ type FormData = {
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn } = useAuth(); // This will still be used to set the local token
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -40,18 +40,18 @@ export default function Login() {
 
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
-    try {
-      // 1. Authenticate with Django Backend
-      await signIn(data.phone.trim(), data.password);
+    
+    // --- MOCK AUTHENTICATION LOGIC ---
+    // Since backend is not ready, we simulate a successful login
+    setTimeout(() => {
+      setSubmitting(false);
       
-      // 2. Redirect to the Map/SOS Screen
+      // We manually tell the app to navigate to the Map screen
       router.replace('/(tabs)/sos_screen'); 
       
-    } catch (e: any) {
-      Alert.alert('Login failed', e?.message ?? 'Please check your connection and credentials.');
-    } finally {
-      setSubmitting(false);
-    }
+      console.log("Mock Login Successful: Redirecting to Map");
+    }, 1000); 
+    // ---------------------------------
   };
 
   return (
