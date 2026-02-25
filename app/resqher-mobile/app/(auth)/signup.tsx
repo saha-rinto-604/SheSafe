@@ -131,17 +131,18 @@ export default function Signup() {
     }
 
     setSubmitting(true);
-    try {
-      const phone = data.phone.trim();
-      const firstName = data.firstName.trim();
-      const lastName = data.lastName.trim();
-      await signUp(phone, data.password, firstName, lastName, role);
-      router.replace('/(tabs)');
-    } catch (e: any) {
-      Alert.alert('Signup failed', e?.message ?? 'Please try again.');
-    } finally {
+
+    // --- MOCK SIGNUP LOGIC ---
+    // Simulating backend delay while it is under development
+    setTimeout(() => {
       setSubmitting(false);
-    }
+      
+      // Redirecting directly to the SOS Map screen
+      router.replace('/(tabs)/sos_screen'); 
+      
+      console.log("Mock Signup Successful: User Registered as", role);
+    }, 1500); 
+    // -------------------------
   };
 
   return (
@@ -149,7 +150,6 @@ export default function Signup() {
       <View style={styles.cardContainer}>
         <View style={styles.cardInner}>
           <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1, padding: 24, paddingBottom: 32 }}>
-            {/* Step Indicator & Header */}
             <View style={styles.headerContainer}>
               <View style={styles.stepPill}>
                 <Text style={styles.stepPillText}>Step {step} of 2</Text>
@@ -164,7 +164,6 @@ export default function Signup() {
               </Text>
             </View>
 
-            {/* STEP 1: Inline Role Selection */}
             {step === 1 && (
               <View style={styles.stepContent}>
                 <View style={styles.roleList}>
@@ -222,10 +221,8 @@ export default function Signup() {
               </View>
             )}
 
-            {/* STEP 2: Form */}
             {step === 2 && (
               <View style={styles.stepContent}>
-                {/* Selected Role Badge */}
                 <View style={styles.selectedRoleBadge}>
                   <View style={styles.selectedRoleLeft}>
                     <Feather name={selectedRoleMeta?.icon ?? 'user'} size={16} color={Theme.colors.primary} />
@@ -236,7 +233,6 @@ export default function Signup() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Name Row */}
                 <View style={styles.row}>
                   <View style={styles.col}>
                     <Text style={styles.label}>First Name</Text>
@@ -418,11 +414,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 10,
   },
-  stepContent: {
-    // flex: 1 removed to allow natural resizing for LayoutAnimation
-  },
-
-  // ROLE CARDS
+  stepContent: {},
   roleList: {
     gap: 12,
     marginBottom: 20,
@@ -488,8 +480,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: Theme.colors.primary,
   },
-
-  // INFO BOX
   infoBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -506,8 +496,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 18,
   },
-
-  // FORM ELEMENTS
   row: {
     flexDirection: 'row',
     gap: 16,
@@ -542,7 +530,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-
   label: {
     fontSize: 13,
     fontWeight: '700',
@@ -582,8 +569,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginLeft: 4,
   },
-
-  // BUTTONS
   primaryBtn: {
     backgroundColor: Theme.colors.primary,
     height: 56,
