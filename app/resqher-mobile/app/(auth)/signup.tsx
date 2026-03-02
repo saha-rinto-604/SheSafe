@@ -100,7 +100,7 @@ function StepProgress({ step }: { step: 1 | 2 }) {
           (active || done) && st.stepCircleActive,
         ]}>
           {done
-            ? <Feather name="check" size={13} color="#fff" />
+            ? <Feather name="check" size={13} color={T.onPrimary} />
             : <Text style={[st.stepNum, (active || done) && st.stepNumActive]}>{n}</Text>
           }
         </View>
@@ -350,7 +350,7 @@ const st = StyleSheet.create({
     padding: S.s5,
     paddingBottom: S.s3,
     ...Platform.select({
-      ios: { shadowColor: '#0B0A14', shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+      ios: { shadowColor: T.ink, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
       android: { elevation: 5 },
     }),
   },
@@ -371,7 +371,7 @@ const st = StyleSheet.create({
     backgroundColor: T.violet, borderColor: T.violet,
   },
   stepNum: { fontSize: 13, fontWeight: '700', color: T.ink4 },
-  stepNumActive: { color: '#fff' },
+  stepNumActive: { color: T.onPrimary },
   stepLabel: { fontSize: 10, fontWeight: '600', color: T.ink4, letterSpacing: 0.3 },
   stepLabelActive: { color: T.violet },
   // Connecting animated line
@@ -407,7 +407,7 @@ const st = StyleSheet.create({
   },
   roleCardActive: {
     borderColor: T.violet, borderWidth: 2,
-    backgroundColor: '#EAF9FB',
+    backgroundColor: T.violetDim, // Using T.violetDim instead of hardcoded cyan tint
     ...Platform.select({ ios: { shadowOpacity: 0.12 }, android: { elevation: 3 } }),
   },
   roleIconBox: {

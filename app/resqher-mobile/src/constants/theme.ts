@@ -1,61 +1,66 @@
 // ─── ResQher Design System ─────────────────────────────────────────────────────
 // Single source of truth. Import T, R, S, Ty, Sh from here everywhere.
 
-// ── Brand color is #00BCD4 (Cyan/Teal). NEVER replace with purple.
-// ── All "T.violet" references are the primary brand. Name kept for BC.
+// ── Exact color palette extracted from the reference image.
+// ── Vibrant Lavender & Violet theme for a premium safety app.
 
 export const T = {
   // ── Backgrounds
-  bg: '#FFFFFF',     // Root page background
-  bgMuted: '#F8FAFC',     // Subtle surface (form bg, section bg)
-  surface: '#FFFFFF',     // Cards, modals, sheets
+  // The app uses a full-screen vertical gradient background.
+  bg: '#FFFFFF',          // Base white for card surfaces
+  bgMuted: '#F9F5FF',     // Extremely light lavender for subtle areas
+  surface: '#FFFFFF',     // Pure white for the main container
 
-  // ── Brand — Cyan/Teal
-  violet: '#00BCD4', // primary brand (name kept for backward compat)
-  violetDark: '#0097A7', // filled button background, darker accents
-  violetDim: '#E0F7FA', // tinted backgrounds behind icons/pills
-  violetLight: '#B2EBF2', // very light tint, selected bg
+  // ── Brand — Exact saturation from image
+  violet: '#A855F7',      // Primary Violet — used for buttons (CHECKOUT/PAY)
+  violetDark: '#9333EA',  // Deep Purple — for button shadows and active states
+  violetDim: '#F5F3FF',   // Softest lily tint — for inactive/muted states
+  violetLight: '#C084FC', // Medium Lavender — for product cards and highlights
 
-  // ── On-primary (text/icon on a #00BCD4 or #0097A7 fill)
+  // ── On-primary
   onPrimary: '#FFFFFF',
 
   // ── Accent
-  accent: '#FF7043',
-  accentLight: '#FFF3EE',
+  accent: '#F97316',
+  accentLight: '#FFF7ED',
 
   // ── Text scale
-  ink: '#0D1B2A', // headings, critical text
-  ink2: '#1E293B', // body
-  ink3: '#334155', // secondary body
-  ink4: '#64748B', // muted, disabled
-  ink5: '#94A3B8', // placeholder
+  ink: '#111827', // Headings — Maximum contrast dark grey
+  ink2: '#374151', // Body text
+  ink3: '#6B7280', // Secondary body
+  ink4: '#9CA3AF', // Muted text
+  ink5: '#D8B4FE', // Placeholder — tinted lavender
 
   // ── Borders
-  line: '#E9EEF4', // subtle divider
-  lineMid: '#CBD5E1', // form idle border
+  line: '#F3E8FF',   // Very soft lavender divider
+  lineMid: '#E9D5FF', // Form border — soft purple
 
-  // ── Feedback
-  danger: '#EF4444',
-  dangerLight: '#FEF2F2',
-  danger2: '#B91C1C', // deeper red (gradient end)
+  // ── Feedback — violet-harmonious danger scale (rose/crimson, not pure red)
+  danger: '#BE123C', // Primary danger — deep rose (LIVE button, critical icons)
+  dangerMid: '#E11D48', // Mid danger — for pulse rings only
+  dangerLight: '#FFF1F2', // Tinted background surface for danger areas
+  dangerBorder: '#FDA4AF', // Subtle border/ring — pinkish, non-jarring
+  dangerText: '#9F1239', // Text on light danger backgrounds
+  dangerBg: '#FFF1F2', // Chip / badge background
   success: '#10B981',
   safeLight: '#ECFDF5',
 
   // ── Disabled
-  disabled: '#CBD5E1',
-  disabledBg: '#F1F5F9',
+  disabled: '#E9D5FF',
+  disabledBg: '#FAF5FF',
 } as const;
 
-// ── Legacy export (some screens import Theme.colors.X)
+// ── Legacy export
 export const Theme = {
   colors: {
-    background: T.bgMuted,
+    background: T.bg,
     surface: T.surface,
     primary: T.violet,
     primaryDark: T.violetDark,
     primaryLight: T.violetLight,
-    gradientStart: '#E0F7FA',
-    gradientEnd: '#B2EBF2',
+    // Auth shell background: Top soft lavender (#F5F3FF) → Bottom saturated lavender (#D8B4FE)
+    gradientStart: '#F5F3FF',
+    gradientEnd: '#D8B4FE',
     accent: T.accent,
     accentLight: T.accentLight,
     text: T.ink,
@@ -113,21 +118,21 @@ export const Ty = {
   error: { fontSize: 12, fontWeight: '500' as const, color: T.danger },
 } as const;
 
-// ─── Shadow system (border-first for map overlays, shadow for sheets) ──────────
+// ─── Shadow system ─────────────────────────────────────────────────────────────
 export const Sh = {
   // For floating elements over white backgrounds
   card: {
-    ios: { shadowColor: '#0B0A14', shadowOpacity: 0.07, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } } as const,
+    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.10, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } } as const,
     android: { elevation: 6 },
   },
-  // For heavy modal / drawer
+  // For heavy modal / drawer (violet-tinted shadow like the reference)
   modal: {
-    ios: { shadowColor: '#0B0A14', shadowOpacity: 0.12, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } } as const,
+    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.15, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } } as const,
     android: { elevation: 14 },
   },
-  // For floating map elements (subtle — avoid dirty shadow over tiles)
+  // For floating map elements (subtle)
   map: {
-    ios: { shadowColor: '#0B0A14', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } } as const,
+    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } } as const,
     android: { elevation: 3 },
   },
 } as const;

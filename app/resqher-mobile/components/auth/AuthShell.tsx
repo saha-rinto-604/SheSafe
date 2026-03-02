@@ -2,7 +2,7 @@ import React from 'react';
 import { SafeAreaView, View, StyleSheet, Dimensions, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { Theme } from '../../src/constants/theme';
+import { T, Theme } from '../../src/constants/theme';
 
 const { width } = Dimensions.get('window');
 
@@ -19,7 +19,7 @@ export default function AuthShell({ children, onBack }: Props) {
         <LinearGradient
           colors={[Theme.colors.gradientStart, Theme.colors.gradientEnd]}
           start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
+          end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFill}
         >
           {/* Decorative shapes for a premium look */}
@@ -71,30 +71,30 @@ const styles = StyleSheet.create({
   },
   circle1: {
     position: 'absolute',
-    width: width * 0.8,
-    height: width * 0.8,
-    borderRadius: width * 0.4,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
-    top: -width * 0.2,
-    right: -width * 0.2,
+    width: width * 1.2,
+    height: width * 1.2,
+    borderRadius: width * 0.6,
+    backgroundColor: `${T.violetLight}66`, // Soft translucent lavender
+    top: -width * 0.4,
+    right: -width * 0.3,
   },
   circle2: {
     position: 'absolute',
-    width: width * 0.5,
-    height: width * 0.5,
-    borderRadius: width * 0.25,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-    bottom: -width * 0.1,
+    width: width * 0.6,
+    height: width * 0.6,
+    borderRadius: width * 0.3,
+    backgroundColor: `${T.violetDim}99`,
+    bottom: -width * 0.15,
     left: -width * 0.1,
   },
   circle3: {
     position: 'absolute',
-    width: width * 0.3,
-    height: width * 0.3,
-    borderRadius: width * 0.15,
-    backgroundColor: 'rgba(0, 188, 212, 0.15)',
-    top: width * 0.1,
-    left: width * 0.15,
+    width: width * 0.4,
+    height: width * 0.4,
+    borderRadius: width * 0.2,
+    backgroundColor: `${T.violet}1A`, // Very subtle primary tint
+    top: width * 0.05,
+    left: width * 0.1,
   },
   logoContainer: {
     alignItems: 'center',
@@ -106,10 +106,10 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#fff',
+    backgroundColor: T.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Theme.colors.primaryDark,
+    shadowColor: T.violetDark,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
     shadowRadius: 20,
@@ -127,11 +127,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#fff',
+    backgroundColor: T.surface,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 100,
-    shadowColor: '#000',
+    shadowColor: T.ink,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 8,

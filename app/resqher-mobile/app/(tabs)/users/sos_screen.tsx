@@ -79,21 +79,22 @@ const PulseRadar = memo(function PulseRadar() {
 });
 const rdr = StyleSheet.create({
     wrap: { position: 'absolute', alignSelf: 'center', top: height * 0.3, alignItems: 'center', zIndex: 5 },
-    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: 'rgba(0,188,212,0.5)' },
-    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' },
+    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: `${T.violet}80` }, // T.violet with 50% opacity
+    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
-// ─── Emergency border overlay ─────────────────────────────────────────────────
+// ─── Emergency border overlay ───────────────────────────────────────────────────
 const EmergencyOverlay = memo(function EmergencyOverlay() {
-    const op = useRef(new Animated.Value(0.8)).current;
+    const op = useRef(new Animated.Value(0.35)).current;
     useEffect(() => {
         Animated.loop(Animated.sequence([
-            Animated.timing(op, { toValue: 0.22, duration: 650, useNativeDriver: true }),
-            Animated.timing(op, { toValue: 0.8, duration: 650, useNativeDriver: true }),
+            Animated.timing(op, { toValue: 0.10, duration: 900, useNativeDriver: true }),
+            Animated.timing(op, { toValue: 0.35, duration: 900, useNativeDriver: true }),
         ])).start();
     }, []);
-    return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { borderWidth: 4, borderColor: T.danger, zIndex: 999, opacity: op }]} />;
+    // Subtle 2pt border ring using dangerBorder (soft rose) — not jarring full-screen red
+    return <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { borderWidth: 2, borderColor: T.dangerBorder, zIndex: 999, opacity: op }]} />;
 });
 
 // ─── Hold SOS Button (two-semicircle arc) ────────────────────────────────────
@@ -151,21 +152,28 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
                 </View>
             </Animated.View>
             <TouchableOpacity onPressIn={startHold} onPressOut={cancelHold} activeOpacity={1}>
-                <View style={s.sosBtn}>
+                <LinearGradient
+                    colors={G.navActive.colors}
+                    start={G.navActive.start}
+                    end={G.navActive.end}
+                    style={s.sosBtn}
+                >
                     <Text style={s.sosTxt}>SOS</Text>
-                    <Text style={s.sosSubTxt}>{holding ? 'Hold…' : 'Hold 2s'}</Text>
-                </View>
+                    <Text style={s.sosSubTxt}>{holding ? 'Release' : 'Hold 2s'}</Text>
+                </LinearGradient>
             </TouchableOpacity>
         </Animated.View>
     );
 });
 
 const hs = StyleSheet.create({
-    arcTrack: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 4, borderColor: 'rgba(239,68,68,0.20)' },
+    // Arc track ring: use violet to match the inactive SOS button
+    arcTrack: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 4, borderColor: `${T.violet}33` },
     halfClip: { position: 'absolute', width: ARC_SIZE / 2, height: ARC_SIZE, overflow: 'hidden' },
     rightClip: { left: ARC_SIZE / 2 },
     leftClip: { left: 0 },
-    halfFill: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 4, borderColor: T.danger, backgroundColor: 'transparent' },
+    // Arc fill: use primary violet for the progress arc
+    halfFill: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 4, borderColor: T.violet, backgroundColor: 'transparent' },
     rightFill: { left: -ARC_SIZE / 2 },
     leftFill: { left: 0 },
 });
@@ -190,8 +198,8 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
         <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
             <TouchableOpacity style={s.drawerOverlay} activeOpacity={1} onPress={onClose} />
             <Animated.View style={[s.drawer, { transform: [{ translateX: slideX }] }]}>
-                <LinearGradient colors={['#00BCD4', '#0097A7']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.drawerHd}>
-                    <View style={s.drawerAvatarRing}><Feather name="shield" size={26} color="#fff" /></View>
+                <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={s.drawerHd}>
+                    <View style={s.drawerAvatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
                     <Text style={s.drawerAppName}>ResQher</Text>
                     <Text style={s.drawerSub}>Emergency Assistance Platform</Text>
                 </LinearGradient>
@@ -210,8 +218,8 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
 });
 
 // ─── Nav Tab ──────────────────────────────────────────────────────────────────
-const ACTIVE_COLOR = '#0097A7';
-const INACTIVE_COLOR = '#8899AA';
+const ACTIVE_COLOR = T.violet;
+const INACTIVE_COLOR = T.ink4;
 
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
@@ -219,13 +227,51 @@ const NavTab = memo(function NavTab({
     return (
         <TouchableOpacity style={s.navTab} onPress={onPress} activeOpacity={0.7}
             accessibilityRole="tab" accessibilityState={{ selected: isActive }} accessibilityLabel={tab.label}>
-            <Ionicons name={tab.icon} size={24} color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR} />
+            <Ionicons name={tab.icon} size={20} color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR} />
             <Text style={[s.navLabel, { color: isActive ? ACTIVE_COLOR : INACTIVE_COLOR, fontWeight: isActive ? '700' : '500' }]}>
                 {tab.label}
             </Text>
             <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
         </TouchableOpacity>
     );
+});
+
+// ─── Live Beacon Marker (shown on map when SOS is LIVE) ───────────────────────
+const LiveBeacon = memo(function LiveBeacon() {
+    const ring1 = useRef(new Animated.Value(0)).current;
+    const ring2 = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        const pulse = (a: Animated.Value, delay: number) => {
+            const loop = () => {
+                a.setValue(0);
+                Animated.timing(a, { toValue: 1, duration: 1600, easing: Easing.out(Easing.ease), useNativeDriver: true, delay }).start(() => loop());
+            };
+            loop();
+        };
+        pulse(ring1, 0);
+        pulse(ring2, 700);
+    }, []);
+    const ringStyle = (a: Animated.Value) => ({
+        transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [1, 2.8] }) }],
+        opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.55, 0.2, 0] }),
+    });
+    return (
+        <View style={lb.wrap}>
+            <Animated.View style={[lb.ring, ringStyle(ring1)]} />
+            <Animated.View style={[lb.ring, ringStyle(ring2)]} />
+            <View style={lb.core}>
+                <View style={lb.dot} />
+            </View>
+            <Text style={lb.label}>LIVE</Text>
+        </View>
+    );
+});
+const lb = StyleSheet.create({
+    wrap: { alignItems: 'center' },
+    ring: { position: 'absolute', width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: T.danger, top: -3 },
+    core: { width: 22, height: 22, borderRadius: 11, backgroundColor: T.danger, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#FFFFFF' },
+    dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FFFFFF' },
+    label: { marginTop: 3, fontSize: 8, fontWeight: '800', color: T.danger, letterSpacing: 1.1 },
 });
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -322,35 +368,40 @@ export default function SOSScreen() {
                 provider={PROVIDER_GOOGLE} initialRegion={DEFAULT_REGION}
                 showsUserLocation showsMyLocationButton={false} showsCompass={false}
                 moveOnMarkerPress={false} customMapStyle={mapStyle}>
-                {userLoc && (
+                {userLoc && !isEmergencyLive && (
                     <Marker coordinate={userLoc} tracksViewChanges={false}>
                         <View style={s.markerOut}><View style={s.markerIn} /></View>
+                    </Marker>
+                )}
+                {userLoc && isEmergencyLive && (
+                    <Marker coordinate={userLoc} tracksViewChanges={false} anchor={{ x: 0.5, y: 1 }}>
+                        <LiveBeacon />
                     </Marker>
                 )}
             </MapView>
 
             {locationStatus === 'idle' && <PulseRadar />}
 
-            {/* Header */}
-            <View style={[s.header, { top: insets.top + 8 }, isEmergencyLive && s.headerEmergency]}>
+            {/* Header — stays neutral glass even in LIVE state */}
+            <View style={[s.header, { top: insets.top + 8 }]}>
                 <View style={s.locBox}>
-                    <Text style={[s.locLabel, isEmergencyLive && s.wText]}>CURRENT LOCATION</Text>
+                    <Text style={s.locLabel}>CURRENT LOCATION</Text>
                     {locationStatus === 'idle'
                         ? <View style={s.shimmer} />
-                        : <Text style={[s.locAddr, isEmergencyLive && s.wText]} numberOfLines={1}>{address}</Text>
+                        : <Text style={s.locAddr} numberOfLines={1}>{address}</Text>
                     }
                 </View>
                 <View style={s.headerBtns}>
-                    <TouchableOpacity style={[s.hBtn, isEmergencyLive && s.hBtnEmg]}
+                    <TouchableOpacity style={s.hBtn}
                         onPress={() => Alert.alert('Notifications', 'No new notifications.')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Feather name="bell" size={19} color={isEmergencyLive ? '#fff' : T.ink} />
+                        <Feather name="bell" size={19} color={T.ink} />
                         <View style={s.notifDot} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[s.hBtn, isEmergencyLive && s.hBtnEmg]}
+                    <TouchableOpacity style={s.hBtn}
                         onPress={() => setDrawerOpen(true)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Feather name="menu" size={20} color={isEmergencyLive ? '#fff' : T.ink} />
+                        <Feather name="menu" size={20} color={T.ink} />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -359,8 +410,8 @@ export default function SOSScreen() {
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
                 <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
                     <View style={[s.gpsDot, { backgroundColor: locationStatus === 'sharing' ? T.danger : locationStatus === 'ready' ? T.success : T.ink4 }]} />
-                    <Text style={[s.gpsTxt, isEmergencyLive && s.wText]}>
-                        {locationStatus === 'sharing' ? 'LIVE' : locationStatus === 'ready' ? 'GPS' : '…'}
+                    <Text style={[s.gpsTxt, isEmergencyLive && s.gpsTxtEmg]}>
+                        {locationStatus === 'sharing' || locationStatus === 'ready' ? 'GPS' : '…'}
                     </Text>
                 </View>
                 <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc}>
@@ -371,7 +422,7 @@ export default function SOSScreen() {
             {/* SOS section */}
             <View pointerEvents="box-none" style={[s.sosSection, { bottom: insets.bottom + SOS_BOTTOM }]}>
                 <View style={s.sosWrap}>
-                    {(!sosActive || isEmergencyLive) && pulseAnims.map(({ scale, op }, i) => (
+                    {sosActive && pulseAnims.map(({ scale, op }, i) => (
                         <Animated.View key={i} pointerEvents="none" style={[s.pulseRing, {
                             transform: [{ scale }], opacity: op,
                             borderColor: isEmergencyLive ? G.sosRingLive : G.sosRingDefault,
@@ -387,8 +438,8 @@ export default function SOSScreen() {
                         </TouchableOpacity>
                     ) : isEmergencyLive ? (
                         <TouchableOpacity onPress={confirmStop} activeOpacity={0.88}>
-                            <LinearGradient colors={G.sosDanger.colors} start={G.sosDanger.start} end={G.sosDanger.end} style={s.sosBtn}>
-                                <Feather name="map-pin" size={20} color="#fff" />
+                            <LinearGradient colors={G.sosDanger.colors} start={G.sosDanger.start} end={G.sosDanger.end} style={[s.sosBtn, s.sosBtnEmg]}>
+                                <Feather name="map-pin" size={20} color={T.onPrimary} />
                                 <Text style={s.sosTxt}>LIVE</Text>
                                 <Text style={s.sosSubTxt}>Tap to stop</Text>
                             </LinearGradient>
@@ -421,43 +472,54 @@ export default function SOSScreen() {
 }
 
 const mapStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#f5f5f5' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#424242' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#f5f5f5' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e0e0e0' }] },
+    { elementType: 'geometry', stylers: [{ color: '#F9FAFB' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#6B7280' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#F9FAFB' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#F3F4F6' }] },
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#c9e8f0' }] },
-    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#f0f0f0' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#E0E7FF' }] },
+    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F3F4F6' }] },
+    { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
 ];
 
 const s = StyleSheet.create({
-    root: { flex: 1, backgroundColor: '#000' },
+    root: { flex: 1, backgroundColor: T.bg },
     header: {
         position: 'absolute', left: 12, right: 12,
         flexDirection: 'row', alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.96)',
+        backgroundColor: T.surface,
         borderRadius: R.md, paddingHorizontal: S.s4, paddingVertical: 10,
-        zIndex: 300, borderWidth: 0.5, borderColor: 'rgba(224,228,234,0.9)',
+        zIndex: 300, borderWidth: 1, borderColor: `${T.violet}20`,
         ...Platform.select({
-            ios: { shadowColor: '#0B0A14', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 3 } },
+            ios: { shadowColor: T.ink, shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
             android: { elevation: 6 },
         }),
     },
-    headerEmergency: { backgroundColor: 'rgba(239,68,68,0.95)', borderColor: 'rgba(239,68,68,0.6)' },
+    // LIVE chip — small inline badge inside header
+    liveChip: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        backgroundColor: T.dangerBg,
+        borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 4,
+        borderWidth: 1, borderColor: T.dangerBorder,
+    },
+    liveDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: T.danger },
+    liveChipTxt: { fontSize: 10, fontWeight: '800', color: T.dangerText, letterSpacing: 1.2 },
     locBox: { flex: 1, marginRight: S.s3 },
-    locLabel: { fontSize: 9, fontWeight: '700', color: T.ink4, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 2 },
-    locAddr: { fontSize: 13, fontWeight: '700', color: T.ink, letterSpacing: -0.2 },
-    wText: { color: 'rgba(255,255,255,0.93)' },
+    locLabel: { fontSize: 8.5, fontWeight: '800', color: T.ink4, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 1 },
+    locAddr: { fontSize: 13, fontWeight: '600', color: T.ink, letterSpacing: -0.1 },
+    // wText kept for any future dark-bg elements
+    wText: { color: T.onPrimary },
     shimmer: { height: 11, width: '68%', borderRadius: R.xs, backgroundColor: T.line, marginTop: 2 },
-    headerBtns: { flexDirection: 'row', gap: S.s2 },
+    headerBtns: { flexDirection: 'row', gap: S.s2, alignItems: 'center' },
     hBtn: {
         width: 36, height: 36, borderRadius: R.sm,
-        backgroundColor: T.bgMuted, borderWidth: 1, borderColor: T.line,
+        backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: T.line,
         alignItems: 'center', justifyContent: 'center',
     },
-    hBtnEmg: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'rgba(255,255,255,0.3)' },
+    // hBtnEmg kept for any future dark-bg headers
+    hBtnEmg: { backgroundColor: 'rgba(255,255,255,0.2)', borderColor: 'rgba(255,255,255,0.4)' },
     notifDot: {
         position: 'absolute', top: 7, right: 7,
         width: 7, height: 7, borderRadius: 3.5,
@@ -466,98 +528,106 @@ const s = StyleSheet.create({
     mapControls: { position: 'absolute', right: 12, gap: 7, alignItems: 'flex-end' },
     gpsPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: 'rgba(255,255,255,0.94)',
+        backgroundColor: `${T.surface}F0`,
         borderRadius: R.full, paddingHorizontal: 9, paddingVertical: 5,
-        borderWidth: 0.5, borderColor: 'rgba(224,228,234,0.7)',
+        borderWidth: 0.5, borderColor: T.line,
         ...Platform.select({
-            ios: { shadowColor: '#0B0A14', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            ios: { shadowColor: T.ink, shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 2 },
         }),
     },
-    gpsPillEmg: { backgroundColor: 'rgba(239,68,68,0.90)', borderColor: 'rgba(255,255,255,0.3)' },
+    // LIVE state GPS pill: soft rose background, not saturated red
+    gpsPillEmg: { backgroundColor: `${T.dangerLight}F0`, borderColor: T.dangerBorder },
     gpsDot: { width: 6, height: 6, borderRadius: 3 },
     gpsTxt: { fontSize: 10, fontWeight: '700', color: T.ink2, letterSpacing: 0.5 },
+    gpsTxtEmg: { color: T.dangerText },
     ctrlBtn: {
         width: 36, height: 36, borderRadius: R.sm,
-        backgroundColor: 'rgba(255,255,255,0.94)',
+        backgroundColor: '#FFFFFF',
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 0.5, borderColor: 'rgba(224,228,234,0.7)',
+        borderWidth: 1, borderColor: T.line,
         ...Platform.select({
-            ios: { shadowColor: '#0B0A14', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            ios: { shadowColor: T.violet, shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 2 },
         }),
     },
-    markerOut: { width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,188,212,0.22)', alignItems: 'center', justifyContent: 'center' },
-    markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' },
+    markerOut: { width: 26, height: 26, borderRadius: 13, backgroundColor: `${T.violet}26`, alignItems: 'center', justifyContent: 'center' }, // 15% alpha
+    markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: '#FFFFFF' },
     sosSection: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
     sosWrap: { width: SOS_WRAP_SIZE, height: SOS_WRAP_SIZE, alignItems: 'center', justifyContent: 'center' },
     pulseRing: { position: 'absolute', width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2, borderWidth: 2 },
     sosBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        alignItems: 'center', justifyContent: 'center', backgroundColor: T.danger,
-        ...Platform.select({
-            ios: { shadowColor: '#D92D20', shadowOpacity: 0.36, shadowRadius: 28, shadowOffset: { width: 0, height: 9 } },
-            android: { elevation: 16 },
-        }),
-    },
-    sosTxt: { color: '#fff', fontSize: 30, fontWeight: '900', letterSpacing: 2 },
-    sosSubTxt: { color: 'rgba(255,255,255,0.80)', fontSize: 11, fontWeight: '500', marginTop: 3 },
-    cancelBtn: {
-        width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: '#0C0B18', borderWidth: 1.5, borderColor: 'rgba(217,45,32,0.3)',
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 7 } },
-            android: { elevation: 12 },
+            ios: { shadowColor: T.violet, shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+            android: { elevation: 10 },
         }),
     },
-    cancelLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
-    cancelCount: { color: T.danger, fontSize: 40, fontWeight: '900', lineHeight: 44 },
-    cancelSub: { color: 'rgba(255,255,255,0.35)', fontSize: 10, fontWeight: '500', marginTop: 3 },
+    sosBtnEmg: {
+        ...Platform.select({
+            ios: { shadowColor: T.danger, shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+            android: { elevation: 10 },
+        }),
+    },
+    sosTxt: { color: T.onPrimary, fontSize: 32, fontWeight: '900', letterSpacing: 1 },
+    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+    cancelBtn: {
+        width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
+        backgroundColor: T.ink, borderWidth: 1.5, borderColor: `${T.dangerBorder}66`,
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: T.ink, shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 6 } },
+            android: { elevation: 10 },
+        }),
+    },
+    cancelLabel: { color: `${T.onPrimary}8C`, fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
+    cancelCount: { color: T.dangerMid, fontSize: 40, fontWeight: '900', lineHeight: 44 },
+    cancelSub: { color: `${T.onPrimary}59`, fontSize: 10, fontWeight: '500', marginTop: 3 },
     pill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: 'rgba(255,255,255,0.92)',
-        borderRadius: R.full, paddingHorizontal: 14, paddingVertical: 7, marginTop: 14,
-        borderWidth: 0.5, borderColor: 'rgba(224,228,234,0.6)',
+        backgroundColor: '#FFFFFF',
+        borderRadius: R.full, paddingHorizontal: 14, paddingVertical: 8, marginTop: 16,
+        borderWidth: 1, borderColor: T.line,
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 3 },
+            ios: { shadowColor: T.violet, shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 2 },
         }),
     },
-    pillDot: { width: 6, height: 6, borderRadius: 3 },
-    pillTxt: { fontSize: 12, fontWeight: '600', color: T.ink, letterSpacing: 0.1 },
-    navWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, alignItems: 'center', zIndex: 20 },
+    pillDot: { width: 8, height: 8, borderRadius: 4 },
+    pillTxt: { fontSize: 11, fontWeight: '700', color: T.ink2, letterSpacing: 0.2, textTransform: 'uppercase' },
+    navWrap: { position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 20 },
     navBar: {
-        flexDirection: 'row', width: '90%',
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        borderRadius: 18, paddingTop: 10, paddingBottom: 10, paddingHorizontal: 4,
-        marginBottom: 8, justifyContent: 'space-around', alignItems: 'center',
-        borderWidth: 1, borderColor: '#E5E7EB',
+        flexDirection: 'row', marginHorizontal: 12,
+        backgroundColor: `${T.surface}F8`, // Slightly more opaque for the bottom bar
+        borderRadius: R.md, paddingVertical: 10, paddingHorizontal: 4,
+        marginBottom: 10, justifyContent: 'space-around', alignItems: 'center',
+        borderWidth: 1, borderColor: `${T.violet}20`,
         ...Platform.select({
-            ios: { shadowColor: '#0B0A14', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: -2 } },
+            ios: { shadowColor: T.ink, shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: -4 } },
             android: { elevation: 6 },
         }),
     },
-    navTab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 4, minHeight: 44, gap: 3 },
-    navLabel: { fontSize: 11, letterSpacing: 0.1, marginTop: 1 },
-    navUnderline: { width: 24, height: 2, borderRadius: 1, marginTop: 2 },
-    drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,15,25,0.38)' },
+    navTab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 3, minHeight: 38, gap: 2 },
+    navLabel: { fontSize: 9.5, letterSpacing: 0.1, marginTop: 1 },
+    navUnderline: { width: 24, height: 3, borderRadius: 1.5, marginTop: 3 },
+    drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: `${T.ink}61` }, // 61 = ~38%
     drawer: {
         position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
         backgroundColor: T.surface,
         ...Platform.select({
-            ios: { shadowColor: '#0B0A14', shadowOpacity: 0.09, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
+            ios: { shadowColor: T.ink, shadowOpacity: 0.09, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
             android: { elevation: 20 },
         }),
     },
     drawerHd: { paddingTop: 52, paddingBottom: 26, paddingHorizontal: 20 },
     drawerAvatarRing: {
         width: 50, height: 50, borderRadius: 25,
-        backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.28)',
+        backgroundColor: `${T.onPrimary}2E`, borderWidth: 2, borderColor: `${T.onPrimary}47`, // 2E = 18%, 47 = 28%
         alignItems: 'center', justifyContent: 'center', marginBottom: 10,
     },
-    drawerAppName: { color: '#fff', fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
-    drawerSub: { color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2, fontWeight: '500' },
+    drawerAppName: { color: T.onPrimary, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
+    drawerSub: { color: `${T.onPrimary}A6`, fontSize: 12, marginTop: 2, fontWeight: '500' }, // A6 = 65%
     drawerRow: {
         flexDirection: 'row', alignItems: 'center',
         paddingVertical: 13, paddingHorizontal: 18,

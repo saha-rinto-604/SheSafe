@@ -184,7 +184,7 @@ const st = StyleSheet.create({
     paddingBottom: S.s4,
     overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#0B0A14', shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+      ios: { shadowColor: T.ink, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
       android: { elevation: 5 },
     }),
   },
