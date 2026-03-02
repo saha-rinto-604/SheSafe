@@ -8,6 +8,7 @@ export default function TabsLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="sos_screen" />
+        <Stack.Screen name="users" />
         <Stack.Screen name="explore" />
       </Stack>
     </>

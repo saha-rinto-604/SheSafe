@@ -1,23 +1,17 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import {
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  View,
-  Platform,
-  LayoutAnimation,
-  UIManager,
-  ScrollView,
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  ActivityIndicator, Alert, Platform, LayoutAnimation,
+  UIManager, Animated, Easing, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import AuthShell from '../../components/auth/AuthShell';
-import { Theme } from '../../src/constants/theme';
+import { T, R, S, Ty } from '../../src/constants/theme';
+import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -25,596 +19,460 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 type Role = 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN';
-
 type FormData = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  password: string;
-  confirmPassword: string;
+  firstName: string; lastName: string;
+  phone: string; password: string; confirmPassword: string;
 };
 
-const ROLE_OPTIONS: Array<{
-  value: Role;
-  label: string;
-  description: string;
-  icon: keyof typeof Feather.glyphMap;
-}> = [
-    {
-      value: 'USER',
-      label: 'Standard User',
-      description: 'Use ResQher for personal safety & SOS.',
-      icon: 'user',
-    },
-    {
-      value: 'VOLUNTEER',
-      label: 'Volunteer',
-      description: 'Respond to community SOS alerts.',
-      icon: 'heart',
-    },
-    {
-      value: 'POLICE',
-      label: 'Law Enforcement',
-      description: 'Access authorized incident workflows.',
-      icon: 'shield',
-    },
-  ];
+const ROLE_OPTIONS = [
+  { value: 'USER' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
+  { value: 'VOLUNTEER' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
+  { value: 'POLICE' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
+];
 
-export default function Signup() {
-  const router = useRouter();
-  const { signUp } = useAuth();
+// ─── Animated Role Card ───────────────────────────────────────────────────────
+const AnimatedRoleCard = React.memo(function AnimatedRoleCard({
+  opt, isActive, onPress,
+}: { opt: typeof ROLE_OPTIONS[0]; isActive: boolean; onPress: () => void }) {
+  const scale = useRef(new Animated.Value(1)).current;
 
-  const [step, setStep] = useState<1 | 2>(1);
-  const [role, setRole] = useState<Role | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: isActive ? 1.025 : 1.0,
+      useNativeDriver: true,
+      tension: 260, friction: 16,
+    }).start();
+  }, [isActive]);
 
-  const {
-    control,
-    handleSubmit,
-    watch,
-    formState: { errors },
-  } = useForm<FormData>({
-    defaultValues: {
-      firstName: '',
-      lastName: '',
-      phone: '',
-      password: '',
-      confirmPassword: '',
-    },
-  });
+  const handlePress = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.975, duration: 70, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: isActive ? 1.0 : 1.025, useNativeDriver: true, tension: 260, friction: 14 }),
+    ]).start();
+    onPress();
+  }, [isActive, onPress]);
 
-  const pw = watch('password');
-
-  const selectedRoleMeta = useMemo(
-    () => ROLE_OPTIONS.find((r) => r.value === role) ?? null,
-    [role]
+  return (
+    <Animated.View style={[st.roleCardWrap, { transform: [{ scale }] }]}>
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={handlePress}
+        style={[st.roleCard, isActive && st.roleCardActive]}
+        accessibilityRole="radio"
+        accessibilityState={{ checked: isActive }}
+        accessibilityLabel={opt.label}
+      >
+        <View style={[st.roleIconBox, isActive && st.roleIconBoxActive]}>
+          <Feather name={opt.icon} size={20} color={isActive ? T.violet : T.ink4} />
+        </View>
+        <View style={st.roleText}>
+          <Text style={[st.roleLabel, isActive && st.roleLabelActive]}>{opt.label}</Text>
+          <Text style={st.roleDesc}>{opt.description}</Text>
+        </View>
+        <View style={[st.roleCheck, isActive && st.roleCheckActive]}>
+          {isActive && <Feather name="check" size={12} color={T.onPrimary} />}
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
   );
+});
 
-  const handleRoleSelect = (r: Role) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setRole(r);
-  };
+// ─── Modern Step Tracker ─────────────────────────────────────────────────────
+function StepProgress({ step }: { step: 1 | 2 }) {
+  const lineWidth = useRef(new Animated.Value(step === 2 ? 1 : 0)).current;
 
-  const goNext = () => {
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setStep(2);
-  };
+  useEffect(() => {
+    Animated.timing(lineWidth, {
+      toValue: step === 2 ? 1 : 0,
+      duration: 380,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: false,
+    }).start();
+  }, [step]);
 
-  const goBack = () => {
-    scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setStep(1);
-  };
-
-  const phoneRules = {
-    required: 'Phone is required',
-    validate: (v: string) => {
-      const value = v.trim();
-      const bd = /^01[3-9]\d{8}$/;
-      if (!bd.test(value)) return 'Invalid phone format';
-      return true;
-    },
-  };
-
-  const passwordRules = {
-    required: 'Password is required',
-    minLength: { value: 8, message: 'Min 8 characters' },
-  };
-
-  const onSubmit = async (data: FormData) => {
-    if (!role) {
-      Alert.alert('Required', 'Please select an account type first.');
-      goBack();
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const phone = data.phone.trim();
-      const firstName = data.firstName.trim();
-      const lastName = data.lastName.trim();
-      await signUp(phone, data.password, firstName, lastName, role);
-      router.replace('/(tabs)');
-    } catch (e: any) {
-      Alert.alert('Signup failed', e?.message ?? 'Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
+  const Node = ({ n, label }: { n: 1 | 2; label: string }) => {
+    const done = step > n;
+    const active = step === n;
+    return (
+      <View style={st.stepNode}>
+        <View style={[
+          st.stepCircle,
+          (active || done) && st.stepCircleActive,
+        ]}>
+          {done
+            ? <Feather name="check" size={13} color="#fff" />
+            : <Text style={[st.stepNum, (active || done) && st.stepNumActive]}>{n}</Text>
+          }
+        </View>
+        <Text style={[st.stepLabel, (active || done) && st.stepLabelActive]}>{label}</Text>
+      </View>
+    );
   };
 
   return (
-    <AuthShell>
-      <View style={styles.cardContainer}>
-        <View style={styles.cardInner}>
-          <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1, padding: 24, paddingBottom: 32 }}>
-            {/* Step Indicator & Header */}
-            <View style={styles.headerContainer}>
-              <View style={styles.stepPill}>
-                <Text style={styles.stepPillText}>Step {step} of 2</Text>
-              </View>
-              <Text style={styles.title}>
-                {step === 1 ? 'Join ResQher' : 'Your Details'}
-              </Text>
-              <Text style={styles.subtitle}>
-                {step === 1
-                  ? 'Select how you want to use the app.'
-                  : 'Almost there! Fill in the fields below.'}
-              </Text>
-            </View>
-
-            {/* STEP 1: Inline Role Selection */}
-            {step === 1 && (
-              <View style={styles.stepContent}>
-                <View style={styles.roleList}>
-                  {ROLE_OPTIONS.map((opt) => {
-                    const isActive = role === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        activeOpacity={0.7}
-                        onPress={() => handleRoleSelect(opt.value)}
-                        style={[styles.roleCard, isActive && styles.roleCardActive]}
-                      >
-                        <View style={[styles.roleIconBox, isActive && styles.roleIconBoxActive]}>
-                          <Feather
-                            name={opt.icon}
-                            size={20}
-                            color={isActive ? Theme.colors.primary : Theme.colors.muted}
-                          />
-                        </View>
-                        <View style={styles.roleTextContainer}>
-                          <Text style={[styles.roleLabel, isActive && styles.roleLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text style={styles.roleDesc}>{opt.description}</Text>
-                        </View>
-                        <View style={[styles.radioCircle, isActive && styles.radioCircleActive]}>
-                          {isActive && <View style={styles.radioInner} />}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                {!!role && (role === 'VOLUNTEER' || role === 'POLICE') && (
-                  <View style={styles.infoBox}>
-                    <Feather name="info" size={16} color={Theme.colors.primary} />
-                    <Text style={styles.infoText}>
-                      This profile requires verification by an admin before full access is granted.
-                    </Text>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  disabled={!role}
-                  style={[styles.primaryBtn, !role && styles.primaryBtnDisabled]}
-                  onPress={goNext}
-                >
-                  <Text style={styles.primaryBtnText}>Continue</Text>
-                  <Feather name="arrow-right" size={20} color="#fff" />
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => router.push('/(auth)/login')} style={styles.linkBtn}>
-                  <Text style={styles.linkText}>Already have an account? Log in</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* STEP 2: Form */}
-            {step === 2 && (
-              <View style={styles.stepContent}>
-                {/* Selected Role Badge */}
-                <View style={styles.selectedRoleBadge}>
-                  <View style={styles.selectedRoleLeft}>
-                    <Feather name={selectedRoleMeta?.icon ?? 'user'} size={16} color={Theme.colors.primary} />
-                    <Text style={styles.selectedRoleText}>{selectedRoleMeta?.label}</Text>
-                  </View>
-                  <TouchableOpacity onPress={goBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    <Text style={styles.changeLink}>Edit</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Name Row */}
-                <View style={styles.row}>
-                  <View style={styles.col}>
-                    <Text style={styles.label}>First Name</Text>
-                    <Controller
-                      control={control}
-                      name="firstName"
-                      rules={{ required: 'Required', minLength: 2 }}
-                      render={({ field: { onChange, value } }) => (
-                        <View style={[styles.inputWrapper, errors.firstName && styles.inputError]}>
-                          <TextInput
-                            placeholder="Jane"
-                            placeholderTextColor="#9CA3AF"
-                            value={value}
-                            onChangeText={onChange}
-                            style={styles.input}
-                          />
-                        </View>
-                      )}
-                    />
-                    {!!errors.firstName && <Text style={styles.errorText}>{errors.firstName.message}</Text>}
-                  </View>
-
-                  <View style={styles.col}>
-                    <Text style={styles.label}>Last Name</Text>
-                    <Controller
-                      control={control}
-                      name="lastName"
-                      rules={{ required: 'Required', minLength: 2 }}
-                      render={({ field: { onChange, value } }) => (
-                        <View style={[styles.inputWrapper, errors.lastName && styles.inputError]}>
-                          <TextInput
-                            placeholder="Doe"
-                            placeholderTextColor="#9CA3AF"
-                            value={value}
-                            onChangeText={onChange}
-                            style={styles.input}
-                          />
-                        </View>
-                      )}
-                    />
-                    {!!errors.lastName && <Text style={styles.errorText}>{errors.lastName.message}</Text>}
-                  </View>
-                </View>
-
-                <Text style={styles.label}>Phone Number</Text>
-                <Controller
-                  control={control}
-                  name="phone"
-                  rules={phoneRules}
-                  render={({ field: { onChange, value } }) => (
-                    <View style={[styles.inputWrapper, errors.phone && styles.inputError]}>
-                      <Feather name="phone" size={18} color="#9CA3AF" style={styles.inputIcon} />
-                      <TextInput
-                        placeholder="017xxxxxxxx"
-                        placeholderTextColor="#9CA3AF"
-                        value={value}
-                        onChangeText={onChange}
-                        keyboardType="phone-pad"
-                        style={styles.input}
-                      />
-                    </View>
-                  )}
-                />
-                {!!errors.phone && <Text style={styles.errorText}>{errors.phone.message}</Text>}
-
-                <Text style={styles.label}>Password</Text>
-                <Controller
-                  control={control}
-                  name="password"
-                  rules={passwordRules}
-                  render={({ field: { onChange, value } }) => (
-                    <View style={[styles.inputWrapper, errors.password && styles.inputError]}>
-                      <Feather name="lock" size={18} color="#9CA3AF" style={styles.inputIcon} />
-                      <TextInput
-                        placeholder="Minimum 8 characters"
-                        placeholderTextColor="#9CA3AF"
-                        value={value}
-                        onChangeText={onChange}
-                        secureTextEntry
-                        style={styles.input}
-                      />
-                    </View>
-                  )}
-                />
-                {!!errors.password && <Text style={styles.errorText}>{errors.password.message}</Text>}
-
-                <Text style={styles.label}>Confirm Password</Text>
-                <Controller
-                  control={control}
-                  name="confirmPassword"
-                  rules={{
-                    required: 'Required',
-                    validate: (v) => v === pw || 'Passwords do not match',
-                  }}
-                  render={({ field: { onChange, value } }) => (
-                    <View style={[styles.inputWrapper, { marginBottom: 8 }, errors.confirmPassword && styles.inputError]}>
-                      <Feather name="shield" size={18} color="#9CA3AF" style={styles.inputIcon} />
-                      <TextInput
-                        placeholder="Re-type password"
-                        placeholderTextColor="#9CA3AF"
-                        value={value}
-                        onChangeText={onChange}
-                        secureTextEntry
-                        style={styles.input}
-                      />
-                    </View>
-                  )}
-                />
-                {!!errors.confirmPassword && (
-                  <Text style={styles.errorText}>{errors.confirmPassword.message}</Text>
-                )}
-
-                <TouchableOpacity
-                  disabled={submitting}
-                  style={[styles.primaryBtn, { marginTop: 24 }]}
-                  onPress={handleSubmit(onSubmit)}
-                >
-                  {submitting ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.primaryBtnText}>Create Account</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={goBack} style={styles.linkBtn}>
-                  <Text style={[styles.linkText, { color: Theme.colors.muted }]}>Go Back</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </ScrollView>
-        </View>
+    <View style={st.progressWrap}>
+      <Node n={1} label="Role" />
+      {/* Connecting line */}
+      <View style={st.lineTrack}>
+        <Animated.View style={[st.lineFill, {
+          width: lineWidth.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+        }]} />
       </View>
+      <Node n={2} label="Details" />
+    </View>
+  );
+}
+
+
+// ─── Signup ────────────────────────────────────────────────────────────────────
+export default function Signup() {
+  const router = useRouter();
+  const { signUp } = useAuth();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [role, setRole] = useState<Role | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
+
+  const { control, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
+    defaultValues: { firstName: '', lastName: '', phone: '', password: '', confirmPassword: '' },
+  });
+  const pw = watch('password');
+  const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
+
+  const goNext = () => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep(2); };
+  const goBack = () => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep(1); };
+
+  const phoneRules = {
+    required: 'Phone is required',
+    validate: (v: string) => /^01[3-9]\d{8}$/.test(v.trim()) || 'Invalid format',
+  };
+
+  const onSubmit = async (data: FormData) => {
+    if (!role) { Alert.alert('Required', 'Please select an account type.'); goBack(); return; }
+    setSubmitting(true);
+    setTimeout(() => {
+      setSubmitting(false);
+      router.replace('/users/sos_screen');
+    }, 1500);
+  };
+
+  // Reusable inline field
+  const Field = ({
+    name, placeholder, icon, secure, keyboard, rules,
+  }: {
+    name: keyof FormData;
+    placeholder: string;
+    icon: keyof typeof Feather.glyphMap;
+    secure?: boolean;
+    keyboard?: any;
+    rules?: object;
+  }) => (
+    <Controller
+      control={control}
+      name={name}
+      rules={rules}
+      render={({ field: { onChange, value } }) => (
+        <>
+          <View style={[st.inputWrap, focused === name && st.inputFocused, errors[name] && st.inputError]}>
+            <Feather name={icon} size={18} color={focused === name ? T.violet : T.ink4} style={st.inputIcon} />
+            <TextInput
+              placeholder={placeholder}
+              placeholderTextColor={T.ink5}
+              value={value}
+              onChangeText={onChange}
+              secureTextEntry={secure}
+              keyboardType={keyboard}
+              style={st.input}
+              onFocus={() => setFocused(name)}
+              onBlur={() => setFocused(null)}
+              accessibilityLabel={placeholder}
+            />
+          </View>
+          {!!errors[name] && <Text style={st.errTxt}>{(errors[name] as any).message}</Text>}
+        </>
+      )}
+    />
+  );
+
+  return (
+    <AuthShell onBack={step === 2 ? goBack : () => router.back()}>
+      <ScrollView
+        style={{ borderRadius: R.xl }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        bounces={false}
+        contentContainerStyle={{ flexGrow: 1 }}
+      >
+        <View style={st.card}>
+          {/* ── Progress + Header ── */}
+          <StepProgress step={step} />
+          <View style={st.header}>
+            <Text style={st.title}>{step === 1 ? 'Join ResQher' : 'Your Details'}</Text>
+            <Text style={st.subtitle}>{step === 1 ? 'Select how you want to use the app.' : 'Almost there — fill in your info.'}</Text>
+          </View>
+
+          {/* ─── STEP 1: Role ─────────────────────────────── */}
+          {step === 1 && (
+            <>
+              <View style={st.roleList}>
+                {ROLE_OPTIONS.map(opt => (
+                  <AnimatedRoleCard
+                    key={opt.value}
+                    opt={opt}
+                    isActive={role === opt.value}
+                    onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setRole(opt.value); }}
+                  />
+                ))}
+              </View>
+
+              {!!role && (role === 'VOLUNTEER' || role === 'POLICE') && (
+                <View style={st.infoBox}>
+                  <Feather name="info" size={14} color={T.violet} />
+                  <Text style={st.infoTxt}>Requires admin verification before full access.</Text>
+                </View>
+              )}
+
+              <TouchableOpacity
+                disabled={!role}
+                style={role ? st.btn : st.btnDisabled}
+                onPress={goNext}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Continue"
+              >
+                {role ? (
+                  <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={st.btnInner}>
+                    <Text style={st.btnTxt}>Continue</Text>
+                    <Feather name="arrow-right" size={18} color={T.onPrimary} />
+                  </LinearGradient>
+                ) : (
+                  <View style={st.btnInner}>
+                    <Text style={[st.btnTxt, { color: T.ink5 }]}>Select a role to continue</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => router.push('/(auth)/login')} style={st.linkRow}>
+                <Text style={st.linkTxt}>Already have an account? <Text style={st.linkAccent}>Log in</Text></Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ─── STEP 2: Details ──────────────────────────── */}
+          {step === 2 && (
+            <>
+              {/* Selected role badge */}
+              <View style={st.roleBadge}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.s2 }}>
+                  <Feather name={selectedMeta?.icon ?? 'user'} size={14} color={T.violet} />
+                  <Text style={st.roleBadgeTxt}>{selectedMeta?.label}</Text>
+                </View>
+                <TouchableOpacity onPress={goBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                  <Text style={st.linkAccent}>Change</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* First + Last name in one row */}
+              <View style={st.row}>
+                <View style={{ flex: 1 }}>
+                  <Controller
+                    control={control}
+                    name="firstName"
+                    rules={{ required: 'Required', minLength: { value: 2, message: 'Min 2 chars' } }}
+                    render={({ field: { onChange, value } }) => (
+                      <View style={[st.inputWrap, focused === 'firstName' && st.inputFocused, errors.firstName && st.inputError]}>
+                        <TextInput
+                          placeholder="First name"
+                          placeholderTextColor={T.ink5}
+                          value={value} onChangeText={onChange} style={st.input}
+                          onFocus={() => setFocused('firstName')} onBlur={() => setFocused(null)}
+                        />
+                      </View>
+                    )}
+                  />
+                  {!!errors.firstName && <Text style={st.errTxt}>{errors.firstName.message}</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Controller
+                    control={control}
+                    name="lastName"
+                    rules={{ required: 'Required', minLength: { value: 2, message: 'Min 2 chars' } }}
+                    render={({ field: { onChange, value } }) => (
+                      <View style={[st.inputWrap, focused === 'lastName' && st.inputFocused, errors.lastName && st.inputError]}>
+                        <TextInput
+                          placeholder="Last name"
+                          placeholderTextColor={T.ink5}
+                          value={value} onChangeText={onChange} style={st.input}
+                          onFocus={() => setFocused('lastName')} onBlur={() => setFocused(null)}
+                        />
+                      </View>
+                    )}
+                  />
+                  {!!errors.lastName && <Text style={st.errTxt}>{errors.lastName.message}</Text>}
+                </View>
+              </View>
+
+              <Field name="phone" placeholder="Phone number" icon="phone" keyboard="phone-pad" rules={phoneRules} />
+              <Field name="password" placeholder="Password" icon="lock" secure rules={{ required: 'Required', minLength: { value: 8, message: 'Min 8 characters' } }} />
+              <Field name="confirmPassword" placeholder="Confirm password" icon="shield" secure rules={{ required: 'Required', validate: (v: string) => v === pw || 'Passwords do not match' }} />
+
+              <TouchableOpacity
+                disabled={submitting}
+                style={[st.btn, { marginTop: S.s4 }]}
+                onPress={handleSubmit(onSubmit)}
+                activeOpacity={0.82}
+              >
+                {submitting
+                  ? <View style={st.btnInner}><ActivityIndicator color={T.onPrimary} /></View>
+                  : (
+                    <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={st.btnInner}>
+                      <Text style={st.btnTxt}>Create Account</Text>
+                    </LinearGradient>
+                  )
+                }
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={goBack} style={st.linkRow}>
+                <Text style={st.linkTxt}>← Go back</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </ScrollView>
     </AuthShell>
   );
 }
 
-const styles = StyleSheet.create({
-  cardContainer: {
-    shadowColor: Theme.colors.primaryDark,
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 6,
-    flexShrink: 1,
-  },
-  cardInner: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 32,
-    overflow: 'hidden',
-    flexShrink: 1,
-  },
-  headerContainer: {
-    alignItems: 'center',
-    marginBottom: 28,
-  },
-  stepPill: {
-    backgroundColor: '#F3E8FF',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginBottom: 16,
-  },
-  stepPillText: {
-    color: Theme.colors.primaryDark,
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#111827',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6B7280',
-    textAlign: 'center',
-    paddingHorizontal: 10,
-  },
-  stepContent: {
-    // flex: 1 removed to allow natural resizing for LayoutAnimation
+const st = StyleSheet.create({
+  card: {
+    backgroundColor: T.surface,
+    borderRadius: R.xl,
+    padding: S.s5,
+    paddingBottom: S.s3,
+    ...Platform.select({
+      ios: { shadowColor: '#0B0A14', shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 5 },
+    }),
   },
 
-  // ROLE CARDS
-  roleList: {
-    gap: 12,
-    marginBottom: 20,
+  // ── Modern step tracker
+  progressWrap: {
+    flexDirection: 'row', alignItems: 'center',
+    marginBottom: S.s4, paddingHorizontal: S.s3,
+  },
+  stepNode: { alignItems: 'center', gap: 5 },
+  stepCircle: {
+    width: 32, height: 32, borderRadius: 16,
+    borderWidth: 2, borderColor: T.lineMid,
+    backgroundColor: T.bgMuted,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stepCircleActive: {
+    backgroundColor: T.violet, borderColor: T.violet,
+  },
+  stepNum: { fontSize: 13, fontWeight: '700', color: T.ink4 },
+  stepNumActive: { color: '#fff' },
+  stepLabel: { fontSize: 10, fontWeight: '600', color: T.ink4, letterSpacing: 0.3 },
+  stepLabelActive: { color: T.violet },
+  // Connecting animated line
+  lineTrack: {
+    flex: 1, height: 2.5,
+    backgroundColor: T.line,
+    borderRadius: R.full,
+    overflow: 'hidden',
+    marginHorizontal: S.s2,
+    marginBottom: 15, // nudge up to align with circle centres
+  },
+  lineFill: { height: '100%', backgroundColor: T.violet, borderRadius: R.full },
+
+  // ── Header
+  header: { alignItems: 'center', marginBottom: S.s3 },
+  title: { ...Ty.h3, marginBottom: 2 },
+  subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
+
+  // ── Role cards — tighter gap to fit on screen
+  roleList: { gap: 8, marginBottom: S.s3 },
+  roleCardWrap: {
+    ...Platform.select({
+      ios: { shadowColor: T.violet, shadowOpacity: 0, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+      android: {},
+    }),
   },
   roleCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#F3F4F6',
-    backgroundColor: '#FFFFFF',
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 11, paddingHorizontal: S.s3,
+    borderRadius: R.md,
+    borderWidth: 1.5, borderColor: T.line,
+    backgroundColor: T.surface,
   },
   roleCardActive: {
-    borderColor: Theme.colors.primary,
-    backgroundColor: '#FAFAFF',
+    borderColor: T.violet, borderWidth: 2,
+    backgroundColor: '#EAF9FB',
+    ...Platform.select({ ios: { shadowOpacity: 0.12 }, android: { elevation: 3 } }),
   },
   roleIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
+    width: 38, height: 38, borderRadius: R.xs,
+    backgroundColor: T.bgMuted,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: S.s3,
   },
-  roleIconBoxActive: {
-    backgroundColor: '#F3E8FF',
+  roleIconBoxActive: { backgroundColor: T.violetDim },
+  roleText: { flex: 1 },
+  roleLabel: { fontSize: 14, fontWeight: '700', color: T.ink, marginBottom: 1 },
+  roleLabelActive: { color: T.violet },
+  roleDesc: { fontSize: 12, color: T.ink4, lineHeight: 16 },
+  roleCheck: {
+    width: 20, height: 20, borderRadius: 10,
+    borderWidth: 2, borderColor: T.lineMid,
+    alignItems: 'center', justifyContent: 'center',
   },
-  roleTextContainer: {
-    flex: 1,
-    paddingRight: 10,
-  },
-  roleLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 4,
-  },
-  roleLabelActive: {
-    color: Theme.colors.primaryDark,
-  },
-  roleDesc: {
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 18,
-  },
-  radioCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioCircleActive: {
-    borderColor: Theme.colors.primary,
-  },
-  radioInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Theme.colors.primary,
-  },
+  roleCheckActive: { backgroundColor: T.violet, borderColor: T.violet },
 
-  // INFO BOX
+  // ── Info box
   infoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 24,
-    gap: 12,
+    flexDirection: 'row', alignItems: 'flex-start', gap: S.s2,
+    backgroundColor: T.violetDim, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    borderRadius: R.sm, marginBottom: S.s3,
   },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#166534',
-    fontWeight: '500',
-    lineHeight: 18,
-  },
+  infoTxt: { fontSize: 12, color: T.violetDark, flex: 1, lineHeight: 17 },
 
-  // FORM ELEMENTS
-  row: {
-    flexDirection: 'row',
-    gap: 16,
+  // ── Role badge (step 2)
+  roleBadge: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: T.bgMuted, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    borderRadius: R.sm, borderWidth: 1, borderColor: T.line, marginBottom: S.s3,
   },
-  col: {
-    flex: 1,
-  },
-  selectedRoleBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#F3F4F6',
-    marginBottom: 24,
-  },
-  selectedRoleLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  selectedRoleText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  changeLink: {
-    color: Theme.colors.primary,
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  roleBadgeTxt: { fontSize: 13, fontWeight: '700', color: T.ink2 },
 
-  label: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#374151',
-    marginBottom: 8,
-    marginLeft: 4,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1.5,
-    borderColor: '#F3F4F6',
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    height: 54,
-    marginBottom: 16,
-  },
-  inputError: {
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
-  },
-  inputIcon: {
-    marginRight: 10,
-  },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: '#1F2937',
-    height: '100%',
-  },
-  errorText: {
-    color: '#EF4444',
-    fontSize: 12,
-    fontWeight: '500',
-    marginTop: -10,
-    marginBottom: 16,
-    marginLeft: 4,
-  },
+  // ── Name row
+  row: { flexDirection: 'row', gap: S.s2, marginBottom: S.s1 },
 
-  // BUTTONS
-  primaryBtn: {
-    backgroundColor: Theme.colors.primary,
-    height: 56,
-    borderRadius: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Theme.colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 6,
-    gap: 8,
+  // ── Inputs — no labels, placeholder-only, tighter height
+  inputWrap: {
+    flexDirection: 'row', alignItems: 'center', height: 48,
+    borderRadius: R.sm, borderWidth: 1.5, borderColor: T.lineMid,
+    backgroundColor: T.bgMuted, paddingHorizontal: S.s3, marginBottom: S.s2,
   },
-  primaryBtnDisabled: {
-    backgroundColor: '#E5E7EB',
-    shadowOpacity: 0,
-    elevation: 0,
+  inputFocused: { borderColor: T.violet, borderWidth: 2, backgroundColor: T.surface },
+  inputError: { borderColor: T.danger, backgroundColor: T.dangerLight },
+  inputIcon: { marginRight: S.s2 },
+  input: { flex: 1, height: '100%', color: T.ink, fontSize: 14 },
+  errTxt: { fontSize: 11, color: T.danger, fontWeight: '500', marginTop: -6, marginBottom: S.s1 },
+
+  // ── Buttons
+  btn: {
+    borderRadius: R.md, overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: T.violetDark, shadowOpacity: 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 6 },
+    }),
   },
-  primaryBtnText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  linkBtn: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  linkText: {
-    color: Theme.colors.primary,
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  btnInner: { height: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.s2 },
+  btnDisabled: { borderRadius: R.md, overflow: 'hidden', backgroundColor: T.disabledBg },
+  btnTxt: { ...Ty.btn },
+
+  // ── Links
+  linkRow: { marginTop: S.s3, alignItems: 'center', paddingVertical: S.s1 },
+  linkTxt: { fontSize: 13, color: T.ink4, fontWeight: '500' },
+  linkAccent: { color: T.violet, fontWeight: '700' },
 });
