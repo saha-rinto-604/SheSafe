@@ -38,16 +38,32 @@ export const T = {
   // ── Feedback — violet-harmonious danger scale (rose/crimson, not pure red)
   danger: '#BE123C', // Primary danger — deep rose (LIVE button, critical icons)
   dangerMid: '#E11D48', // Mid danger — for pulse rings only
+  dangerPressed: '#9F1239', // Pressed/darker danger — for press states
   dangerLight: '#FFF1F2', // Tinted background surface for danger areas
   dangerBorder: '#FDA4AF', // Subtle border/ring — pinkish, non-jarring
   dangerText: '#9F1239', // Text on light danger backgrounds
   dangerBg: '#FFF1F2', // Chip / badge background
+  onDanger: '#FFFFFF', // Text/icon on danger fill surfaces
   success: '#10B981',
   safeLight: '#ECFDF5',
 
   // ── Disabled
   disabled: '#E9D5FF',
   disabledBg: '#FAF5FF',
+
+  // ── Nav icon inactive — violet-tinted soft lavender for premium inactive state
+  // Warmer than neutral grey; on-brand with the violet design language
+  // rgba(168,85,247,0.38) over white ≈ #C9A8F7 — sits between violetLight and ink5
+  navIconMuted: '#7D6BBE', // Darker violet for better contrast in inactive state
+
+  // ── Glass surface tokens (for header / navbar overlay approach)
+  // Layer 1: translucent white base for floating bars over map
+  surfaceGlass: 'rgba(255,255,255,0.92)',
+  // Layer 2: single solid violet tint at 7% — replaces the heavier gradient overlay
+  // Use this as backgroundColor on an absoluteFill view instead of LinearGradient
+  surfaceOverlay: 'rgba(168,85,247,0.07)',
+  // Deprecated fraction kept for back-compat (not used in new components)
+  gradientOverlayOpacity: 0.07 as number,
 } as const;
 
 // ── Legacy export
@@ -76,12 +92,14 @@ export const Theme = {
 
 // ─── Radius scale ──────────────────────────────────────────────────────────────
 export const R = {
-  xs: 8,   // chips, badges
-  sm: 12,  // inputs, small cards
-  md: 14,  // primary buttons, medium cards
-  lg: 16,  // large cards, nav bar
-  xl: 20,  // hero panels, bottom sheets
-  full: 999, // pills
+  xs: 8,    // chips, badges
+  sm: 12,   // inputs, small cards
+  md: 14,   // primary buttons, medium cards
+  lg: 16,   // large cards
+  xl: 20,   // hero panels, bottom sheets
+  hBtn: 13, // header icon buttons (rounded-square)
+  pill: 999, // true capsule pill (navbar, status badges)
+  full: 999, // alias — same as pill
 } as const;
 
 // ─── Spacing scale (4-pt grid) ─────────────────────────────────────────────────

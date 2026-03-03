@@ -23,11 +23,12 @@ export const G = {
         end: { x: 1, y: 1 },
     },
 
-    // SOS button active / triggered (violet-harmonious rose/crimson)
+    // SOS button LIVE state — danger (bright rose) → dangerLight (soft pink)
+    // Base uses T.danger as start, NOT dangerPressed. Gradient goes lighter.
     sosDanger: {
-        colors: [T.dangerMid, T.danger] as const,
-        start: { x: 0.2, y: 0.1 },
-        end: { x: 0.8, y: 0.9 },
+        colors: [T.danger, T.dangerLight] as const,
+        start: { x: 0.1, y: 0.0 },
+        end: { x: 0.9, y: 1.0 },
     },
 
     // Soft surface tint
