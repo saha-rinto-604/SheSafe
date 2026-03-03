@@ -14,15 +14,15 @@ type Props = {
 export default function AuthShell({ children, onBack }: Props) {
   return (
     <View style={styles.main}>
-      {/* Fixed Background */}
+      {/* Fixed Background — Nearly neutral with minimal brand tint */}
       <View style={styles.fixedHeader}>
         <LinearGradient
-          colors={[Theme.colors.gradientStart, Theme.colors.gradientEnd]}
+          colors={['#FAFBFC', '#F9FAFB', '#F3F4F6']}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={StyleSheet.absoluteFill}
         >
-          {/* Decorative shapes for a premium look */}
+          {/* Decorative shapes for a premium look — minimal purple */}
           <View style={styles.circle1} />
           <View style={styles.circle2} />
           <View style={styles.circle3} />
@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     width: width * 1.2,
     height: width * 1.2,
     borderRadius: width * 0.6,
-    backgroundColor: `${T.violetLight}66`, // Soft translucent lavender
+    backgroundColor: `rgba(168,85,247,0.08)`, // Very subtle purple — barely visible
     top: -width * 0.4,
     right: -width * 0.3,
   },
@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
     width: width * 0.6,
     height: width * 0.6,
     borderRadius: width * 0.3,
-    backgroundColor: `${T.violetDim}99`,
+    backgroundColor: `rgba(168,85,247,0.04)`, // Minimal purple tint
     bottom: -width * 0.15,
     left: -width * 0.1,
   },
@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
     width: width * 0.4,
     height: width * 0.4,
     borderRadius: width * 0.2,
-    backgroundColor: `${T.violet}1A`, // Very subtle primary tint
+    backgroundColor: `rgba(168,85,247,0.06)`, // Subtle accent
     top: width * 0.05,
     left: width * 0.1,
   },

@@ -5,17 +5,23 @@
 // ── Vibrant Lavender & Violet theme for a premium safety app.
 
 export const T = {
-  // ── Backgrounds
+  // ── Backgrounds & Surfaces
   // The app uses a full-screen vertical gradient background.
   bg: '#FFFFFF',          // Base white for card surfaces
-  bgMuted: '#F9F5FF',     // Extremely light lavender for subtle areas
+  bgMuted: '#F9FAFB',     // Neutral off-white for subtle areas
   surface: '#FFFFFF',     // Pure white for the main container
-
+  
+  // ── Surface variants — neutral grays for background elements
+  surfaceLight: '#FAFBFC',   // Lightest neutral surface for subtle backgrounds
+  surfaceMid: '#F3F4F6',     // Mid neutral for disabled, inactive backgrounds
+  surfaceDark: '#E5E7EB',    // Darker surface for hovered states
+  
   // ── Brand — Exact saturation from image
-  violet: '#A855F7',      // Primary Violet — used for buttons (CHECKOUT/PAY)
+  violet: '#A855F7',      // Primary Violet — used ONLY for buttons & active accents
   violetDark: '#9333EA',  // Deep Purple — for button shadows and active states
-  violetDim: '#F5F3FF',   // Softest lily tint — for inactive/muted states
-  violetLight: '#C084FC', // Medium Lavender — for product cards and highlights
+  violetDim: 'rgba(168,85,247,0.06)', // Extremely subtle purple tint (6%) — for active role cards only
+  violetLight: '#D8B4FE', // Light purple — reserved for specific CTA backgrounds
+  violetLighter: '#EDE9FE', // Very light purple for active state backgrounds
 
   // ── On-primary
   onPrimary: '#FFFFFF',
@@ -28,12 +34,21 @@ export const T = {
   ink: '#111827', // Headings — Maximum contrast dark grey
   ink2: '#374151', // Body text
   ink3: '#6B7280', // Secondary body
-  ink4: '#9CA3AF', // Muted text
-  ink5: '#D8B4FE', // Placeholder — tinted lavender
+  ink4: '#9CA3AF', // Muted text, icons
+  ink5: '#9CA3AF', // Placeholder text — neutral gray
 
-  // ── Borders
-  line: '#F3E8FF',   // Very soft lavender divider
-  lineMid: '#E9D5FF', // Form border — soft purple
+  // ── Borders — ALL neutral grays (no purple)
+  line: '#F3F4F6',        // Very light neutral divider / disabled borders
+  lineMid: '#E5E7EB',     // Standard form border — neutral gray
+  lineBold: '#D1D5DB',    // Stronger border for more contrast
+  
+  // ── Neutral grays for UI components
+  gray50: '#F9FAFB',
+  gray100: '#F3F4F6',
+  gray200: '#E5E7EB',
+  gray300: '#D1D5DB',
+  gray400: '#9CA3AF',
+  gray500: '#6B7280',
 
   // ── Feedback — violet-harmonious danger scale (rose/crimson, not pure red)
   danger: '#BE123C', // Primary danger — deep rose (LIVE button, critical icons)
@@ -47,14 +62,13 @@ export const T = {
   success: '#10B981',
   safeLight: '#ECFDF5',
 
-  // ── Disabled
-  disabled: '#E9D5FF',
-  disabledBg: '#FAF5FF',
+  // ── Disabled & Inactive
+  disabled: '#E5E7EB',
+  disabledBg: '#F3F4F6',
+  disabledText: '#9CA3AF',
 
-  // ── Nav icon inactive — violet-tinted soft lavender for premium inactive state
-  // Warmer than neutral grey; on-brand with the violet design language
-  // rgba(168,85,247,0.38) over white ≈ #C9A8F7 — sits between violetLight and ink5
-  navIconMuted: '#7D6BBE', // Darker violet for better contrast in inactive state
+  // ── Nav icon inactive — sophisticated on-brand purple for premium appearance
+  navIconMuted: '#9B8AB5', // Muted purple — professional, visible, on-brand (better than neutral gray)
 
   // ── Glass surface tokens (for header / navbar overlay approach)
   // Layer 1: translucent white base for floating bars over map

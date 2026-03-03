@@ -204,7 +204,7 @@ const st = StyleSheet.create({
     borderRadius: R.sm,
     borderWidth: 1.5,
     borderColor: T.lineMid,
-    backgroundColor: T.bgMuted,
+    backgroundColor: T.surface,
     paddingHorizontal: S.s4,
   },
   inputFocused: {

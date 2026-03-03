@@ -321,12 +321,15 @@ const NavTab = memo(function NavTab({
             accessibilityLabel={tab.label}
         >
             <Animated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
-                {/* Active = filled/solid icon, Inactive = outline icon */}
-                <Ionicons
-                    name={(isActive ? tab.iconActive : tab.iconOutline) as any}
-                    size={26}
-                    color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
-                />
+                {/* White background box around icon — matches header button style */}
+                <View style={s.navIconBox}>
+                    {/* Active = filled/solid icon, Inactive = outline icon */}
+                    <Ionicons
+                        name={(isActive ? tab.iconActive : tab.iconOutline) as any}
+                        size={20}
+                        color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
+                    />
+                </View>
                 {/* 3px×16px dot — active indicator */}
                 <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
             </Animated.View>
@@ -821,8 +824,8 @@ const s = StyleSheet.create({
     pillTxtLive: { color: T.dangerText },
 
     // ── TRUE CAPSULE PILL NAVBAR — icons-only, bold active/outline inactive
-    // Total height ≈ 50px: paddingV(11) + icon(26) + dot(3) + paddingV(11) = 51px
-    // Generous top/bottom so icons never touch the pill edges (reference visual)
+    // Total height ≈ 46px: paddingV(8) + icon(20) + dot(3) + paddingV(8) = 47px
+    // Consistent 20px icons (header standard) with generous padding
     navWrap: {
         position: 'absolute',
         left: 0, right: 0,
@@ -863,6 +866,14 @@ const s = StyleSheet.create({
         width: 16, height: 3,
         borderRadius: 1.5,
         marginTop: 5,
+    },
+    // White square background for navbar icons — exactly matches header button style (hBtn)
+    navIconBox: {
+        width: 36, height: 36,
+        borderRadius: R.hBtn,  // 13 — identical to header buttons
+        backgroundColor: 'rgba(255,255,255,0.84)',
+        borderWidth: 1, borderColor: `${T.violet}20`,
+        alignItems: 'center', justifyContent: 'center',
     },
 
     // ── Drawer

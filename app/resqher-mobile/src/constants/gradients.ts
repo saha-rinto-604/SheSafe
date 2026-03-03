@@ -1,22 +1,23 @@
 import { T } from './theme';
 
 export const G = {
-    // Primary button / nav active gradient
-    // Matches the vibrant "CHECKOUT" / "PAY" violet exactly.
+    // Primary button / nav active gradient — ONLY place purple gradients appear
+    // Keep this vibrant as the brand accent
     navActive: {
         colors: ['#A855F7', '#9333EA'] as const,
         start: { x: 0, y: 0 },
         end: { x: 1, y: 0 },
     },
 
-    // App background gradient — vertical purple transition from image
+    // App background gradient — NEUTRAL (no longer purple)
+    // Use for legacy compatibility only — prefer direct colors now
     authBg: {
-        colors: ['#F5F3FF', '#E9D5FF', '#D8B4FE'] as ['#F5F3FF', '#E9D5FF', '#D8B4FE'],
+        colors: ['#FAFBFC', '#F9FAFB', '#F3F4F6'] as ['#FAFBFC', '#F9FAFB', '#F3F4F6'],
         start: { x: 0, y: 0 },
         end: { x: 0, y: 1 }, // Vertical
     },
 
-    // SOS button idle — vibrant medium lavender
+    // SOS button idle — vibrant medium lavender (preserved for SOS context only)
     sosIdle: {
         colors: ['#D8B4FE', '#C084FC'] as const,
         start: { x: 0, y: 0 },
@@ -31,16 +32,17 @@ export const G = {
         end: { x: 0.9, y: 1.0 },
     },
 
-    // Soft surface tint
+    // Soft surface tint — NEUTRAL grays instead of purple
     softTone: {
         colors: [T.bgMuted, T.disabledBg] as const,
         start: { x: 0, y: 0 },
         end: { x: 0, y: 1 },
     },
 
-    // Card fill — matching the product items (Tomato Candle, etc.)
+    // Card fill — NEUTRAL instead of purple gradient
+    // Subtle gray gradient for card backgrounds
     cardFill: {
-        colors: ['#E9D5FF', '#D8B4FE'] as ['#E9D5FF', '#D8B4FE'],
+        colors: [T.surfaceLight, T.bgMuted] as const,
         start: { x: 0, y: 0 },
         end: { x: 1, y: 1 },
     },
