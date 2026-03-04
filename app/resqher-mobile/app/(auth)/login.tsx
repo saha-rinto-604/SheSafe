@@ -31,7 +31,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       /* Real auth: await signIn(data.phone.trim(), data.password); */
-      router.replace('/users/sos_screen');
+      router.replace('/(tabs)/users/standard-user/sos_screen');
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {

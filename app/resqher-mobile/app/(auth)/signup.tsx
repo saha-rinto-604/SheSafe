@@ -155,7 +155,15 @@ export default function Signup() {
     setSubmitting(true);
     setTimeout(() => {
       setSubmitting(false);
-      router.replace('/users/sos_screen');
+
+      const rolePaths: Record<Role, string> = {
+        'USER': '/(tabs)/users/standard-user/sos_screen',
+        'VOLUNTEER': '/(tabs)/users/volunteer/dashboard',
+        'POLICE': '/(tabs)/users/police/dashboard',
+        'ADMIN': '/(tabs)/users/admin/dashboard',
+      };
+
+      router.replace(rolePaths[role] as any);
     }, 1500);
   };
 

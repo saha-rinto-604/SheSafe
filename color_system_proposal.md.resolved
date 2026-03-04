@@ -1,0 +1,189 @@
+# ResQher — Unified Dark Mode Color System Proposal
+
+## Project Overview
+
+**ResQher** is a women's safety mobile app (React Native / Expo Router) with these key screens:
+
+| Screen | File | Current State |
+|---|---|---|
+| **SOS / Home** | [sos_screen.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/(tabs)/sos_screen.tsx) | Map + SOS button + bottom nav. Light mode, white bg |
+| **Login** | [login.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/(auth)/login.tsx) | Auth form with lavender gradient shell |
+| **Signup** | [signup.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/(auth)/signup.tsx) | Multi-step form with progress tracker |
+| **Auth Shell** | [AuthShell.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/components/auth/AuthShell.tsx) | Neutral gradient bg + decorative circles |
+| **Explore** | [explore.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/(tabs)/explore.tsx) | Default Expo template (placeholder) |
+
+**Design System Files:**
+- [theme.ts](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/src/constants/theme.ts) — Colors `T`, Radius `R`, Spacing `S`, Typography `Ty`, Shadows [Sh](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/components/auth/AuthShell.tsx#14-58)
+- [gradients.ts](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/src/constants/gradients.ts) — Gradient presets `G`
+
+---
+
+## Current vs. Proposed Direction
+
+> [!WARNING]
+> The current theme is **entirely Light Mode** (white backgrounds, light grays, lavender tints). The designer recommends a **Dark Mode-only "Tactical"** interface per NFR-007 (high-contrast emergency UI). This is a significant visual overhaul.
+
+---
+
+## Proposed Unified Color Palette
+
+The palette below is designed to be a **single source of truth** across every screen in the app — auth, SOS, evidence vault, volunteer feed, and map.
+
+### Core Backgrounds & Surfaces
+
+| Token | Hex | Usage |
+|---|---|---|
+| `bg` | `#0D0D0F` | True black base — deepest layer |
+| `bgElevated` | `#121214` | Primary screen background (NFR-007 reference `#121212`) |
+| `surface` | `#1A1A1E` | Cards, modals, bottom sheets |
+| `surfaceLight` | `#222228` | Elevated cards, active list items |
+| `surfaceGlass` | `rgba(26,26,30,0.85)` | Glassmorphism overlays (Evidence Vault, headers) |
+| `surfaceOverlay` | `rgba(75,0,130,0.08)` | Subtle brand tint on glass surfaces |
+
+### Brand — Deep Purple
+
+| Token | Hex | Usage |
+|---|---|---|
+| `brand` | `#4B0082` | **Primary brand** — the designer's chosen Deep Purple |
+| `brandLight` | `#7B2FBE` | Hover/focus states, secondary buttons |
+| `brandMuted` | `rgba(75,0,130,0.25)` | Subtle backgrounds, active nav tint |
+| `brandGlow` | `rgba(75,0,130,0.40)` | Pulsing map marker, scanning rings |
+| `violet` | `#A855F7` | Accent highlights, gradient ends, CTA shimmer |
+| `violetDark` | `#9333EA` | Button gradient dark end |
+
+### Tactical Status Colors
+
+| Token | Hex | Role |
+|---|---|---|
+| `danger` | `#E23636` | **Safety Red** — Police marker, SOS LIVE state |
+| `dangerDark` | `#BE123C` | Pressed danger states |
+| `dangerGlow` | `rgba(226,54,54,0.35)` | SOS pulse rings (live) |
+| `warning` | `#F59E0B` | **Gold** — Volunteer markers |
+| `warningDark` | `#D97706` | Pressed warning states |
+| `success` | `#10B981` | Connection established, safe zone |
+| `successGlow` | `rgba(16,185,129,0.30)` | "Secure connection" animation |
+| `info` | `#3B82F6` | ETA badges, distance indicators |
+
+### Text Hierarchy (on dark)
+
+| Token | Hex | Usage |
+|---|---|---|
+| `ink` | `#F5F5F7` | Primary headings — near-white |
+| `ink2` | `#D1D1D6` | Body text |
+| `ink3` | `#8E8E93` | Secondary / muted text |
+| `ink4` | `#636366` | Placeholders, disabled labels |
+| `ink5` | `#48484A` | Ghost text, ultra-muted |
+
+### Borders & Dividers
+
+| Token | Hex | Usage |
+|---|---|---|
+| `line` | `#2C2C2E` | Subtle dividers |
+| `lineMid` | `#3A3A3C` | Input borders, card outlines |
+| `lineBold` | `#48484A` | Stronger separation |
+| `lineBrand` | `rgba(75,0,130,0.30)` | Active/focused input borders |
+
+### Map-Specific
+
+| Token | Hex | Role |
+|---|---|---|
+| `mapBg` | Dark Grayscale Style | Silver/charcoal base, all POIs hidden |
+| `markerVictim` | `#4B0082` | Pulsing Deep Purple dot |
+| `markerPolice` | `#E23636` | Safety Red |
+| `markerVolunteer` | `#F59E0B` | Gold |
+| `markerUser` | `#A855F7` | Violet for "you are here" |
+
+---
+
+## Gradient Presets
+
+| Name | Colors | Usage |
+|---|---|---|
+| `brandGradient` | `#4B0082 → #7B2FBE` | Primary CTA buttons, nav active pill |
+| `sosIdle` | `#4B0082 → #A855F7` | SOS button resting state |
+| `sosLive` | `#E23636 → #BE123C` | SOS button active/live |
+| `authBg` | `#0D0D0F → #121214` | Auth screen background |
+| `surfaceTint` | `#1A1A1E → #222228` | Card fills |
+| `scanningRing` | `rgba(75,0,130,0.40) → rgba(75,0,130,0)` | Scanning animation radial fade |
+
+---
+
+## Per-Screen Color Application
+
+### 1. Tactical Map (SOS Home)
+- **Background:** `bgElevated` (#121214)
+- **Map style:** Dark Grayscale — all POIs hidden
+- **Markers:** Victim = pulsing `brand`, Police = `danger`, Volunteers = `warning`
+- **Header bar:** `surfaceGlass` with `surfaceOverlay` tint
+- **SOS Button:** `sosIdle` gradient (idle) → `sosLive` gradient (active)
+- **Pulse rings:** `brandGlow` (idle) → `dangerGlow` (live)
+
+### 2. SOS Active Screen
+- **Background:** `bgElevated`
+- **Status header:** "HELP IS ON THE WAY" in `ink` on `surface` card
+- **Cancel button:** Slide-to-cancel on `danger` with `ink` text
+- **Quick actions:** Glass pills with `danger` (Call Police) and `brand` (Evidence Vault) icons
+- **Chat preview (30%):** `surface` card with `lineMid` border
+
+### 3. Evidence Vault
+- **Background:** `bgElevated`
+- **Cards:** `surfaceGlass` with glassmorphism blur
+- **Media grid:** `surface` thumbnails, `lineMid` borders
+- **"Encrypted" labels:** `success` text + lock icon
+- **Audio waveform:** `brand` wave on `surface` background
+- **Recording state:** Pulsing `danger` dot + "REC" label
+
+### 4. Volunteer Incident Feed
+- **Background:** `bgElevated`
+- **SOS Cards:** `surface` bg, `lineMid` border
+- **Distance/ETA badges:** `info` bg pill
+- **Incident type chip:** `danger` for harassment, `warning` for general
+- **Accept button:** Full-width `brandGradient` — the brightest element on screen
+- **Mission view:** Map 70% + chat 30%, same tactical map style
+
+### 5. Auth (Login / Signup)
+- **Background:** `authBg` gradient (very dark)
+- **Cards:** `surface` with `lineMid` border
+- **Inputs:** `surfaceLight` bg, `lineMid` border → `lineBrand` on focus
+- **CTA button:** `brandGradient`
+- **Logo icon:** `brand` on `surfaceLight` circle
+- **Decorative circles:** `brandMuted` instead of current lavender
+
+---
+
+## Visual Hierarchy Summary
+
+```
+┌─────────────────────────────────────────────┐
+│              BRIGHTNESS SCALE                │
+│                                              │
+│  ████  BRIGHTEST — Safety Red (#E23636)      │
+│  ████  HIGH      — Gold (#F59E0B)            │
+│  ████  PRIMARY   — Deep Purple (#4B0082)     │
+│  ████  ACCENT    — Violet (#A855F7)          │
+│  ████  INFO      — Blue (#3B82F6)            │
+│  ████  SUCCESS   — Emerald (#10B981)         │
+│  ░░░░  TEXT      — Near-white (#F5F5F7)      │
+│  ░░░░  MUTED     — Gray (#8E8E93)            │
+│  ▓▓▓▓  SURFACE   — Dark card (#1A1A1E)       │
+│  ████  BASE      — Near-black (#121214)      │
+└─────────────────────────────────────────────┘
+```
+
+> [!IMPORTANT]
+> **Key design principle:** On the dark tactical interface, only **actionable elements** should be colorful. The background and surfaces stay dark/neutral so that markers, buttons, and status indicators "pop" with maximum contrast per NFR-007.
+
+---
+
+## Migration Considerations
+
+> [!CAUTION]
+> This is a **full theme overhaul** from Light → Dark. Every screen file that references `T.*` colors will need updates. The approach should be:
+> 1. Update [theme.ts](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/src/constants/theme.ts) and [gradients.ts](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/src/constants/gradients.ts) with the new dark palette
+> 2. Update [AuthShell.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/components/auth/AuthShell.tsx) (remove light gradient, add dark background)
+> 3. Update [sos_screen.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/%28tabs%29/sos_screen.tsx) styles (all white → dark surface colors)
+> 4. Update [login.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/%28auth%29/login.tsx) / [signup.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/%28auth%29/signup.tsx) form styles
+> 5. Update [_layout.tsx](file:///c:/Users/rinto/ResQher_app/app/resqher-mobile/app/_layout.tsx) StatusBar from `dark` → `light` (for light text on dark bg)
+> 6. Add tactical map JSON style (dark grayscale, POIs hidden)
+
+This should be done **incrementally per screen** to avoid regressions.
