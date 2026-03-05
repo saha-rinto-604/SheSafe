@@ -1,49 +1,58 @@
+
 import React from 'react';
-import { SafeAreaView, View, StyleSheet, Dimensions, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
+import {
+  SafeAreaView, View, StyleSheet,
+  KeyboardAvoidingView, Platform, TouchableOpacity,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { T, Theme } from '../../src/constants/theme';
-
-const { width } = Dimensions.get('window');
+import { T } from '../../src/constants/theme';
+import { G } from '../../src/constants/gradients';
 
 type Props = {
   children: React.ReactNode;
   onBack?: () => void;
 };
 
+// ─── Mesh Aurora — breathing blurred shapes ─────────────────────────────────
+// 3 overlapping irregular violet orbs with 12% opacity, blur ≈ 100
+// Creates the "SocialGrow" light-emission-from-below premium look
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// ─── Auth Shell ─────────────────────────────────────────────────────────────
 export default function AuthShell({ children, onBack }: Props) {
   return (
     <View style={styles.main}>
-      {/* Fixed Background — Nearly neutral with minimal brand tint */}
-      <View style={styles.fixedHeader}>
-        <LinearGradient
-          colors={['#FAFBFC', '#F9FAFB', '#F3F4F6']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        >
-          {/* Decorative shapes for a premium look — minimal purple */}
-          <View style={styles.circle1} />
-          <View style={styles.circle2} />
-          <View style={styles.circle3} />
-        </LinearGradient>
-      </View>
+      {/* Rising Violet Aura — SocialGrow gradient */}
+      <LinearGradient
+        colors={G.authBg.colors}
+        locations={[0, 0.7, 1.0] as [number, number, ...number[]]}
+        start={G.authBg.start}
+        end={G.authBg.end}
+        style={StyleSheet.absoluteFill}
+      />
+
+
 
       <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
           {onBack && (
             <TouchableOpacity
               style={styles.backButton}
               onPress={onBack}
               hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
             >
-              <Feather name="chevron-left" size={24} color={Theme.colors.primaryDark} />
+              <Feather name="chevron-left" size={24} color={T.ink} />
             </TouchableOpacity>
           )}
 
           <View style={styles.logoContainer}>
             <View style={styles.logoIconBg}>
-              <Feather name="shield" size={42} color={Theme.colors.primary} />
+              <Feather name="shield" size={42} color={T.violet} />
             </View>
           </View>
 
@@ -57,45 +66,9 @@ export default function AuthShell({ children, onBack }: Props) {
 }
 
 const styles = StyleSheet.create({
-  main: { flex: 1, backgroundColor: Theme.colors.background },
+  main: { flex: 1, backgroundColor: '#000000' },
   safe: { flex: 1 },
-  fixedHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 340,
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
-    overflow: 'hidden',
-  },
-  circle1: {
-    position: 'absolute',
-    width: width * 1.2,
-    height: width * 1.2,
-    borderRadius: width * 0.6,
-    backgroundColor: `rgba(168,85,247,0.08)`, // Very subtle purple — barely visible
-    top: -width * 0.4,
-    right: -width * 0.3,
-  },
-  circle2: {
-    position: 'absolute',
-    width: width * 0.6,
-    height: width * 0.6,
-    borderRadius: width * 0.3,
-    backgroundColor: `rgba(168,85,247,0.04)`, // Minimal purple tint
-    bottom: -width * 0.15,
-    left: -width * 0.1,
-  },
-  circle3: {
-    position: 'absolute',
-    width: width * 0.4,
-    height: width * 0.4,
-    borderRadius: width * 0.2,
-    backgroundColor: `rgba(168,85,247,0.06)`, // Subtle accent
-    top: width * 0.05,
-    left: width * 0.1,
-  },
+
   logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -109,16 +82,22 @@ const styles = StyleSheet.create({
     backgroundColor: T.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: T.violetDark,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
-    elevation: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(138,56,246,0.20)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#8A38F6',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.45,
+        shadowRadius: 30,
+      },
+      android: { elevation: 16 },
+    }),
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingBottom: 40
+    paddingBottom: 40,
   },
   backButton: {
     position: 'absolute',
@@ -127,14 +106,20 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: T.surface,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 100,
-    shadowColor: T.ink,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#8A38F6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: { elevation: 6 },
+    }),
   },
 });

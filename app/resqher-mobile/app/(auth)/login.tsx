@@ -13,7 +13,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 import AuthShell from '../../components/auth/AuthShell';
-import { T, R, S, Ty, Theme } from '../../src/constants/theme';
+import { T, R, S, Ty } from '../../src/constants/theme';
+import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
 
 type FormData = { phone: string; password: string };
@@ -147,9 +148,9 @@ export default function Login() {
             accessibilityLabel="Login"
           >
             <LinearGradient
-              colors={[T.violet, T.violetDark]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
+              colors={G.navActive.colors}
+              start={G.navActive.start}
+              end={G.navActive.end}
               style={st.gradientBtn}
             >
               {submitting
@@ -183,18 +184,18 @@ const st = StyleSheet.create({
     padding: S.s5,
     paddingBottom: S.s4,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(138,56,246,0.15)',
     ...Platform.select({
-      ios: { shadowColor: T.ink, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
-      android: { elevation: 5 },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } },
+      android: { elevation: 12 },
     }),
   },
 
-  // ── Header — reduced bottom margin so it fits on one screen
   header: { alignItems: 'center', marginBottom: S.s4 },
   title: { ...Ty.h2, marginBottom: 2 },
   subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
 
-  // ── Form group
   form: { gap: S.s2 },
 
   inputWrap: {
@@ -203,14 +204,14 @@ const st = StyleSheet.create({
     height: 50,
     borderRadius: R.sm,
     borderWidth: 1.5,
-    borderColor: T.lineMid,
-    backgroundColor: T.surface,
+    borderColor: T.lineBold,
+    backgroundColor: T.surfaceCard,
     paddingHorizontal: S.s4,
   },
   inputFocused: {
     borderColor: T.violet,
     borderWidth: 2,
-    backgroundColor: T.surface,
+    backgroundColor: 'rgba(138,56,246,0.06)',
   },
   inputError: {
     borderColor: T.danger,
@@ -228,18 +229,16 @@ const st = StyleSheet.create({
     marginTop: 2,
   },
 
-  // Forgot password — sits inline below password field, right-aligned
   forgotRow: { alignItems: 'flex-end', paddingVertical: 2 },
   forgotTxt: { fontSize: 13, fontWeight: '600', color: T.violet },
 
-  // ── Button
   primaryBtn: {
     marginTop: S.s4,
     borderRadius: R.md,
     overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: T.violetDark, shadowOpacity: 0.30, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-      android: { elevation: 5 },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.35, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 8 },
     }),
   },
   gradientBtn: {
@@ -249,7 +248,6 @@ const st = StyleSheet.create({
   },
   btnTxt: { ...Ty.btn },
 
-  // ── Bottom link
   linkRow: { marginTop: S.s3, alignItems: 'center', paddingVertical: S.s1 },
   linkTxt: { ...Ty.helper, fontSize: 13, color: T.ink4 },
   linkAccent: { color: T.violet, fontWeight: '700' },

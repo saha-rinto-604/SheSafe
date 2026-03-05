@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { T, Ty, R, S } from '../../../../src/constants/theme';
 import { useRouter } from 'expo-router';
@@ -9,6 +10,7 @@ export default function AdminDashboard() {
 
     return (
         <SafeAreaView style={st.container}>
+            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <View style={st.header}>
                 <Text style={st.title}>Admin Control Center</Text>
                 <TouchableOpacity style={st.profileBtn}>
@@ -45,6 +47,8 @@ const st = StyleSheet.create({
         alignItems: 'center',
         padding: S.s4,
         backgroundColor: T.surface,
+        borderBottomWidth: 1,
+        borderBottomColor: T.lineMid,
     },
     title: {
         ...Ty.h2,
@@ -79,7 +83,7 @@ const st = StyleSheet.create({
         color: T.ink2,
     },
     sosBtn: {
-        backgroundColor: T.danger,
+        backgroundColor: T.violet,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',

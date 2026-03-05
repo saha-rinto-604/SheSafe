@@ -1,86 +1,88 @@
-// ─── ResQher Design System ─────────────────────────────────────────────────────
+// ─── ResQher Design System — Premium Tactical Dark Mode ─────────────────────
 // Single source of truth. Import T, R, S, Ty, Sh from here everywhere.
-
-// ── Exact color palette extracted from the reference image.
-// ── Vibrant Lavender & Violet theme for a premium safety app.
+// Primary: Electric Violet (#8A38F6) — High-contrast dark system.
 
 export const T = {
-  // ── Backgrounds & Surfaces
-  // The app uses a full-screen vertical gradient background.
-  bg: '#FFFFFF',          // Base white for card surfaces
-  bgMuted: '#F9FAFB',     // Neutral off-white for subtle areas
-  surface: '#FFFFFF',     // Pure white for the main container
-  
-  // ── Surface variants — neutral grays for background elements
-  surfaceLight: '#FAFBFC',   // Lightest neutral surface for subtle backgrounds
-  surfaceMid: '#F3F4F6',     // Mid neutral for disabled, inactive backgrounds
-  surfaceDark: '#E5E7EB',    // Darker surface for hovered states
-  
-  // ── Brand — Exact saturation from image
-  violet: '#A855F7',      // Primary Violet — used ONLY for buttons & active accents
-  violetDark: '#9333EA',  // Deep Purple — for button shadows and active states
-  violetDim: 'rgba(168,85,247,0.06)', // Extremely subtle purple tint (6%) — for active role cards only
-  violetLight: '#D8B4FE', // Light purple — reserved for specific CTA backgrounds
-  violetLighter: '#EDE9FE', // Very light purple for active state backgrounds
+  // ── Backgrounds & Surfaces — True OLED Black base
+  bg: '#000000',              // True OLED Black — max battery, max contrast
+  bgElevated: '#0A0A0C',     // Slightly lifted — for overlays behind cards
+  surface: '#111113',        // Surface Elevated — cards, modals, headers
+  surfaceCard: '#1A1A1E',    // Glassmorphism card fill (80% opacity)
+
+  // ── Surface variants — dark grays for layering
+  surfaceLight: '#1A1A1E',   // Lightest dark surface
+  surfaceMid: '#2C2C2E',     // Mid dark — disabled, inactive
+  surfaceDark: '#3A3A3C',    // For hovered/pressed states
+
+  // ── Brand — Electric Violet
+  violet: '#8A38F6',         // Primary Electric Violet — buttons & active accents
+  violetDark: '#6D28D9',     // Deep Violet — button pressed, gradient end
+  violetDim: 'rgba(138,56,246,0.10)',  // Subtle purple tint — active role cards
+  violetLight: '#A855F7',    // Lighter violet — for highlights
+  violetLighter: 'rgba(138,56,246,0.15)', // Very subtle bg tint
+
+  // ── Brand Glow — for pulsing effects & halos
+  brandGlow: 'rgba(138,56,246,0.40)', // Pulsing SOS glow, button aura
 
   // ── On-primary
   onPrimary: '#FFFFFF',
 
-  // ── Accent
-  accent: '#F97316',
-  accentLight: '#FFF7ED',
+  // ── Accent — Gold (Volunteer-specific)
+  accent: '#F59E0B',         // Gold — volunteer markers & accents
+  accentLight: 'rgba(245,158,11,0.12)', // Gold tint for badge bg
 
-  // ── Text scale
-  ink: '#111827', // Headings — Maximum contrast dark grey
-  ink2: '#374151', // Body text
-  ink3: '#6B7280', // Secondary body
-  ink4: '#9CA3AF', // Muted text, icons
-  ink5: '#9CA3AF', // Placeholder text — neutral gray
+  // ── Text scale — high-contrast luminous hierarchy
+  ink: '#F5F5F7',            // Primary headings — near-white
+  ink2: '#E5E5EA',           // Body text — bright white-gray
+  ink3: '#8E8E93',           // Secondary metadata — tactical gray
+  ink4: '#636366',           // Muted text, icons — low emphasis
+  ink5: '#48484A',           // Placeholder text — very muted
 
-  // ── Borders — ALL neutral grays (no purple)
-  line: '#F3F4F6',        // Very light neutral divider / disabled borders
-  lineMid: '#E5E7EB',     // Standard form border — neutral gray
-  lineBold: '#D1D5DB',    // Stronger border for more contrast
-  
-  // ── Neutral grays for UI components
-  gray50: '#F9FAFB',
-  gray100: '#F3F4F6',
-  gray200: '#E5E7EB',
-  gray300: '#D1D5DB',
-  gray400: '#9CA3AF',
-  gray500: '#6B7280',
+  // ── Borders — subtle dividers on dark backgrounds
+  line: 'rgba(255,255,255,0.04)',     // Very faint divider
+  lineMid: 'rgba(255,255,255,0.08)', // Standard border
+  lineBold: 'rgba(255,255,255,0.14)', // Stronger border for contrast
 
-  // ── Feedback — violet-harmonious danger scale (rose/crimson, not pure red)
-  danger: '#BE123C', // Primary danger — deep rose (LIVE button, critical icons)
-  dangerMid: '#E11D48', // Mid danger — for pulse rings only
-  dangerPressed: '#9F1239', // Pressed/darker danger — for press states
-  dangerLight: '#FFF1F2', // Tinted background surface for danger areas
-  dangerBorder: '#FDA4AF', // Subtle border/ring — pinkish, non-jarring
-  dangerText: '#9F1239', // Text on light danger backgrounds
-  dangerBg: '#FFF1F2', // Chip / badge background
-  onDanger: '#FFFFFF', // Text/icon on danger fill surfaces
-  success: '#10B981',
-  safeLight: '#ECFDF5',
+  // ── Neutral grays for UI components (dark scale)
+  gray50: '#1C1C1E',
+  gray100: '#2C2C2E',
+  gray200: '#3A3A3C',
+  gray300: '#48484A',
+  gray400: '#636366',
+  gray500: '#8E8E93',
+
+  // ── Feedback — Tactical colors
+  danger: '#E23636',         // Safety Red — SOS Live, police alerts
+  dangerMid: '#DC2626',      // Mid danger — pulse rings
+  dangerPressed: '#B91C1C',  // Pressed/darker danger
+  dangerLight: 'rgba(226,54,54,0.12)', // Tinted bg for danger areas
+  dangerBorder: 'rgba(226,54,54,0.30)', // Subtle ring
+  dangerText: '#FCA5A5',     // Text on dark danger backgrounds
+  dangerBg: 'rgba(226,54,54,0.10)', // Chip background
+  onDanger: '#FFFFFF',       // Text on danger fill
+  success: '#10B981',        // Emerald — Secure/Success
+  safeLight: 'rgba(16,185,129,0.10)', // Success bg tint
+  gold: '#F59E0B',           // Volunteer markers
 
   // ── Disabled & Inactive
-  disabled: '#E5E7EB',
-  disabledBg: '#F3F4F6',
-  disabledText: '#9CA3AF',
+  disabled: '#2C2C2E',
+  disabledBg: '#1C1C1E',
+  disabledText: '#48484A',
 
-  // ── Nav icon inactive — sophisticated on-brand purple for premium appearance
-  navIconMuted: '#9B8AB5', // Muted purple — professional, visible, on-brand (better than neutral gray)
+  // ── Nav icon inactive — muted violet for premium appearance on dark
+  navIconMuted: '#6B5B95',   // Desaturated violet — visible, on-brand
 
-  // ── Glass surface tokens (for header / navbar overlay approach)
-  // Layer 1: translucent white base for floating bars over map
-  surfaceGlass: 'rgba(255,255,255,0.92)',
-  // Layer 2: single solid violet tint at 7% — replaces the heavier gradient overlay
-  // Use this as backgroundColor on an absoluteFill view instead of LinearGradient
-  surfaceOverlay: 'rgba(168,85,247,0.07)',
-  // Deprecated fraction kept for back-compat (not used in new components)
+  // ── Glass surface tokens (dark glassmorphism)
+  surfaceGlass: 'rgba(26,26,30,0.80)',   // 80% dark glass
+  surfaceOverlay: 'rgba(138,56,246,0.07)', // Violet tint overlay
   gradientOverlayOpacity: 0.07 as number,
+
+  // ── Glow tokens for ambient lighting effects
+  glowViolet: 'rgba(138,56,246,0.15)',   // Ambient violet halo
+  glowDanger: 'rgba(226,54,54,0.15)',    // Ambient red halo (LIVE)
 } as const;
 
-// ── Legacy export
+// ── Legacy export — maps to T tokens for backward compat
 export const Theme = {
   colors: {
     background: T.bg,
@@ -88,9 +90,10 @@ export const Theme = {
     primary: T.violet,
     primaryDark: T.violetDark,
     primaryLight: T.violetLight,
-    // Auth shell background: Top soft lavender (#F5F3FF) → Bottom saturated lavender (#D8B4FE)
-    gradientStart: '#F5F3FF',
-    gradientEnd: '#D8B4FE',
+    // Auth gradient: Deep Midnight → subtle violet glow
+    gradientStart: '#08070B',
+    gradientMid: '#1A1033',
+    gradientEnd: 'rgba(138,56,246,0.15)',
     accent: T.accent,
     accentLight: T.accentLight,
     text: T.ink,
@@ -99,7 +102,7 @@ export const Theme = {
     border: T.lineMid,
     danger: T.danger,
     success: T.success,
-    safe: '#ECFDF5',
+    safe: T.safeLight,
     safeLight: T.safeLight,
   },
 };
@@ -128,43 +131,52 @@ export const S = {
   s8: 64,
 } as const;
 
-// ─── Typography scale ──────────────────────────────────────────────────────────
+// ─── Typography scale — luminous on dark ────────────────────────────────────────
 export const Ty = {
-  // Headings
+  // Headings — near-white for max contrast
   h1: { fontSize: 28, fontWeight: '800' as const, letterSpacing: -0.5, color: T.ink },
   h2: { fontSize: 22, fontWeight: '800' as const, letterSpacing: -0.4, color: T.ink },
   h3: { fontSize: 18, fontWeight: '700' as const, letterSpacing: -0.2, color: T.ink },
 
-  // Body
+  // Body — bright gray
   body: { fontSize: 15, fontWeight: '400' as const, color: T.ink2, lineHeight: 22 },
   bodyMd: { fontSize: 14, fontWeight: '400' as const, color: T.ink2, lineHeight: 20 },
   bodySm: { fontSize: 13, fontWeight: '400' as const, color: T.ink3, lineHeight: 18 },
 
-  // Labels (form, section)
-  label: { fontSize: 11, fontWeight: '700' as const, letterSpacing: 0.7, textTransform: 'uppercase' as const, color: T.ink2 },
+  // Labels (form, section) — muted metadata
+  label: { fontSize: 11, fontWeight: '700' as const, letterSpacing: 0.7, textTransform: 'uppercase' as const, color: T.ink3 },
 
   // UI text
   btn: { fontSize: 16, fontWeight: '700' as const, color: T.onPrimary, letterSpacing: 0.2 },
   link: { fontSize: 14, fontWeight: '600' as const, color: T.violet },
   helper: { fontSize: 12, fontWeight: '400' as const, color: T.ink4 },
-  error: { fontSize: 12, fontWeight: '500' as const, color: T.danger },
+  error: { fontSize: 12, fontWeight: '500' as const, color: T.dangerText },
 } as const;
 
-// ─── Shadow system ─────────────────────────────────────────────────────────────
+// ─── Shadow system — violet-tinted glows on dark ────────────────────────────────
 export const Sh = {
-  // For floating elements over white backgrounds
+  // For floating cards on dark backgrounds
   card: {
-    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.10, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } } as const,
-    android: { elevation: 6 },
+    ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 20, shadowOffset: { width: 0, height: 6 } } as const,
+    android: { elevation: 8 },
   },
-  // For heavy modal / drawer (violet-tinted shadow like the reference)
+  // For heavy modals / drawers
   modal: {
-    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.15, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } } as const,
-    android: { elevation: 14 },
+    ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 32, shadowOffset: { width: 0, height: 10 } } as const,
+    android: { elevation: 16 },
   },
-  // For floating map elements (subtle)
+  // For floating map elements
   map: {
-    ios: { shadowColor: '#5B21B6', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } } as const,
-    android: { elevation: 3 },
+    ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } } as const,
+    android: { elevation: 4 },
+  },
+  // SOS glow effect
+  sosGlow: {
+    ios: { shadowColor: '#8A38F6', shadowOpacity: 0.40, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } } as const,
+    android: { elevation: 12 },
+  },
+  sosGlowDanger: {
+    ios: { shadowColor: '#E23636', shadowOpacity: 0.35, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } } as const,
+    android: { elevation: 12 },
   },
 } as const;

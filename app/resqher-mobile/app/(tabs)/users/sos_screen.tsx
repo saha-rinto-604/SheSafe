@@ -1,6 +1,7 @@
 /**
  * app/(tabs)/users/sos_screen.tsx
- * Canonical SOS screen — (tabs)/users/ group.
+ * Canonical SOS screen — Premium Tactical Dark Mode
+ * All business logic / API / haptics preserved. Visual tokens updated.
  */
 
 import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
@@ -16,13 +17,14 @@ import { Feather } from '@expo/vector-icons';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { BlurView } from 'expo-blur';
 import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PremiumBar — shared glass surface for header + navbar
-// Layer 1: T.surfaceGlass  (92% white base)
-// Layer 2: T.surfaceOverlay (7% solid violet tint — no gradient, map-safe)
+// PremiumBar — dark glassmorphism surface for header + navbar
+// Layer 1: BlurView with intensity 20 for frosted dark glass
+// Layer 2: T.surfaceOverlay (violet tint)
 // ─────────────────────────────────────────────────────────────────────────────
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
@@ -33,6 +35,7 @@ const PremiumBar = memo(function PremiumBar({
 }) {
     return (
         <View style={[pb.bar, style]}>
+            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={pb.tint} pointerEvents="none" />
             <View style={[pb.content, contentStyle]}>{children}</View>
         </View>
@@ -43,12 +46,12 @@ const pb = StyleSheet.create({
     bar: {
         backgroundColor: T.surfaceGlass,
         borderWidth: 1,
-        borderColor: `${T.violet}22`,   // ~13% violet — subtle
-        overflow: 'hidden',              // clips tint to borderRadius
+        borderColor: `${T.violet}22`,
+        overflow: 'hidden',
     },
     tint: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: T.surfaceOverlay, // rgba(168,85,247,0.07)
+        backgroundColor: T.surfaceOverlay,
     },
     content: {
         flexDirection: 'row',
@@ -68,11 +71,10 @@ const ARC_RADIUS = ARC_SIZE / 2;
 
 const CANCEL_DURATION = 10;
 const HOLD_MS = 2000;
-const HINT_HIDE_MS = 2200; // auto-hide the "hold 2s" hint after this
+const HINT_HIDE_MS = 2200;
 
-// Pill navbar sits 14px above the safe-area bottom inset
 const NAV_HEIGHT = 58;
-const NAV_BOT_OFFSET = 14; // gap from bottom safe edge
+const NAV_BOT_OFFSET = 14;
 const SOS_BOTTOM = NAV_BOT_OFFSET + NAV_HEIGHT + 28;
 
 const DEFAULT_REGION = {
@@ -81,15 +83,13 @@ const DEFAULT_REGION = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Nav tab definitions — Ionicons throughout
-// Active tab uses FILLED icon variant for bold visual weight (matches reference)
-// Inactive uses OUTLINE for clean minimal look
+// Nav tab definitions — Ionicons
 // ─────────────────────────────────────────────────────────────────────────────
 const NAV_TABS: {
     id: string;
     label: string;
-    iconActive: string;   // filled/solid variant — shows when tab is active
-    iconOutline: string;  // outline variant — shows when tab is inactive
+    iconActive: string;
+    iconOutline: string;
 }[] = [
         { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline' },
         { id: 'Chat', label: 'Chat', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline' },
@@ -98,7 +98,6 @@ const NAV_TABS: {
     ];
 
 const ACTIVE_COLOR = T.violet;
-// T.navIconMuted = '#C4B5FD' (violet-300) — premium soft lavender, on-brand inactive
 const INACTIVE_COLOR = T.navIconMuted;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,14 +138,13 @@ const PulseRadar = memo(function PulseRadar() {
 });
 const rdr = StyleSheet.create({
     wrap: { position: 'absolute', alignSelf: 'center', top: height * 0.3, alignItems: 'center', zIndex: 5 },
-    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: `${T.violet}80` },
+    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: T.brandGlow },
     dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Emergency border overlay (LIVE state only)
-// Uses dangerBorder token — subtle rose ring, not full-screen red
 // ─────────────────────────────────────────────────────────────────────────────
 const EmergencyOverlay = memo(function EmergencyOverlay() {
     const op = useRef(new Animated.Value(0.3)).current;
@@ -224,12 +222,12 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
                 </View>
             </Animated.View>
 
-            {/* SOS button */}
+            {/* SOS button — Electric Violet gradient with glow */}
             <TouchableOpacity onPressIn={startHold} onPressOut={cancelHold} activeOpacity={1}>
                 <LinearGradient
-                    colors={G.navActive.colors}
-                    start={G.navActive.start}
-                    end={G.navActive.end}
+                    colors={G.sosIdle.colors}
+                    start={G.sosIdle.start}
+                    end={G.sosIdle.end}
                     style={s.sosBtn}
                 >
                     <Text style={s.sosTxt}>SOS</Text>
@@ -295,8 +293,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NavTab — icon + label + 2px underline active indicator
-// Spring micro-animation on press. No active blob/pill behind icon.
+// NavTab — icon + underline active indicator
 // ─────────────────────────────────────────────────────────────────────────────
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
@@ -321,7 +318,7 @@ const NavTab = memo(function NavTab({
             accessibilityLabel={tab.label}
         >
             <Animated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
-                <View style={s.navIconBox}>
+                <View style={[s.navIconBox, isActive && s.navIconBoxActive]}>
                     <Ionicons
                         name={(isActive ? tab.iconActive : tab.iconOutline) as any}
                         size={20}
@@ -335,7 +332,7 @@ const NavTab = memo(function NavTab({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Live Beacon Marker (map marker in LIVE state)
+// Live Beacon Marker
 // ─────────────────────────────────────────────────────────────────────────────
 const LiveBeacon = memo(function LiveBeacon() {
     const ring1 = useRef(new Animated.Value(0)).current;
@@ -382,7 +379,8 @@ export default function SOSScreen() {
     const mapRef = useRef<MapView>(null);
 
     const [drawerOpen, setDrawerOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState('Safety');
+    // Set Home as the default active tab
+    const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(0);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
@@ -403,7 +401,7 @@ export default function SOSScreen() {
         { scale: p2s, op: p2o },
     ];
 
-    // Auto-hide hint banner after HINT_HIDE_MS
+    // Auto-hide hint
     useEffect(() => {
         hintTimerRef.current = setTimeout(() => setShowHint(false), HINT_HIDE_MS);
         return () => { if (hintTimerRef.current) clearTimeout(hintTimerRef.current); };
@@ -445,6 +443,7 @@ export default function SOSScreen() {
 
     // SOS logic
     const triggerSOS = useCallback(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(CANCEL_DURATION);
     }, []);
 
@@ -480,11 +479,11 @@ export default function SOSScreen() {
 
     return (
         <View style={s.root}>
-            <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             {isEmergencyLive && <EmergencyOverlay />}
             <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-            {/* Map */}
+            {/* Map — Dark Tactical Style */}
             <MapView
                 ref={mapRef}
                 style={StyleSheet.absoluteFillObject}
@@ -523,12 +522,7 @@ export default function SOSScreen() {
                     }
                 </View>
                 <View style={s.headerBtns}>
-                    {isEmergencyLive && (
-                        <View style={s.liveChip}>
-                            <View style={s.liveDot} />
-                            <Text style={s.liveChipTxt}>LIVE</Text>
-                        </View>
-                    )}
+                    {/* Removed redundant LIVE chip from header */}
                     <TouchableOpacity
                         style={s.hBtn}
                         onPress={() => Alert.alert('Notifications', 'No new notifications.')}
@@ -636,23 +630,24 @@ export default function SOSScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Google Maps custom style (clean, neutral)
+// Tactical Dark Map Style — aggressive de-clutter, POIs hidden
 // ─────────────────────────────────────────────────────────────────────────────
 const mapStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#F9FAFB' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#6B7280' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#F9FAFB' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#F3F4F6' }] },
+    { elementType: 'geometry', stylers: [{ color: '#121214' }] },
+    { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8E8E93' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#08070B' }] },
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#E0E7FF' }] },
-    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F3F4F6' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2C2C2E' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1A1A1E' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#08070B' }] },
+    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0F0E12' }] },
     { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StyleSheet
+// StyleSheet — Premium Tactical Dark Mode
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
     root: { flex: 1, backgroundColor: T.bg },
@@ -662,8 +657,8 @@ const s = StyleSheet.create({
         borderRadius: R.lg,
         zIndex: 300,
         ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 3 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 6 },
         }),
     },
     headerContent: {
@@ -673,8 +668,7 @@ const s = StyleSheet.create({
     locBox: { flex: 1, marginRight: S.s3 },
     locLabel: { fontSize: 8.5, fontWeight: '800', color: T.ink4, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 1 },
     locAddr: { fontSize: 13, fontWeight: '600', color: T.ink, letterSpacing: -0.1 },
-    shimmer: { height: 11, width: '68%', borderRadius: R.xs, backgroundColor: T.line, marginTop: 2 },
-    wText: { color: T.onPrimary },
+    shimmer: { height: 11, width: '68%', borderRadius: R.xs, backgroundColor: T.lineMid, marginTop: 2 },
 
     liveChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: T.dangerBg, borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: T.dangerBorder, marginRight: S.s2 },
     liveDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: T.danger },
@@ -684,8 +678,8 @@ const s = StyleSheet.create({
     hBtn: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: 'rgba(255,255,255,0.84)',
-        borderWidth: 1, borderColor: `${T.violet}20`,
+        backgroundColor: T.surfaceCard,
+        borderWidth: 1, borderColor: T.lineMid,
         alignItems: 'center', justifyContent: 'center',
     },
     notifDot: {
@@ -697,11 +691,11 @@ const s = StyleSheet.create({
     mapControls: { position: 'absolute', right: 14, gap: 8, alignItems: 'flex-end' },
     gpsPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: `${T.surface}F2`,
+        backgroundColor: T.surfaceGlass,
         borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 5,
-        borderWidth: 1, borderColor: T.line,
+        borderWidth: 1, borderColor: T.lineMid,
     },
-    gpsPillEmg: { backgroundColor: `${T.dangerLight}F2`, borderColor: T.dangerBorder },
+    gpsPillEmg: { backgroundColor: T.dangerLight, borderColor: T.dangerBorder },
     gpsDot: { width: 6, height: 6, borderRadius: 3 },
     gpsTxt: { fontSize: 10, fontWeight: '700', color: T.ink2, letterSpacing: 0.5 },
     gpsTxtEmg: { color: T.dangerText },
@@ -709,15 +703,15 @@ const s = StyleSheet.create({
         width: 38, height: 38, borderRadius: R.hBtn,
         backgroundColor: T.surfaceGlass,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: `${T.violet}22`,
+        borderWidth: 1, borderColor: T.lineMid,
         ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.06, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 2 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 3 },
         }),
     },
 
-    markerOut: { width: 26, height: 26, borderRadius: 13, backgroundColor: `${T.violet}26`, alignItems: 'center', justifyContent: 'center' },
-    markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: '#FFFFFF' },
+    markerOut: { width: 26, height: 26, borderRadius: 13, backgroundColor: T.brandGlow, alignItems: 'center', justifyContent: 'center' },
+    markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
 
     sosSection: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
     sosWrap: { width: SOS_WRAP_SIZE, height: SOS_WRAP_SIZE, alignItems: 'center', justifyContent: 'center' },
@@ -733,14 +727,14 @@ const s = StyleSheet.create({
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.13, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
-            android: {},
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.40, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 12 },
         }),
     },
     sosBtnEmg: {
         ...Platform.select({
-            ios: { shadowColor: T.danger, shadowOpacity: 0.20, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
-            android: {},
+            ios: { shadowColor: '#E23636', shadowOpacity: 0.35, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 12 },
         }),
     },
     sosBtnDangerFill: {
@@ -757,16 +751,16 @@ const s = StyleSheet.create({
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.ink, borderWidth: 1.5, borderColor: `${T.dangerBorder}66`,
+        backgroundColor: T.surfaceCard, borderWidth: 1.5, borderColor: T.dangerBorder,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: T.ink, shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 5 } },
-            android: { elevation: 8 },
+            ios: { shadowColor: '#E23636', shadowOpacity: 0.20, shadowRadius: 18, shadowOffset: { width: 0, height: 5 } },
+            android: { elevation: 10 },
         }),
     },
-    cancelLabel: { color: `${T.onPrimary}8C`, fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
-    cancelCount: { color: T.dangerMid, fontSize: 40, fontWeight: '900', lineHeight: 44 },
-    cancelSub: { color: `${T.onPrimary}59`, fontSize: 10, fontWeight: '500', marginTop: 3 },
+    cancelLabel: { color: T.ink3, fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
+    cancelCount: { color: T.danger, fontSize: 40, fontWeight: '900', lineHeight: 44 },
+    cancelSub: { color: T.ink4, fontSize: 10, fontWeight: '500', marginTop: 3 },
 
     statusPill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -775,8 +769,8 @@ const s = StyleSheet.create({
         paddingHorizontal: 16, paddingVertical: 8, marginTop: 16,
         borderWidth: 1, borderColor: `${T.violet}18`,
         ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 2 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 3 },
         }),
     },
     statusPillLive: {
@@ -797,8 +791,8 @@ const s = StyleSheet.create({
         width: width * 0.88,
         borderRadius: R.pill,
         ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 4 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
         }),
     },
     navBarContent: {
@@ -818,9 +812,6 @@ const s = StyleSheet.create({
         alignItems: 'center',
         gap: 0,
     },
-    navLabel: {
-        fontSize: 10, letterSpacing: 0.1,
-    },
     navUnderline: {
         width: 16, height: 3,
         borderRadius: 1.5,
@@ -829,17 +820,21 @@ const s = StyleSheet.create({
     navIconBox: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: 'rgba(255,255,255,0.84)',
-        borderWidth: 1, borderColor: `${T.violet}20`,
+        backgroundColor: T.surfaceCard,
+        borderWidth: 1, borderColor: T.lineMid,
         alignItems: 'center', justifyContent: 'center',
     },
+    navIconBoxActive: {
+        backgroundColor: 'rgba(138,56,246,0.12)',
+        borderColor: `${T.violet}40`,
+    },
 
-    drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: `${T.ink}61` },
+    drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
     drawer: {
         position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
         backgroundColor: T.surface,
         ...Platform.select({
-            ios: { shadowColor: T.ink, shadowOpacity: 0.09, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
             android: { elevation: 20 },
         }),
     },
@@ -854,7 +849,7 @@ const s = StyleSheet.create({
     drawerRow: {
         flexDirection: 'row', alignItems: 'center',
         paddingVertical: 13, paddingHorizontal: 18,
-        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.line,
+        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid,
     },
     drawerIconBox: { width: 36, height: 36, borderRadius: R.sm, backgroundColor: T.violetDim, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
     drawerLabel: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },

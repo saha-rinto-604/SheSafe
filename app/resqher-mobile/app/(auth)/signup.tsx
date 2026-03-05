@@ -63,7 +63,7 @@ const AnimatedRoleCard = React.memo(function AnimatedRoleCard({
         accessibilityLabel={opt.label}
       >
         <View style={[st.roleIconBox, isActive && st.roleIconBoxActive]}>
-          <Feather name={opt.icon} size={19} color={isActive ? T.violet : T.gray400} />
+          <Feather name={opt.icon} size={19} color={isActive ? T.violet : T.ink4} />
         </View>
         <View style={st.roleText}>
           <Text style={[st.roleLabel, isActive && st.roleLabelActive]} numberOfLines={1}>{opt.label}</Text>
@@ -115,7 +115,6 @@ function StepProgress({ step }: { step: 1 | 2 }) {
   return (
     <View style={st.progressWrap}>
       <Node n={1} label="Role" />
-      {/* Connecting line */}
       <View style={st.lineTrack}>
         <Animated.View style={[st.lineFill, {
           width: lineWidth.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
@@ -360,9 +359,11 @@ const st = StyleSheet.create({
     borderRadius: R.xl,
     padding: S.s5,
     paddingBottom: S.s3,
+    borderWidth: 1,
+    borderColor: 'rgba(138,56,246,0.15)',
     ...Platform.select({
-      ios: { shadowColor: T.ink, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
-      android: { elevation: 5 },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } },
+      android: { elevation: 12 },
     }),
   },
 
@@ -374,8 +375,8 @@ const st = StyleSheet.create({
   stepNode: { alignItems: 'center', gap: 5 },
   stepCircle: {
     width: 32, height: 32, borderRadius: 16,
-    borderWidth: 2, borderColor: T.lineMid,
-    backgroundColor: T.bgMuted,
+    borderWidth: 2, borderColor: T.lineBold,
+    backgroundColor: T.surfaceCard,
     alignItems: 'center', justifyContent: 'center',
   },
   stepCircleActive: {
@@ -385,10 +386,9 @@ const st = StyleSheet.create({
   stepNumActive: { color: T.onPrimary },
   stepLabel: { fontSize: 10, fontWeight: '600', color: T.ink4, letterSpacing: 0.3 },
   stepLabelActive: { color: T.violet },
-  // Connecting animated line
   lineTrack: {
     flex: 1, height: 2.5,
-    backgroundColor: T.lineMid,
+    backgroundColor: T.lineBold,
     borderRadius: R.full,
     overflow: 'hidden',
     marginHorizontal: S.s2,
@@ -396,19 +396,16 @@ const st = StyleSheet.create({
   },
   lineFill: { height: '100%', backgroundColor: T.violet, borderRadius: R.full },
 
-  // ── Header
   header: { alignItems: 'center', marginBottom: S.s3 },
   title: { ...Ty.h3, marginBottom: 2 },
   subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
 
-  // ── Role cards
   roleList: { gap: 10, marginBottom: S.s3 },
 
-  // Wrapper handles the active shadow elevation
   roleCardWrap: {
     borderRadius: R.md,
     ...Platform.select({
-      ios: { shadowColor: T.violetDark, shadowOpacity: 0, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
       android: {},
     }),
   },
@@ -416,103 +413,96 @@ const st = StyleSheet.create({
   roleCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 68,                    // Fixed height — no text-wrap size jumps
+    height: 68,
     paddingHorizontal: S.s4,
     borderRadius: R.md,
     borderWidth: 1.5,
-    borderColor: T.lineMid,        // Neutral border from theme
-    backgroundColor: T.surface,
+    borderColor: T.lineBold,
+    backgroundColor: T.surfaceCard,
   },
 
   roleCardActive: {
     borderColor: T.violet,
     borderWidth: 2,
-    backgroundColor: T.violetLighter,   // Light purple from theme
+    backgroundColor: T.violetDim,
     ...Platform.select({
-      ios: { shadowOpacity: 0.18 },
-      android: { elevation: 4 },
+      ios: { shadowOpacity: 0.20 },
+      android: { elevation: 6 },
     }),
   },
 
   roleIconBox: {
     width: 40, height: 40,
     borderRadius: 10,
-    backgroundColor: T.surfaceMid,   // Neutral from theme
+    backgroundColor: T.surfaceMid,
     alignItems: 'center', justifyContent: 'center',
     marginRight: S.s3,
     flexShrink: 0,
   },
   roleIconBoxActive: {
-    backgroundColor: T.violetLighter,   // Light violet from theme
+    backgroundColor: 'rgba(138,56,246,0.15)',
   },
 
-  roleText: { flex: 1, minWidth: 0 }, // minWidth:0 enables text truncation in flex
+  roleText: { flex: 1, minWidth: 0 },
   roleLabel: { fontSize: 14, fontWeight: '700', color: T.ink, marginBottom: 2 },
   roleLabelActive: { color: T.violet },
-  roleDesc: { fontSize: 12, color: T.gray400, lineHeight: 16 },
+  roleDesc: { fontSize: 12, color: T.ink4, lineHeight: 16 },
 
-  // Radio check indicator
   roleCheck: {
     width: 22, height: 22, borderRadius: 11,
     borderWidth: 2, borderColor: T.lineBold,
     alignItems: 'center', justifyContent: 'center',
     marginLeft: S.s2,
     flexShrink: 0,
-    backgroundColor: T.surface,
+    backgroundColor: T.surfaceCard,
   },
   roleCheckActive: {
     backgroundColor: T.violet, borderColor: T.violet,
   },
   roleCheckDot: {
     width: 6, height: 6, borderRadius: 3,
-    backgroundColor: T.lineBold,   // Subtle dot from theme
+    backgroundColor: T.lineBold,
   },
 
-  // ── Info box
   infoBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: S.s2,
-    backgroundColor: T.bgMuted, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, paddingVertical: S.s2,
     borderRadius: R.sm, marginBottom: S.s3,
     borderWidth: 1, borderColor: T.lineMid,
   },
-  infoTxt: { fontSize: 12, color: T.ink2, flex: 1, lineHeight: 17 },
+  infoTxt: { fontSize: 12, color: T.ink3, flex: 1, lineHeight: 17 },
 
-  // ── Role badge (step 2)
   roleBadge: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: T.bgMuted, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, paddingVertical: S.s2,
     borderRadius: R.sm, borderWidth: 1, borderColor: T.lineMid, marginBottom: S.s3,
   },
   roleBadgeTxt: { fontSize: 13, fontWeight: '700', color: T.ink2 },
 
-  // ── Name row
   row: { flexDirection: 'row', gap: S.s2, marginBottom: S.s1 },
 
-  // ── Inputs — no labels, placeholder-only, tighter height
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', height: 48,
-    borderRadius: R.sm, borderWidth: 1.5, borderColor: T.lineMid,
-    backgroundColor: T.surface, paddingHorizontal: S.s3, marginBottom: S.s2,
+    borderRadius: R.sm, borderWidth: 1.5, borderColor: T.lineBold,
+    backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, marginBottom: S.s2,
   },
-  inputFocused: { borderColor: T.violet, borderWidth: 2, backgroundColor: T.surface },
+  inputFocused: { borderColor: T.violet, borderWidth: 2, backgroundColor: 'rgba(138,56,246,0.06)' },
   inputError: { borderColor: T.danger, backgroundColor: T.dangerLight },
   inputIcon: { marginRight: S.s2 },
   input: { flex: 1, height: '100%', color: T.ink, fontSize: 14 },
-  errTxt: { fontSize: 11, color: T.danger, fontWeight: '500', marginTop: -6, marginBottom: S.s1 },
+  errTxt: { fontSize: 11, color: T.dangerText, fontWeight: '500', marginTop: -6, marginBottom: S.s1 },
 
-  // ── Buttons
   btn: {
     borderRadius: R.md, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: T.violetDark, shadowOpacity: 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.30, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 8 },
     }),
   },
   btnInner: { height: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.s2 },
   btnDisabled: { borderRadius: R.md, overflow: 'hidden', backgroundColor: T.disabledBg },
   btnTxt: { ...Ty.btn },
 
-  // ── Links
   linkRow: { marginTop: S.s3, alignItems: 'center', paddingVertical: S.s1 },
   linkTxt: { fontSize: 13, color: T.ink4, fontWeight: '500' },
   linkAccent: { color: T.violet, fontWeight: '700' },

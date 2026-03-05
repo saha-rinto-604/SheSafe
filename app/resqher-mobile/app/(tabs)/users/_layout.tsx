@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 export default function UsersLayout() {
     return (
         <>
-            <StatusBar style="dark" />
+            <StatusBar style="light" />
             <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="sos_screen" />
                 <Stack.Screen name="standard-user" />
