@@ -1,16 +1,7 @@
 import React, { useState } from 'react';
-import { 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
-  ActivityIndicator, 
-  Alert, 
-  View, 
-  Platform, 
-  LayoutAnimation, 
-  UIManager, 
-  ScrollView 
+import {
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  ActivityIndicator, Alert, Platform, UIManager, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
@@ -22,13 +13,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 import AuthShell from '../../components/auth/AuthShell';
-import { Theme } from '../../src/constants/theme';
+import { T, R, S, Ty } from '../../src/constants/theme';
+import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
 
-type FormData = {
-  phone: string;
-  password: string;
-};
+type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
@@ -37,166 +26,235 @@ export default function Login() {
     defaultValues: { phone: '', password: '' },
   });
   const [submitting, setSubmitting] = useState(false);
+  const [focused, setFocused] = useState<'phone' | 'password' | null>(null);
 
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
-    
-    // --- MOCK AUTHENTICATION LOGIC ---
-    // Since backend is not ready, we simulate a successful login
-    setTimeout(() => {
+    try {
+      /* Real auth: await signIn(data.phone.trim(), data.password); */
+      router.replace('/(tabs)/users/standard-user/sos_screen');
+    } catch (e: any) {
+      Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
+    } finally {
       setSubmitting(false);
-      
+
       // We manually tell the app to navigate to the Map screen
-      router.replace('/(tabs)/sos_screen'); 
-      
+      router.replace('/(tabs)/sos_screen');
+
       console.log("Mock Login Successful: Redirecting to Map");
-    }, 1000); 
+    }, 1000);
     // ---------------------------------
   };
 
   return (
     <AuthShell>
-      <View style={styles.cardContainer}>
-        <View style={styles.cardInner}>
-          <ScrollView 
-            showsVerticalScrollIndicator={false} 
-            contentContainerStyle={{ flexGrow: 1, padding: 24, paddingBottom: 32 }}
-          >
-            <Text style={styles.title}>Welcome back</Text>
-            <Text style={styles.subtitle}>Login to continue</Text>
+      <ScrollView
+        style={{ borderRadius: R.xl }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        bounces={false}
+        contentContainerStyle={{ flexGrow: 1 }}
+      >
+        <View style={st.card}>
+          {/* ── Header ── */}
+          <View style={st.header}>
+            <Text style={st.title}>Welcome back</Text>
+            <Text style={st.subtitle}>Sign in to your ResQher account</Text>
+          </View>
 
-            {/* Phone Input */}
-            <Text style={styles.label}>Phone</Text>
+          {/* ── Fields ── */}
+          <View style={st.form}>
+            {/* Phone */}
             <Controller
               control={control}
               name="phone"
               rules={{ required: 'Phone is required' }}
               render={({ field: { onChange, value } }) => (
-                <View style={[styles.inputContainer, errors.phone && styles.inputError]}>
-                  <Feather name="phone" size={20} color={Theme.colors.muted} style={styles.inputIcon} />
-                  <TextInput
-                    placeholder="e.g. 017xxxxxxxx"
-                    placeholderTextColor={Theme.colors.muted}
-                    value={value}
-                    onChangeText={onChange}
-                    keyboardType="phone-pad"
-                    style={styles.input}
-                  />
-                </View>
+                <>
+                  <View style={[
+                    st.inputWrap,
+                    focused === 'phone' && st.inputFocused,
+                    errors.phone && st.inputError,
+                  ]}>
+                    <Feather
+                      name="phone"
+                      size={18}
+                      color={focused === 'phone' ? T.violet : T.inputIconDefault}
+                      style={st.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Phone number"
+                      placeholderTextColor={T.ink5}
+                      value={value}
+                      onChangeText={onChange}
+                      keyboardType="phone-pad"
+                      style={st.input}
+                      onFocus={() => setFocused('phone')}
+                      onBlur={() => setFocused(null)}
+                      accessibilityLabel="Phone number"
+                    />
+                  </View>
+                  {!!errors.phone && <Text style={st.errTxt}>{errors.phone.message}</Text>}
+                </>
               )}
             />
-            {!!errors.phone && <Text style={styles.errorText}>{errors.phone.message}</Text>}
 
-            {/* Password Input */}
-            <Text style={styles.label}>Password</Text>
+            {/* Password */}
             <Controller
               control={control}
               name="password"
               rules={{ required: 'Password is required' }}
               render={({ field: { onChange, value } }) => (
-                <View style={[styles.inputContainer, errors.password && styles.inputError]}>
-                  <Feather name="lock" size={20} color={Theme.colors.muted} style={styles.inputIcon} />
-                  <TextInput
-                    placeholder="Your password"
-                    placeholderTextColor={Theme.colors.muted}
-                    value={value}
-                    onChangeText={onChange}
-                    secureTextEntry
-                    style={styles.input}
-                  />
-                </View>
+                <>
+                  <View style={[
+                    st.inputWrap,
+                    focused === 'password' && st.inputFocused,
+                    errors.password && st.inputError,
+                  ]}>
+                    <Feather
+                      name="lock"
+                      size={18}
+                      color={focused === 'password' ? T.violet : T.inputIconDefault}
+                      style={st.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Password"
+                      placeholderTextColor={T.ink5}
+                      value={value}
+                      onChangeText={onChange}
+                      secureTextEntry
+                      style={st.input}
+                      onFocus={() => setFocused('password')}
+                      onBlur={() => setFocused(null)}
+                      accessibilityLabel="Password"
+                    />
+                  </View>
+                  {!!errors.password && <Text style={st.errTxt}>{errors.password.message}</Text>}
+                </>
               )}
             />
-            {!!errors.password && <Text style={styles.errorText}>{errors.password.message}</Text>}
 
-            {/* Forgot Password Link */}
-            <TouchableOpacity 
-              onPress={() => Alert.alert("Coming Soon", "Password reset via OTP is under development.")} 
-              style={styles.forgotBtn}
+            {/* Forgot password */}
+            <TouchableOpacity
+              onPress={() => Alert.alert('Reset password', 'A reset link will be sent to your registered phone.')}
+              style={st.forgotRow}
+              activeOpacity={0.7}
             >
-              <Text style={styles.forgotText}>Forgot Password?</Text>
+              <Text style={st.forgotTxt}>Forgot password?</Text>
             </TouchableOpacity>
+          </View>
 
-            {/* Login Button */}
-            <TouchableOpacity disabled={submitting} style={styles.primaryBtn} onPress={handleSubmit(onSubmit)}>
-              <LinearGradient
-                colors={[Theme.colors.primaryLight, Theme.colors.primary]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.gradientBtn}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Login</Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+          {/* ── Login button ── */}
+          <TouchableOpacity
+            disabled={submitting}
+            style={st.primaryBtn}
+            onPress={handleSubmit(onSubmit)}
+            activeOpacity={0.82}
+            accessibilityRole="button"
+            accessibilityLabel="Login"
+          >
+            <LinearGradient
+              colors={G.navActive.colors}
+              start={G.navActive.start}
+              end={G.navActive.end}
+              style={st.gradientBtn}
+            >
+              {submitting
+                ? <ActivityIndicator color={T.onPrimary} />
+                : <Text style={st.btnTxt}>Login</Text>
+              }
+            </LinearGradient>
+          </TouchableOpacity>
 
-            {/* Sign Up Link */}
-            <TouchableOpacity onPress={() => router.push('/(auth)/signup')} style={styles.linkBtn}>
-              <Text style={styles.linkText}>Don’t have an account? Sign up</Text>
-            </TouchableOpacity>
-          </ScrollView>
+          {/* ── Sign up link ── */}
+          <TouchableOpacity
+            onPress={() => router.push('/(auth)/signup')}
+            style={st.linkRow}
+            activeOpacity={0.7}
+          >
+            <Text style={st.linkTxt}>
+              Don't have an account?{'  '}
+              <Text style={st.linkAccent}>Sign up</Text>
+            </Text>
+          </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </AuthShell>
   );
 }
 
-const styles = StyleSheet.create({
-  cardContainer: {
-    shadowColor: Theme.colors.primaryDark,
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 4,
-  },
-  cardInner: {
-    backgroundColor: Theme.colors.surface,
-    borderRadius: 24,
+const st = StyleSheet.create({
+  card: {
+    backgroundColor: T.surface,
+    borderRadius: R.xl,
+    padding: S.s5,
+    paddingBottom: S.s4,
     overflow: 'hidden',
-  },
-  title: { fontSize: 26, fontWeight: '800', color: Theme.colors.text },
-  subtitle: { marginTop: 6, marginBottom: 20, color: Theme.colors.muted, fontSize: 15 },
-  label: { marginTop: 12, marginBottom: 8, color: Theme.colors.text, fontWeight: '600', fontSize: 14 },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 52,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: Theme.colors.border,
-    backgroundColor: Theme.colors.background,
-    paddingHorizontal: 16,
-  },
-  inputError: { borderColor: Theme.colors.danger, backgroundColor: '#FEF2F2' },
-  inputIcon: { marginRight: 10 },
-  input: { flex: 1, height: '100%', color: Theme.colors.text, fontSize: 16 },
-  errorText: { marginTop: 6, color: Theme.colors.danger, fontSize: 13, fontWeight: '500' },
-  
-  forgotBtn: {
-    alignSelf: 'flex-end',
-    marginTop: 10,
-    paddingVertical: 4,
-  },
-  forgotText: {
-    color: Theme.colors.primary,
-    fontSize: 13,
-    fontWeight: '700',
+    borderWidth: 1,
+    borderColor: 'rgba(138,56,246,0.15)',
+    ...Platform.select({
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } },
+      android: { elevation: 12 },
+    }),
   },
 
+  header: { alignItems: 'center', marginBottom: S.s4 },
+  title: { ...Ty.h2, marginBottom: 2 },
+  subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
+
+  form: { gap: S.s2 },
+
+  inputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 50,
+    borderRadius: R.sm,
+    borderWidth: 1.5,
+    borderColor: T.lineBold,
+    backgroundColor: T.surfaceCard,
+    paddingHorizontal: S.s4,
+  },
+  inputFocused: {
+    borderColor: T.violet,
+    borderWidth: 2,
+    backgroundColor: 'rgba(138,56,246,0.06)',
+  },
+  inputError: {
+    borderColor: T.danger,
+    backgroundColor: T.dangerLight,
+  },
+  inputIcon: { marginRight: S.s2 },
+  input: {
+    flex: 1,
+    height: '100%',
+    color: T.ink,
+    fontSize: 15,
+  },
+  errTxt: {
+    ...Ty.error,
+    marginTop: 2,
+  },
+
+  forgotRow: { alignSelf: 'flex-end', paddingVertical: 2 },
+  forgotTxt: { fontSize: 13, fontWeight: '600', color: T.violet },
+
   primaryBtn: {
-    marginTop: 24,
-    borderRadius: 16,
+    marginTop: S.s4,
+    borderRadius: R.md,
     overflow: 'hidden',
-    elevation: 6,
+    ...Platform.select({
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.35, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 8 },
+    }),
   },
   gradientBtn: {
-    height: 56,
+    height: 50,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primaryBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
-  linkBtn: { marginTop: 20, alignItems: 'center', paddingVertical: 10 },
-  linkText: { color: Theme.colors.mutedDark, fontWeight: '600', fontSize: 15 },
+  btnTxt: { ...Ty.btn },
+
+  linkRow: { marginTop: S.s3, alignItems: 'center', paddingVertical: S.s1 },
+  linkTxt: { ...Ty.helper, fontSize: 13, color: T.ink4 },
+  linkAccent: { color: T.violet, fontWeight: '700', fontSize: 14 },
 });

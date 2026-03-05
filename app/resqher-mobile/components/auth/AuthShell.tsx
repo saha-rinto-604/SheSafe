@@ -1,37 +1,52 @@
+
 import React from 'react';
-import { SafeAreaView, View, StyleSheet, Dimensions, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  SafeAreaView, View, StyleSheet,
+  KeyboardAvoidingView, Platform, TouchableOpacity,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { Theme } from '../../src/constants/theme';
-
-const { width } = Dimensions.get('window');
+import { T } from '../../src/constants/theme';
+import { G } from '../../src/constants/gradients';
 
 type Props = {
   children: React.ReactNode;
+  onBack?: () => void;
 };
 
-export default function AuthShell({ children }: Props) {
+// ─── Auth Shell ─────────────────────────────────────────────────────────────
+export default function AuthShell({ children, onBack }: Props) {
   return (
     <View style={styles.main}>
-      {/* Fixed Background */}
-      <View style={styles.fixedHeader}>
-        <LinearGradient
-          colors={[Theme.colors.gradientStart, Theme.colors.gradientEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        >
-          {/* Decorative shapes for a premium look */}
-          <View style={styles.circle1} />
-          <View style={styles.circle2} />
-        </LinearGradient>
-      </View>
+      {/* OLED Black → subtle violet aura from bottom */}
+      <LinearGradient
+        colors={G.authBg.colors}
+        locations={G.authBg.locations as unknown as [number, number, ...number[]]}
+        start={G.authBg.start}
+        end={G.authBg.end}
+        style={StyleSheet.absoluteFill}
+      />
+
+
 
       <SafeAreaView style={styles.safe}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          {onBack && (
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={onBack}
+              hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+            >
+              <Feather name="chevron-left" size={24} color={T.ink} />
+            </TouchableOpacity>
+          )}
+
           <View style={styles.logoContainer}>
             <View style={styles.logoIconBg}>
-              <Feather name="shield" size={42} color={Theme.colors.primary} />
+              <Feather name="shield" size={42} color={T.violet} />
             </View>
           </View>
 
@@ -45,61 +60,60 @@ export default function AuthShell({ children }: Props) {
 }
 
 const styles = StyleSheet.create({
-  main: { flex: 1, backgroundColor: Theme.colors.background },
+  main: { flex: 1, backgroundColor: '#000000' },
   safe: { flex: 1 },
-  fixedHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 340, // Extended so logo won't clip when bounced
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
-    overflow: 'hidden',
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  circle1: {
-    position: 'absolute',
-    width: width * 0.8,
-    height: width * 0.8,
-    borderRadius: width * 0.4,
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    top: -width * 0.2,
-    right: -width * 0.2,
-  },
-  circle2: {
-    position: 'absolute',
-    width: width * 0.5,
-    height: width * 0.5,
-    borderRadius: width * 0.25,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    bottom: -width * 0.1,
-    left: -width * 0.1,
-  },
+
   logoContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 80, // Moved down to allow space above logo
+    paddingTop: 80,
     paddingBottom: 40,
   },
   logoIconBg: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#fff',
+    backgroundColor: T.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: Theme.colors.primaryDark,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(138,56,246,0.20)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#8A38F6',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.45,
+        shadowRadius: 30,
+      },
+      android: { elevation: 16 },
+    }),
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingBottom: 40
+    paddingBottom: 40,
+  },
+  backButton: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 10 : 30,
+    left: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#8A38F6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: { elevation: 6 },
+    }),
   },
 });

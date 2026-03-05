@@ -4,10 +4,10 @@ import { StatusBar } from 'expo-status-bar';
 export default function TabsLayout() {
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
-        <Stack.Screen name="sos_screen" />
+        <Stack.Screen name="users" />
         <Stack.Screen name="explore" />
       </Stack>
     </>
