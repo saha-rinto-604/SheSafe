@@ -73,7 +73,7 @@ export default function Login() {
                     <Feather
                       name="phone"
                       size={18}
-                      color={focused === 'phone' ? T.violet : T.ink4}
+                      color={focused === 'phone' ? T.violet : T.inputIconDefault}
                       style={st.inputIcon}
                     />
                     <TextInput
@@ -108,7 +108,7 @@ export default function Login() {
                     <Feather
                       name="lock"
                       size={18}
-                      color={focused === 'password' ? T.violet : T.ink4}
+                      color={focused === 'password' ? T.violet : T.inputIconDefault}
                       style={st.inputIcon}
                     />
                     <TextInput
@@ -229,7 +229,7 @@ const st = StyleSheet.create({
     marginTop: 2,
   },
 
-  forgotRow: { alignItems: 'flex-end', paddingVertical: 2 },
+  forgotRow: { alignSelf: 'flex-end', paddingVertical: 2 },
   forgotTxt: { fontSize: 13, fontWeight: '600', color: T.violet },
 
   primaryBtn: {
@@ -250,5 +250,5 @@ const st = StyleSheet.create({
 
   linkRow: { marginTop: S.s3, alignItems: 'center', paddingVertical: S.s1 },
   linkTxt: { ...Ty.helper, fontSize: 13, color: T.ink4 },
-  linkAccent: { color: T.violet, fontWeight: '700' },
+  linkAccent: { color: T.violet, fontWeight: '700', fontSize: 14 },
 });

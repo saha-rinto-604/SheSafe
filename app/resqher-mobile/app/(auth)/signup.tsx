@@ -30,15 +30,16 @@ const ROLE_OPTIONS = [
   { value: 'POLICE' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
 ];
 
-// ─── Animated Role Card ───────────────────────────────────────────────────────
-const AnimatedRoleCard = React.memo(function AnimatedRoleCard({
+// ─── Minimalist Role Tile ─────────────────────────────────────────────────────
+// 1px border, border-only glow on selection — no background fill change
+const RoleTile = React.memo(function RoleTile({
   opt, isActive, onPress,
 }: { opt: typeof ROLE_OPTIONS[0]; isActive: boolean; onPress: () => void }) {
   const scale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.spring(scale, {
-      toValue: isActive ? 1.025 : 1.0,
+      toValue: isActive ? 1.02 : 1.0,
       useNativeDriver: true,
       tension: 260, friction: 16,
     }).start();
@@ -47,63 +48,53 @@ const AnimatedRoleCard = React.memo(function AnimatedRoleCard({
   const handlePress = useCallback(() => {
     Animated.sequence([
       Animated.timing(scale, { toValue: 0.975, duration: 70, useNativeDriver: true }),
-      Animated.spring(scale, { toValue: isActive ? 1.0 : 1.025, useNativeDriver: true, tension: 260, friction: 14 }),
+      Animated.spring(scale, { toValue: isActive ? 1.0 : 1.02, useNativeDriver: true, tension: 260, friction: 14 }),
     ]).start();
     onPress();
   }, [isActive, onPress]);
 
   return (
-    <Animated.View style={[st.roleCardWrap, { transform: [{ scale }] }]}>
+    <Animated.View style={{ transform: [{ scale }] }}>
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={handlePress}
-        style={[st.roleCard, isActive && st.roleCardActive]}
+        style={[st.roleTile, isActive && st.roleTileActive]}
         accessibilityRole="radio"
         accessibilityState={{ checked: isActive }}
         accessibilityLabel={opt.label}
       >
-        <View style={[st.roleIconBox, isActive && st.roleIconBoxActive]}>
-          <Feather name={opt.icon} size={19} color={isActive ? T.violet : T.ink4} />
-        </View>
-        <View style={st.roleText}>
-          <Text style={[st.roleLabel, isActive && st.roleLabelActive]} numberOfLines={1}>{opt.label}</Text>
-          <Text style={st.roleDesc} numberOfLines={1} ellipsizeMode="tail">{opt.description}</Text>
-        </View>
-        <View style={[st.roleCheck, isActive && st.roleCheckActive]}>
-          {isActive
-            ? <Feather name="check" size={11} color={T.onPrimary} />
-            : <View style={st.roleCheckDot} />
-          }
+        <Feather name={opt.icon} size={18} color={isActive ? T.violet : T.ink4} />
+        <View style={st.roleTileText}>
+          <Text style={[st.roleTileLabel, isActive && st.roleTileLabelActive]} numberOfLines={1}>{opt.label}</Text>
+          <Text style={st.roleTileDesc} numberOfLines={1} ellipsizeMode="tail">{opt.description}</Text>
         </View>
       </TouchableOpacity>
     </Animated.View>
   );
 });
 
-// ─── Modern Step Tracker ─────────────────────────────────────────────────────
-function StepProgress({ step }: { step: 1 | 2 }) {
-  const lineWidth = useRef(new Animated.Value(step === 2 ? 1 : 0)).current;
+// ─── 3-Node Progress Tracker ──────────────────────────────────────────────────
+const STEP_LABELS = ['Role', 'Identity', 'Security'] as const;
+
+function StepProgress({ step }: { step: 1 | 2 | 3 }) {
+  const line1 = useRef(new Animated.Value(step >= 2 ? 1 : 0)).current;
+  const line2 = useRef(new Animated.Value(step >= 3 ? 1 : 0)).current;
 
   useEffect(() => {
-    Animated.timing(lineWidth, {
-      toValue: step === 2 ? 1 : 0,
-      duration: 380,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: false,
-    }).start();
+    Animated.parallel([
+      Animated.timing(line1, { toValue: step >= 2 ? 1 : 0, duration: 380, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+      Animated.timing(line2, { toValue: step >= 3 ? 1 : 0, duration: 380, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+    ]).start();
   }, [step]);
 
-  const Node = ({ n, label }: { n: 1 | 2; label: string }) => {
+  const Node = ({ n, label }: { n: 1 | 2 | 3; label: string }) => {
     const done = step > n;
     const active = step === n;
     return (
       <View style={st.stepNode}>
-        <View style={[
-          st.stepCircle,
-          (active || done) && st.stepCircleActive,
-        ]}>
+        <View style={[st.stepCircle, (active || done) && st.stepCircleActive]}>
           {done
-            ? <Feather name="check" size={13} color={T.onPrimary} />
+            ? <Feather name="check" size={12} color={T.onPrimary} />
             : <Text style={[st.stepNum, (active || done) && st.stepNumActive]}>{n}</Text>
           }
         </View>
@@ -114,35 +105,58 @@ function StepProgress({ step }: { step: 1 | 2 }) {
 
   return (
     <View style={st.progressWrap}>
-      <Node n={1} label="Role" />
+      <Node n={1} label={STEP_LABELS[0]} />
       <View style={st.lineTrack}>
         <Animated.View style={[st.lineFill, {
-          width: lineWidth.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+          width: line1.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
         }]} />
       </View>
-      <Node n={2} label="Details" />
+      <Node n={2} label={STEP_LABELS[1]} />
+      <View style={st.lineTrack}>
+        <Animated.View style={[st.lineFill, {
+          width: line2.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+        }]} />
+      </View>
+      <Node n={3} label={STEP_LABELS[2]} />
     </View>
   );
 }
-
 
 // ─── Signup ────────────────────────────────────────────────────────────────────
 export default function Signup() {
   const router = useRouter();
   const { signUp } = useAuth();
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [role, setRole] = useState<Role | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
 
-  const { control, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, watch, formState: { errors }, trigger } = useForm<FormData>({
     defaultValues: { firstName: '', lastName: '', phone: '', password: '', confirmPassword: '' },
   });
   const pw = watch('password');
   const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
 
-  const goNext = () => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep(2); };
-  const goBack = () => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setStep(1); };
+  const goStep = (s: 1 | 2 | 3) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setStep(s);
+  };
+
+  const goNext = async () => {
+    if (step === 1) {
+      if (!role) { Alert.alert('Required', 'Please select an account type.'); return; }
+      goStep(2);
+    } else if (step === 2) {
+      const valid = await trigger(['firstName', 'lastName', 'phone']);
+      if (valid) goStep(3);
+    }
+  };
+
+  const goBack = () => {
+    if (step === 2) goStep(1);
+    else if (step === 3) goStep(2);
+    else router.back();
+  };
 
   const phoneRules = {
     required: 'Phone is required',
@@ -150,18 +164,16 @@ export default function Signup() {
   };
 
   const onSubmit = async (data: FormData) => {
-    if (!role) { Alert.alert('Required', 'Please select an account type.'); goBack(); return; }
+    if (!role) { Alert.alert('Required', 'Please select an account type.'); goStep(1); return; }
     setSubmitting(true);
     setTimeout(() => {
       setSubmitting(false);
-
       const rolePaths: Record<Role, string> = {
         'USER': '/(tabs)/users/standard-user/sos_screen',
         'VOLUNTEER': '/(tabs)/users/volunteer/dashboard',
         'POLICE': '/(tabs)/users/police/dashboard',
         'ADMIN': '/(tabs)/users/admin/dashboard',
       };
-
       router.replace(rolePaths[role] as any);
     }, 1500);
   };
@@ -184,7 +196,7 @@ export default function Signup() {
       render={({ field: { onChange, value } }) => (
         <>
           <View style={[st.inputWrap, focused === name && st.inputFocused, errors[name] && st.inputError]}>
-            <Feather name={icon} size={18} color={focused === name ? T.violet : T.ink4} style={st.inputIcon} />
+            <Feather name={icon} size={18} color={focused === name ? T.violet : T.inputIconDefault} style={st.inputIcon} />
             <TextInput
               placeholder={placeholder}
               placeholderTextColor={T.ink5}
@@ -204,8 +216,14 @@ export default function Signup() {
     />
   );
 
+  const STEP_TITLES = {
+    1: { title: 'Join ResQher', subtitle: 'Select how you want to use the app.' },
+    2: { title: 'Your Identity', subtitle: 'Tell us who you are.' },
+    3: { title: 'Secure Account', subtitle: 'Create a strong password.' },
+  };
+
   return (
-    <AuthShell onBack={step === 2 ? goBack : () => router.back()}>
+    <AuthShell onBack={goBack}>
       <ScrollView
         style={{ borderRadius: R.xl }}
         showsVerticalScrollIndicator={false}
@@ -217,16 +235,16 @@ export default function Signup() {
           {/* ── Progress + Header ── */}
           <StepProgress step={step} />
           <View style={st.header}>
-            <Text style={st.title}>{step === 1 ? 'Join ResQher' : 'Your Details'}</Text>
-            <Text style={st.subtitle}>{step === 1 ? 'Select how you want to use the app.' : 'Almost there — fill in your info.'}</Text>
+            <Text style={st.title}>{STEP_TITLES[step].title}</Text>
+            <Text style={st.subtitle}>{STEP_TITLES[step].subtitle}</Text>
           </View>
 
-          {/* ─── STEP 1: Role ─────────────────────────────── */}
+          {/* ─── STEP 1: Role Selection ─────────────────── */}
           {step === 1 && (
             <>
               <View style={st.roleList}>
                 {ROLE_OPTIONS.map(opt => (
-                  <AnimatedRoleCard
+                  <RoleTile
                     key={opt.value}
                     opt={opt}
                     isActive={role === opt.value}
@@ -268,7 +286,7 @@ export default function Signup() {
             </>
           )}
 
-          {/* ─── STEP 2: Details ──────────────────────────── */}
+          {/* ─── STEP 2: Identity ──────────────────────── */}
           {step === 2 && (
             <>
               {/* Selected role badge */}
@@ -277,7 +295,7 @@ export default function Signup() {
                   <Feather name={selectedMeta?.icon ?? 'user'} size={14} color={T.violet} />
                   <Text style={st.roleBadgeTxt}>{selectedMeta?.label}</Text>
                 </View>
-                <TouchableOpacity onPress={goBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <TouchableOpacity onPress={() => goStep(1)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                   <Text style={st.linkAccent}>Change</Text>
                 </TouchableOpacity>
               </View>
@@ -323,6 +341,25 @@ export default function Signup() {
               </View>
 
               <Field name="phone" placeholder="Phone number" icon="phone" keyboard="phone-pad" rules={phoneRules} />
+
+              <TouchableOpacity
+                style={st.btn}
+                onPress={goNext}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Continue to security"
+              >
+                <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={st.btnInner}>
+                  <Text style={st.btnTxt}>Continue</Text>
+                  <Feather name="arrow-right" size={18} color={T.onPrimary} />
+                </LinearGradient>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ─── STEP 3: Security ──────────────────────── */}
+          {step === 3 && (
+            <>
               <Field name="password" placeholder="Password" icon="lock" secure rules={{ required: 'Required', minLength: { value: 8, message: 'Min 8 characters' } }} />
               <Field name="confirmPassword" placeholder="Confirm password" icon="shield" secure rules={{ required: 'Required', validate: (v: string) => v === pw || 'Passwords do not match' }} />
 
@@ -340,10 +377,6 @@ export default function Signup() {
                     </LinearGradient>
                   )
                 }
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={goBack} style={st.linkRow}>
-                <Text style={st.linkTxt}>← Go back</Text>
               </TouchableOpacity>
             </>
           )}
@@ -367,32 +400,32 @@ const st = StyleSheet.create({
     }),
   },
 
-  // ── Modern step tracker
+  // ── 3-node progress tracker
   progressWrap: {
     flexDirection: 'row', alignItems: 'center',
-    marginBottom: S.s4, paddingHorizontal: S.s3,
+    marginBottom: S.s4, paddingHorizontal: S.s1,
   },
-  stepNode: { alignItems: 'center', gap: 5 },
+  stepNode: { alignItems: 'center', gap: 4 },
   stepCircle: {
-    width: 32, height: 32, borderRadius: 16,
-    borderWidth: 2, borderColor: T.lineBold,
+    width: 28, height: 28, borderRadius: 14,
+    borderWidth: 1.5, borderColor: T.lineBold,
     backgroundColor: T.surfaceCard,
     alignItems: 'center', justifyContent: 'center',
   },
   stepCircleActive: {
     backgroundColor: T.violet, borderColor: T.violet,
   },
-  stepNum: { fontSize: 13, fontWeight: '700', color: T.ink4 },
+  stepNum: { fontSize: 11, fontWeight: '700', color: T.ink4 },
   stepNumActive: { color: T.onPrimary },
-  stepLabel: { fontSize: 10, fontWeight: '600', color: T.ink4, letterSpacing: 0.3 },
+  stepLabel: { fontSize: 9, fontWeight: '600', color: T.ink4, letterSpacing: 0.3 },
   stepLabelActive: { color: T.violet },
   lineTrack: {
-    flex: 1, height: 2.5,
+    flex: 1, height: 2,
     backgroundColor: T.lineBold,
     borderRadius: R.full,
     overflow: 'hidden',
-    marginHorizontal: S.s2,
-    marginBottom: 15,
+    marginHorizontal: S.s1,
+    marginBottom: 14,
   },
   lineFill: { height: '100%', backgroundColor: T.violet, borderRadius: R.full },
 
@@ -400,69 +433,30 @@ const st = StyleSheet.create({
   title: { ...Ty.h3, marginBottom: 2 },
   subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
 
+  // ── Minimalist role tiles — 1px border, glow-only on select
   roleList: { gap: 10, marginBottom: S.s3 },
-
-  roleCardWrap: {
-    borderRadius: R.md,
-    ...Platform.select({
-      ios: { shadowColor: '#8A38F6', shadowOpacity: 0, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-      android: {},
-    }),
-  },
-
-  roleCard: {
+  roleTile: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 68,
+    height: 62,
     paddingHorizontal: S.s4,
     borderRadius: R.md,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: T.lineBold,
     backgroundColor: T.surfaceCard,
   },
-
-  roleCardActive: {
+  roleTileActive: {
     borderColor: T.violet,
-    borderWidth: 2,
-    backgroundColor: T.violetDim,
+    borderWidth: 1.5,
     ...Platform.select({
-      ios: { shadowOpacity: 0.20 },
+      ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
       android: { elevation: 6 },
     }),
   },
-
-  roleIconBox: {
-    width: 40, height: 40,
-    borderRadius: 10,
-    backgroundColor: T.surfaceMid,
-    alignItems: 'center', justifyContent: 'center',
-    marginRight: S.s3,
-    flexShrink: 0,
-  },
-  roleIconBoxActive: {
-    backgroundColor: 'rgba(138,56,246,0.15)',
-  },
-
-  roleText: { flex: 1, minWidth: 0 },
-  roleLabel: { fontSize: 14, fontWeight: '700', color: T.ink, marginBottom: 2 },
-  roleLabelActive: { color: T.violet },
-  roleDesc: { fontSize: 12, color: T.ink4, lineHeight: 16 },
-
-  roleCheck: {
-    width: 22, height: 22, borderRadius: 11,
-    borderWidth: 2, borderColor: T.lineBold,
-    alignItems: 'center', justifyContent: 'center',
-    marginLeft: S.s2,
-    flexShrink: 0,
-    backgroundColor: T.surfaceCard,
-  },
-  roleCheckActive: {
-    backgroundColor: T.violet, borderColor: T.violet,
-  },
-  roleCheckDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: T.lineBold,
-  },
+  roleTileText: { flex: 1, marginLeft: S.s3, minWidth: 0 },
+  roleTileLabel: { fontSize: 14, fontWeight: '700', color: T.ink, marginBottom: 1 },
+  roleTileLabelActive: { color: T.violet },
+  roleTileDesc: { fontSize: 12, color: T.ink4, lineHeight: 16 },
 
   infoBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: S.s2,

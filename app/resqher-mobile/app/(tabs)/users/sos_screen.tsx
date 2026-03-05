@@ -1,15 +1,28 @@
 /**
  * app/(tabs)/users/sos_screen.tsx
- * Canonical SOS screen — Premium Tactical Dark Mode
- * All business logic / API / haptics preserved. Visual tokens updated.
+ * Premium Tactical Command Center — SOS Screen
+ * 
+ * Features:
+ * - Reanimated-powered heartbeat aura (double-pulse rhythm + haptic sync)
+ * - Enhanced 24-rule "Encrypted Professional" map style
+ * - Custom Electric Violet glow markers (no default Google pins)
+ * - LIVE button heartbeat scale sync (1.0 ↔ 1.05)
+ * - High-contrast GPS/recenter for low-light accessibility
+ * - 60fps native-thread animations throughout
  */
 
 import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
-    Animated, Easing, Dimensions, StatusBar, Platform,
+    Dimensions, StatusBar, Platform,
     Modal, ScrollView, ViewStyle,
 } from 'react-native';
+import Animated, {
+    useSharedValue, useAnimatedStyle, withTiming, withSequence,
+    withDelay, withRepeat, Easing as REasing, runOnJS,
+    interpolate, Extrapolation,
+} from 'react-native-reanimated';
+import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,8 +36,6 @@ import { G } from '../../../src/constants/gradients';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
-// Layer 1: BlurView with intensity 20 for frosted dark glass
-// Layer 2: T.surfaceOverlay (violet tint)
 // ─────────────────────────────────────────────────────────────────────────────
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
@@ -98,22 +109,22 @@ const NAV_TABS: {
     ];
 
 const ACTIVE_COLOR = T.violet;
-const INACTIVE_COLOR = T.navIconMuted;
+const INACTIVE_COLOR = T.navIconInactive;  // Global high-contrast token for all pages
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pulse Radar (idle state)
+// Pulse Radar (idle state — locating)
 // ─────────────────────────────────────────────────────────────────────────────
 const PulseRadar = memo(function PulseRadar() {
-    const a0 = useRef(new Animated.Value(0)).current;
-    const a1 = useRef(new Animated.Value(0)).current;
-    const a2 = useRef(new Animated.Value(0)).current;
+    const a0 = useRef(new RNAnimated.Value(0)).current;
+    const a1 = useRef(new RNAnimated.Value(0)).current;
+    const a2 = useRef(new RNAnimated.Value(0)).current;
     const anims = [a0, a1, a2];
 
     useEffect(() => {
         anims.forEach((a, i) => {
             const loop = () => {
                 a.setValue(0);
-                Animated.timing(a, {
+                RNAnimated.timing(a, {
                     toValue: 1, duration: 2000,
                     easing: Easing.out(Easing.ease),
                     useNativeDriver: true, delay: i * 660,
@@ -126,7 +137,7 @@ const PulseRadar = memo(function PulseRadar() {
     return (
         <View style={rdr.wrap} pointerEvents="none">
             {anims.map((a, i) => (
-                <Animated.View key={i} style={[rdr.ring, {
+                <RNAnimated.View key={i} style={[rdr.ring, {
                     transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1.6] }) }],
                     opacity: a.interpolate({ inputRange: [0, 0.45, 1], outputRange: [0.6, 0.25, 0] }),
                 }]} />
@@ -144,40 +155,137 @@ const rdr = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Emergency border overlay (LIVE state only)
+// Emergency Border Overlay — Reanimated (native thread, 60fps)
 // ─────────────────────────────────────────────────────────────────────────────
 const EmergencyOverlay = memo(function EmergencyOverlay() {
-    const op = useRef(new Animated.Value(0.3)).current;
+    const opacity = useSharedValue(0.3);
+
     useEffect(() => {
-        Animated.loop(Animated.sequence([
-            Animated.timing(op, { toValue: 0.08, duration: 1000, useNativeDriver: true }),
-            Animated.timing(op, { toValue: 0.30, duration: 1000, useNativeDriver: true }),
-        ])).start();
+        opacity.value = withRepeat(
+            withSequence(
+                withTiming(0.08, { duration: 1000, easing: REasing.inOut(REasing.ease) }),
+                withTiming(0.30, { duration: 1000, easing: REasing.inOut(REasing.ease) }),
+            ),
+            -1, // infinite
+        );
     }, []);
+
+    const animStyle = useAnimatedStyle(() => ({
+        opacity: opacity.value,
+    }));
+
     return (
         <Animated.View
             pointerEvents="none"
             style={[StyleSheet.absoluteFillObject, {
-                borderWidth: 2.5, borderColor: T.dangerBorder, zIndex: 999, opacity: op,
-            }]}
+                borderWidth: 2.5, borderColor: T.dangerBorder, zIndex: 999,
+            }, animStyle]}
         />
     );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hold SOS Button — two-semicircle arc progress ring
+// Emergency Heartbeat Aura — Reanimated double-pulse + haptic sync
+// Rhythm: lub (0.02→0.12) — dub (0.04→0.12) — rest (→0.02)
+// Haptics fire on each peak via runOnJS for NFR-006 reliability
+// ─────────────────────────────────────────────────────────────────────────────
+const fireHapticLight = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+};
+
+const HeartbeatAura = memo(function HeartbeatAura() {
+    const pulse = useSharedValue(0.02);
+
+    useEffect(() => {
+        pulse.value = withRepeat(
+            withSequence(
+                // Lub — first peak
+                withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
+                withTiming(0.04, { duration: 150, easing: REasing.in(REasing.quad) }),
+                // Dub — second peak
+                withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
+                // Rest
+                withTiming(0.02, { duration: 800, easing: REasing.inOut(REasing.ease) }),
+            ),
+            -1, // infinite
+        );
+    }, []);
+
+    const animStyle = useAnimatedStyle(() => {
+        // Fire haptics at peaks (opacity > 0.10)
+        if (pulse.value > 0.10) {
+            runOnJS(fireHapticLight)();
+        }
+        return {
+            opacity: pulse.value,
+        };
+    });
+
+    return (
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { zIndex: 1 }, animStyle]}>
+            <LinearGradient
+                colors={G.sosAuraPulse.colors}
+                start={G.sosAuraPulse.start}
+                end={G.sosAuraPulse.end}
+                style={StyleSheet.absoluteFillObject}
+            />
+        </Animated.View>
+    );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom Marker — Electric Violet Glow (idle state)
+// Replaces default Google pin with branded glow marker
+// ─────────────────────────────────────────────────────────────────────────────
+const VioletGlowMarker = memo(function VioletGlowMarker() {
+    return (
+        <View style={mkr.container}>
+            <View style={mkr.outerGlow}>
+                <View style={mkr.midRing}>
+                    <View style={mkr.innerDot} />
+                </View>
+            </View>
+        </View>
+    );
+});
+
+const mkr = StyleSheet.create({
+    container: { alignItems: 'center', justifyContent: 'center' },
+    outerGlow: {
+        width: 32, height: 32, borderRadius: 16,
+        backgroundColor: 'rgba(138,56,246,0.30)',
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.50, shadowRadius: 12, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 6 },
+        }),
+    },
+    midRing: {
+        width: 18, height: 18, borderRadius: 9,
+        backgroundColor: T.violet,
+        borderWidth: 2.5, borderColor: T.surface,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    innerDot: {
+        width: 6, height: 6, borderRadius: 3,
+        backgroundColor: T.onPrimary,
+    },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hold SOS Button — two-semicircle arc progress ring (RN Animated for arc)
 // ─────────────────────────────────────────────────────────────────────────────
 const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: () => void }) {
-    const progress = useRef(new Animated.Value(0)).current;
-    const scale = useRef(new Animated.Value(1)).current;
-    const holdRef = useRef<Animated.CompositeAnimation | null>(null);
+    const progress = useRef(new RNAnimated.Value(0)).current;
+    const scale = useRef(new RNAnimated.Value(1)).current;
+    const holdRef = useRef<RNAnimated.CompositeAnimation | null>(null);
     const [holding, setHolding] = useState(false);
 
     const startHold = useCallback(() => {
         setHolding(true);
         Haptics.selectionAsync();
-        Animated.spring(scale, { toValue: 0.94, useNativeDriver: true, tension: 200, friction: 10 }).start();
-        holdRef.current = Animated.timing(progress, {
+        RNAnimated.spring(scale, { toValue: 0.94, useNativeDriver: true, tension: 200, friction: 10 }).start();
+        holdRef.current = RNAnimated.timing(progress, {
             toValue: 1, duration: HOLD_MS, easing: Easing.linear, useNativeDriver: false,
         });
         holdRef.current.start(({ finished }) => {
@@ -194,9 +302,9 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
     const cancelHold = useCallback(() => {
         holdRef.current?.stop();
         setHolding(false);
-        Animated.parallel([
-            Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 10 }),
-            Animated.timing(progress, { toValue: 0, duration: 240, useNativeDriver: false }),
+        RNAnimated.parallel([
+            RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 10 }),
+            RNAnimated.timing(progress, { toValue: 0, duration: 240, useNativeDriver: false }),
         ]).start();
     }, []);
 
@@ -205,9 +313,9 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
     const arcOp = progress.interpolate({ inputRange: [0, 0.03, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' });
 
     return (
-        <Animated.View style={{ transform: [{ scale }] }}>
+        <RNAnimated.View style={{ transform: [{ scale }] }}>
             {/* Arc progress ring */}
-            <Animated.View style={[StyleSheet.absoluteFillObject, {
+            <RNAnimated.View style={[StyleSheet.absoluteFillObject, {
                 width: ARC_SIZE, height: ARC_SIZE,
                 left: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
                 top: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
@@ -215,12 +323,12 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
             }]} pointerEvents="none">
                 <View style={hs.arcTrack} />
                 <View style={[hs.halfClip, hs.rightClip]}>
-                    <Animated.View style={[hs.halfFill, hs.rightFill, { transform: [{ rotate: rightRot }] }]} />
+                    <RNAnimated.View style={[hs.halfFill, hs.rightFill, { transform: [{ rotate: rightRot }] }]} />
                 </View>
                 <View style={[hs.halfClip, hs.leftClip]}>
-                    <Animated.View style={[hs.halfFill, hs.leftFill, { transform: [{ rotate: leftRot }] }]} />
+                    <RNAnimated.View style={[hs.halfFill, hs.leftFill, { transform: [{ rotate: leftRot }] }]} />
                 </View>
-            </Animated.View>
+            </RNAnimated.View>
 
             {/* SOS button — Electric Violet gradient with glow */}
             <TouchableOpacity onPressIn={startHold} onPressOut={cancelHold} activeOpacity={1}>
@@ -234,7 +342,7 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
                     <Text style={s.sosSubTxt}>{holding ? 'Release' : 'Hold 2s'}</Text>
                 </LinearGradient>
             </TouchableOpacity>
-        </Animated.View>
+        </RNAnimated.View>
     );
 });
 
@@ -246,6 +354,43 @@ const hs = StyleSheet.create({
     halfFill: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 3.5, borderColor: T.violet, backgroundColor: 'transparent' },
     rightFill: { left: -ARC_SIZE / 2 },
     leftFill: { left: 0 },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LIVE SOS Button — Heartbeat scale sync (1.0 ↔ 1.05) via Reanimated
+// ─────────────────────────────────────────────────────────────────────────────
+const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => void }) {
+    const heartbeat = useSharedValue(1.0);
+
+    useEffect(() => {
+        heartbeat.value = withRepeat(
+            withSequence(
+                withTiming(1.05, { duration: 250, easing: REasing.out(REasing.quad) }),
+                withTiming(1.0, { duration: 150, easing: REasing.in(REasing.quad) }),
+                withTiming(1.05, { duration: 250, easing: REasing.out(REasing.quad) }),
+                withTiming(1.0, { duration: 800, easing: REasing.inOut(REasing.ease) }),
+            ),
+            -1,
+        );
+    }, []);
+
+    const animStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: heartbeat.value }],
+    }));
+
+    return (
+        <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
+            <Animated.View style={animStyle}>
+                <View style={[s.sosBtn, s.sosBtnEmg]}>
+                    <View style={s.sosBtnDangerFill}>
+                        <Ionicons name="location-sharp" size={24} color={T.onDanger} />
+                        <Text style={s.sosTxt}>LIVE</Text>
+                        <Text style={s.sosSubTxt}>TAP TO STOP</Text>
+                    </View>
+                </View>
+            </Animated.View>
+        </TouchableOpacity>
+    );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,9 +406,9 @@ const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label:
 ];
 
 const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-    const slideX = useRef(new Animated.Value(-width * 0.76)).current;
+    const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
     useEffect(() => {
-        Animated.spring(slideX, {
+        RNAnimated.spring(slideX, {
             toValue: visible ? 0 : -width * 0.76,
             useNativeDriver: true, tension: 62, friction: 13,
         }).start();
@@ -272,7 +417,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
     return (
         <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
             <TouchableOpacity style={s.drawerOverlay} activeOpacity={1} onPress={onClose} />
-            <Animated.View style={[s.drawer, { transform: [{ translateX: slideX }] }]}>
+            <RNAnimated.View style={[s.drawer, { transform: [{ translateX: slideX }] }]}>
                 <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={s.drawerHd}>
                     <View style={s.drawerAvatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
                     <Text style={s.drawerAppName}>ResQher</Text>
@@ -287,7 +432,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
                         </TouchableOpacity>
                     ))}
                 </ScrollView>
-            </Animated.View>
+            </RNAnimated.View>
         </Modal>
     );
 });
@@ -298,12 +443,12 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
-    const scale = useRef(new Animated.Value(1)).current;
+    const scale = useRef(new RNAnimated.Value(1)).current;
 
     const handlePress = useCallback(() => {
-        Animated.sequence([
-            Animated.timing(scale, { toValue: 0.82, duration: 70, useNativeDriver: true }),
-            Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
+        RNAnimated.sequence([
+            RNAnimated.timing(scale, { toValue: 0.82, duration: 70, useNativeDriver: true }),
+            RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
         ]).start();
         onPress();
     }, [onPress]);
@@ -317,7 +462,7 @@ const NavTab = memo(function NavTab({
             accessibilityState={{ selected: isActive }}
             accessibilityLabel={tab.label}
         >
-            <Animated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
+            <RNAnimated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
                 <View style={[s.navIconBox, isActive && s.navIconBoxActive]}>
                     <Ionicons
                         name={(isActive ? tab.iconActive : tab.iconOutline) as any}
@@ -326,22 +471,22 @@ const NavTab = memo(function NavTab({
                     />
                 </View>
                 <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
-            </Animated.View>
+            </RNAnimated.View>
         </TouchableOpacity>
     );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Live Beacon Marker
+// Live Beacon Marker (emergency state — pulsing red rings)
 // ─────────────────────────────────────────────────────────────────────────────
 const LiveBeacon = memo(function LiveBeacon() {
-    const ring1 = useRef(new Animated.Value(0)).current;
-    const ring2 = useRef(new Animated.Value(0)).current;
+    const ring1 = useRef(new RNAnimated.Value(0)).current;
+    const ring2 = useRef(new RNAnimated.Value(0)).current;
     useEffect(() => {
-        const pulse = (a: Animated.Value, delay: number) => {
+        const pulse = (a: RNAnimated.Value, delay: number) => {
             const loop = () => {
                 a.setValue(0);
-                Animated.timing(a, {
+                RNAnimated.timing(a, {
                     toValue: 1, duration: 1600,
                     easing: Easing.out(Easing.ease), useNativeDriver: true, delay,
                 }).start(() => loop());
@@ -350,14 +495,14 @@ const LiveBeacon = memo(function LiveBeacon() {
         };
         pulse(ring1, 0); pulse(ring2, 700);
     }, []);
-    const ringStyle = (a: Animated.Value) => ({
+    const ringStyle = (a: RNAnimated.Value) => ({
         transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [1, 2.8] }) }],
         opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 0.18, 0] }),
     });
     return (
         <View style={lb.wrap}>
-            <Animated.View style={[lb.ring, ringStyle(ring1)]} />
-            <Animated.View style={[lb.ring, ringStyle(ring2)]} />
+            <RNAnimated.View style={[lb.ring, ringStyle(ring1)]} />
+            <RNAnimated.View style={[lb.ring, ringStyle(ring2)]} />
             <View style={lb.core}><View style={lb.dot} /></View>
             <Text style={lb.label}>LIVE</Text>
         </View>
@@ -372,14 +517,13 @@ const lb = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Screen
+// Main Screen — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SOSScreen() {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView>(null);
 
     const [drawerOpen, setDrawerOpen] = useState(false);
-    // Set Home as the default active tab
     const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(0);
@@ -391,10 +535,10 @@ export default function SOSScreen() {
     const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
 
-    // Pulse ring anims (SOS active state)
-    const p0s = useRef(new Animated.Value(1)).current; const p0o = useRef(new Animated.Value(0)).current;
-    const p1s = useRef(new Animated.Value(1)).current; const p1o = useRef(new Animated.Value(0)).current;
-    const p2s = useRef(new Animated.Value(1)).current; const p2o = useRef(new Animated.Value(0)).current;
+    // Pulse ring anims (SOS active state — RN Animated for compatibility)
+    const p0s = useRef(new RNAnimated.Value(1)).current; const p0o = useRef(new RNAnimated.Value(0)).current;
+    const p1s = useRef(new RNAnimated.Value(1)).current; const p1o = useRef(new RNAnimated.Value(0)).current;
+    const p2s = useRef(new RNAnimated.Value(1)).current; const p2o = useRef(new RNAnimated.Value(0)).current;
     const pulseAnims = [
         { scale: p0s, op: p0o },
         { scale: p1s, op: p1o },
@@ -432,9 +576,9 @@ export default function SOSScreen() {
         pulseAnims.forEach(({ scale, op }, i) => {
             const loop = () => {
                 scale.setValue(1); op.setValue(0.55);
-                Animated.parallel([
-                    Animated.timing(scale, { toValue: 1.6, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-                    Animated.timing(op, { toValue: 0, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                RNAnimated.parallel([
+                    RNAnimated.timing(scale, { toValue: 1.6, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                    RNAnimated.timing(op, { toValue: 0, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
                 ]).start(() => loop());
             };
             setTimeout(loop, i * 700);
@@ -481,9 +625,10 @@ export default function SOSScreen() {
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             {isEmergencyLive && <EmergencyOverlay />}
+            {isEmergencyLive && <HeartbeatAura />}
             <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-            {/* Map — Dark Tactical Style */}
+            {/* Map — Encrypted Professional Dark Tactical Style */}
             <MapView
                 ref={mapRef}
                 style={StyleSheet.absoluteFillObject}
@@ -493,11 +638,11 @@ export default function SOSScreen() {
                 showsMyLocationButton={false}
                 showsCompass={false}
                 moveOnMarkerPress={false}
-                customMapStyle={mapStyle}
+                customMapStyle={TACTICAL_MAP_STYLE}
             >
                 {userLoc && !isEmergencyLive && (
                     <Marker coordinate={userLoc} tracksViewChanges={false}>
-                        <View style={s.markerOut}><View style={s.markerIn} /></View>
+                        <VioletGlowMarker />
                     </Marker>
                 )}
                 {userLoc && isEmergencyLive && (
@@ -522,7 +667,6 @@ export default function SOSScreen() {
                     }
                 </View>
                 <View style={s.headerBtns}>
-                    {/* Removed redundant LIVE chip from header */}
                     <TouchableOpacity
                         style={s.hBtn}
                         onPress={() => Alert.alert('Notifications', 'No new notifications.')}
@@ -541,7 +685,7 @@ export default function SOSScreen() {
                 </View>
             </PremiumBar>
 
-            {/* ── Map controls ───────────────────────────────────────────── */}
+            {/* ── Map controls — High contrast GPS/Recenter ───────────────── */}
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
                 <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
                     <View style={[s.gpsDot, {
@@ -553,8 +697,8 @@ export default function SOSScreen() {
                         {locationStatus !== 'idle' ? 'GPS' : '…'}
                     </Text>
                 </View>
-                <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc}>
-                    <Ionicons name="locate-outline" size={20} color={T.violet} />
+                <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
+                    <Ionicons name="locate-outline" size={22} color={T.violet} />
                 </TouchableOpacity>
             </View>
 
@@ -573,21 +717,13 @@ export default function SOSScreen() {
                             </View>
                         </TouchableOpacity>
                     ) : isEmergencyLive ? (
-                        <TouchableOpacity onPress={confirmStop} activeOpacity={0.82}>
-                            <View style={[s.sosBtn, s.sosBtnEmg]}>
-                                <View style={s.sosBtnDangerFill}>
-                                    <Ionicons name="location-sharp" size={24} color={T.onDanger} />
-                                    <Text style={s.sosTxt}>LIVE</Text>
-                                    <Text style={s.sosSubTxt}>TAP TO STOP</Text>
-                                </View>
-                            </View>
-                        </TouchableOpacity>
+                        <LiveSOSButton onPress={confirmStop} />
                     ) : (
                         <HoldSosButton onTrigger={triggerSOS} />
                     )}
 
                     {sosActive && pulseAnims.map(({ scale, op }, i) => (
-                        <Animated.View key={i} pointerEvents="none" style={[s.pulseRing, {
+                        <RNAnimated.View key={i} pointerEvents="none" style={[s.pulseRing, {
                             transform: [{ scale }], opacity: op,
                             borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
                         }]} />
@@ -630,24 +766,57 @@ export default function SOSScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tactical Dark Map Style — aggressive de-clutter, POIs hidden
+// "Encrypted Professional" Tactical Map Style — 24 rules
+// Deep charcoal base, zero POIs, 3-tier road hierarchy, muted labels
+// Maximizes Electric Violet brand color contrast
 // ─────────────────────────────────────────────────────────────────────────────
-const mapStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#121214' }] },
+const TACTICAL_MAP_STYLE = [
+    // Base geometry — deep charcoal/black
+    { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
+
+    // Kill ALL icons
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#8E8E93' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#08070B' }] },
+
+    // Label text — barely visible tactical gray
+    { elementType: 'labels.text.fill', stylers: [{ color: '#636366' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#08070B' }, { weight: 2 }] },
+
+    // Kill ALL POIs — every subcategory explicitly
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.attraction', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.government', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.medical', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
+    { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.place_of_worship', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.school', stylers: [{ visibility: 'off' }] },
+    { featureType: 'poi.sports_complex', stylers: [{ visibility: 'off' }] },
+
+    // Transit — off
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2C2C2E' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1A1A1E' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#08070B' }] },
-    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0F0E12' }] },
+
+    // Roads — 3-tier muted gray hierarchy
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2C2C2E' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1C1C1E' }] },
+    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#222224' }] },
+    { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#1A1A1C' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
+
+    // Water — near-black
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060608' }] },
+    { featureType: 'water', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+
+    // Landscape — slightly lighter than base for depth
+    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
+
+    // Administrative — barely visible
     { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+    { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StyleSheet — Premium Tactical Dark Mode
+// StyleSheet — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
     root: { flex: 1, backgroundColor: T.bg },
@@ -700,13 +869,13 @@ const s = StyleSheet.create({
     gpsTxt: { fontSize: 10, fontWeight: '700', color: T.ink2, letterSpacing: 0.5 },
     gpsTxtEmg: { color: T.dangerText },
     ctrlBtn: {
-        width: 38, height: 38, borderRadius: R.hBtn,
+        width: 44, height: 44, borderRadius: R.hBtn,
         backgroundColor: T.surfaceGlass,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: T.lineMid,
+        borderWidth: 1.5, borderColor: T.lineBold,
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 3 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 4 },
         }),
     },
 

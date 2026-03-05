@@ -69,8 +69,12 @@ export const T = {
   disabledBg: '#1C1C1E',
   disabledText: '#48484A',
 
-  // ── Nav icon inactive — muted violet for premium appearance on dark
-  navIconMuted: '#6B5B95',   // Desaturated violet — visible, on-brand
+  // ── Nav icon inactive — high-contrast for low-light legibility (global)
+  navIconMuted: '#6B5B95',   // Legacy — desaturated violet
+  navIconInactive: '#9CA3AF', // Higher-contrast neutral gray — use across ALL pages
+
+  // ── Input icon affordance
+  inputIconDefault: '#8E8E93', // Brighter default icon for input fields
 
   // ── Glass surface tokens (dark glassmorphism)
   surfaceGlass: 'rgba(26,26,30,0.80)',   // 80% dark glass

@@ -14,20 +14,14 @@ type Props = {
   onBack?: () => void;
 };
 
-// ─── Mesh Aurora — breathing blurred shapes ─────────────────────────────────
-// 3 overlapping irregular violet orbs with 12% opacity, blur ≈ 100
-// Creates the "SocialGrow" light-emission-from-below premium look
-// ─────────────────────────────────────────────────────────────────────────────
-
-
 // ─── Auth Shell ─────────────────────────────────────────────────────────────
 export default function AuthShell({ children, onBack }: Props) {
   return (
     <View style={styles.main}>
-      {/* Rising Violet Aura — SocialGrow gradient */}
+      {/* OLED Black → subtle violet aura from bottom */}
       <LinearGradient
         colors={G.authBg.colors}
-        locations={[0, 0.7, 1.0] as [number, number, ...number[]]}
+        locations={G.authBg.locations as unknown as [number, number, ...number[]]}
         start={G.authBg.start}
         end={G.authBg.end}
         style={StyleSheet.absoluteFill}

@@ -10,12 +10,11 @@ export const G = {
         end: { x: 0, y: 1 },
     },
 
-    // Auth background — SocialGrow 'Rising Violet Aura'
-    // True black → dark purple → Electric Violet light emission from below
+    // Auth background — OLED black with subtle violet 'light bleed' from bottom
+    // True black for top ~55%, then soft violet aura rising at the base
     authBg: {
-        // Deeper, less bright purple gradient for premium dark look
-        colors: ['#000000', '#1A1033', '#240046'] as const,
-        locations: [0, 0.7, 1.0] as const,
+        colors: ['#000000', '#000000', '#0D0015', '#1A0033'] as const,
+        locations: [0, 0.55, 0.8, 1.0] as const,
         start: { x: 0.5, y: 0 },
         end: { x: 0.5, y: 1 },
     },
@@ -58,4 +57,11 @@ export const G = {
     // ── SOS Pulse Ring colors ──────────────────────────────────────────
     sosRingDefault: T.brandGlow,                     // Electric Violet glow (40%)
     sosRingLive: 'rgba(226,54,54,0.45)',              // Safety Red ring
+
+    // ── Emergency Aura — pulsing red glow from bottom during active SOS
+    sosAuraPulse: {
+        colors: ['transparent', 'rgba(226,54,54,0.14)'] as const,
+        start: { x: 0.5, y: 0 },
+        end: { x: 0.5, y: 1 },
+    },
 };
