@@ -21,7 +21,7 @@ type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn } = useAuth(); // This will still be used to set the local token
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -37,7 +37,13 @@ export default function Login() {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
       setSubmitting(false);
-    }
+
+      // We manually tell the app to navigate to the Map screen
+      router.replace('/(tabs)/sos_screen');
+
+      console.log("Mock Login Successful: Redirecting to Map");
+    }, 1000);
+    // ---------------------------------
   };
 
   return (
@@ -97,7 +103,7 @@ export default function Login() {
             <Controller
               control={control}
               name="password"
-              rules={{ required: 'Password is required', minLength: { value: 4, message: 'Min 4 characters' } }}
+              rules={{ required: 'Password is required' }}
               render={({ field: { onChange, value } }) => (
                 <>
                   <View style={[
