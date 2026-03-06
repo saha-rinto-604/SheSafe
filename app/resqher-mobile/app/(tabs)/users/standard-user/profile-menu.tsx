@@ -12,8 +12,9 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { T, R, S } from '../../../src/constants/theme';
-import { useAuth } from '../../../src/context/AuthContext';
+import { T, R, S } from '../../../../src/constants/theme';
+import { useAuth } from '../../../../src/context/AuthContext';
+import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 type MenuItem = {
     label: string;
@@ -97,6 +98,7 @@ export default function ProfileMenuScreen() {
     };
 
     return (
+        <AtmosphericShell>
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
@@ -114,7 +116,7 @@ export default function ProfileMenuScreen() {
                 <View style={s.profileCard}>
                     <View style={s.profileAvatarWrap}>
                         <Image
-                            source={require('../../../assets/images/icon.png')}
+                            source={require('../../../../assets/images/icon.png')}
                             style={s.profileAvatar}
                         />
                     </View>
@@ -172,13 +174,13 @@ export default function ProfileMenuScreen() {
                 </View>
             </ScrollView>
         </View>
+        </AtmosphericShell>
     );
 }
 
 const s = StyleSheet.create({
     root: {
         flex: 1,
-        backgroundColor: T.bg,
     },
     header: {
         flexDirection: 'row',

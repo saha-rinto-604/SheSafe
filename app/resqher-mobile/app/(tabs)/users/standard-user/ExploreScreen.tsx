@@ -18,8 +18,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { G } from '../../../src/constants/gradients';
-import { T, R, S } from '../../../src/constants/theme';
+import { G } from '../../../../src/constants/gradients';
+import { T, R, S } from '../../../../src/constants/theme';
+import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 const { width, height } = Dimensions.get('window');
 
@@ -318,6 +319,7 @@ export default function ExploreScreen() {
     }, []);
 
     return (
+        <AtmosphericShell>
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
@@ -420,7 +422,7 @@ export default function ExploreScreen() {
                         accessibilityRole="button"
                     >
                         <Image
-                            source={require('../../../assets/images/icon.png')}
+                            source={require('../../../../assets/images/icon.png')}
                             style={s.profileAvatar}
                         />
                     </TouchableOpacity>
@@ -492,7 +494,8 @@ export default function ExploreScreen() {
                             onPress={() => {
                                 if (tab.id === 'Home') {
                                     router.replace('/(tabs)/users/sos_screen');
-                                    return;
+                                } else if (tab.id === 'Chat') {
+                                    router.push('/(tabs)/users/standard-user/chat_home');
                                 }
                             }}
                         />
@@ -500,6 +503,7 @@ export default function ExploreScreen() {
                 </PremiumBar>
             </View>
         </View>
+        </AtmosphericShell>
     );
 }
 
@@ -529,7 +533,7 @@ const TACTICAL_MAP_STYLE = [
 
 // ── StyleSheet ────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-    root: { flex: 1, backgroundColor: T.bg },
+    root: { flex: 1 },
 
     // ── Crosshair ──────────────────────────────────────────────────────────
     crosshairWrap: {

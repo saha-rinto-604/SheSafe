@@ -31,9 +31,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
+import AtmosphericShell from '../../../src/components/AtmosphericShell';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -56,14 +57,14 @@ const PremiumBar = memo(function PremiumBar({
 
 const pb = StyleSheet.create({
     bar: {
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% — lets blur show through
         borderWidth: 1,
-        borderColor: `${T.violet}22`,
+        borderColor: T.hairlineMicro,
         overflow: 'hidden',
     },
     tint: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: T.surfaceOverlay,
+        backgroundColor: T.surfaceOverlay,  // Violet tint overlay for glass depth
     },
     content: {
         flexDirection: 'row',
@@ -529,6 +530,7 @@ const lb = StyleSheet.create({
 // Main Screen — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SOSScreen() {
+    const router = useRouter();
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const mapRef = useRef<MapView>(null);
@@ -544,6 +546,22 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+
+    const handleNavigation = useCallback((tabId: string) => {
+        setActiveTab(tabId);
+        if (tabId === 'Chat') {
+            router.push('/(tabs)/users/standard-user/chat_home');
+        } else if (tabId === 'Explore') {
+            router.push('/(tabs)/users/standard-user/ExploreScreen');
+        }
+    }, [router]);
+
+    // Reset active tab when screen regains focus (e.g. returning from Chat)
+    useFocusEffect(
+        useCallback(() => {
+            setActiveTab('Home');
+        }, [])
+    );
 
     // Pulse ring anims (SOS active state — RN Animated for compatibility)
     const p0s = useRef(new RNAnimated.Value(1)).current; const p0o = useRef(new RNAnimated.Value(0)).current;
@@ -632,6 +650,7 @@ export default function SOSScreen() {
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
     return (
+        <AtmosphericShell>
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             {isEmergencyLive && <EmergencyOverlay />}
@@ -682,7 +701,7 @@ export default function SOSScreen() {
                         onPress={() => Alert.alert('Notifications', 'No new notifications.')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                        <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
                         <View style={s.notifDot} />
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -713,7 +732,7 @@ export default function SOSScreen() {
                     </Text>
                 </View>
                 <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
-                    <Ionicons name="locate-outline" size={22} color={T.violet} />
+                    <Ionicons name="locate-outline" size={22} color={T.onPrimary} />
                 </TouchableOpacity>
             </View>
 
@@ -771,18 +790,13 @@ export default function SOSScreen() {
                             key={tab.id}
                             tab={tab}
                             isActive={activeTab === tab.id}
-                            onPress={() => {
-                                if (tab.id === 'Explore') {
-                                    router.push('/(tabs)/users/standard-user/ExploreScreen');
-                                } else {
-                                    setActiveTab(tab.id);
-                                }
-                            }}
+                            onPress={() => handleNavigation(tab.id)}
                         />
                     ))}
                 </PremiumBar>
             </View>
         </View>
+        </AtmosphericShell>
     );
 }
 
@@ -816,11 +830,11 @@ const TACTICAL_MAP_STYLE = [
 // StyleSheet — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-    root: { flex: 1, backgroundColor: T.bg },
+    root: { flex: 1, backgroundColor: '#090514' },  // Matches AtmosphericShell gradient end
 
     header: {
         position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg,
+        borderRadius: 28,  // Bulky Glass Mandate — matches Hub cards
         zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
@@ -849,8 +863,8 @@ const s = StyleSheet.create({
     hBtn: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: T.hairlineMicro,
         alignItems: 'center', justifyContent: 'center',
     },
     notifDot: {
@@ -862,9 +876,9 @@ const s = StyleSheet.create({
     mapControls: { position: 'absolute', right: 14, gap: 8, alignItems: 'flex-end' },
     gpsPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 5,
-        borderWidth: 1, borderColor: T.lineMid,
+        borderWidth: 1, borderColor: T.hairlineMicro,
     },
     gpsPillEmg: { backgroundColor: T.dangerLight, borderColor: T.dangerBorder },
     gpsDot: { width: 6, height: 6, borderRadius: 3 },
@@ -872,9 +886,9 @@ const s = StyleSheet.create({
     gpsTxtEmg: { color: T.dangerText },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: T.surfaceBulky,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1.5, borderColor: T.lineBold,
+        borderWidth: 1, borderColor: T.hairlineMicro,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
@@ -917,28 +931,28 @@ const s = StyleSheet.create({
         justifyContent: 'center',
     },
 
-    sosTxt: { color: T.onPrimary, fontSize: 32, fontWeight: '900', letterSpacing: 1 },
-    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+    sosTxt: { color: T.onPrimary, fontSize: 38, fontWeight: '900', letterSpacing: 1.5 },
+    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.surfaceCard, borderWidth: 1.5, borderColor: T.dangerBorder,
+        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: T.hairlineMicro,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#E23636', shadowOpacity: 0.20, shadowRadius: 18, shadowOffset: { width: 0, height: 5 } },
             android: { elevation: 10 },
         }),
     },
-    cancelLabel: { color: T.ink3, fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
-    cancelCount: { color: T.danger, fontSize: 40, fontWeight: '900', lineHeight: 44 },
-    cancelSub: { color: T.ink4, fontSize: 10, fontWeight: '500', marginTop: 3 },
+    cancelLabel: { color: T.ink3, fontSize: 14, fontWeight: '900', letterSpacing: 1.5 },
+    cancelCount: { color: T.danger, fontSize: 48, fontWeight: '900', lineHeight: 52 },
+    cancelSub: { color: T.ink4, fontSize: 12, fontWeight: '700', marginTop: 3 },
 
     statusPill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
         paddingHorizontal: 16, paddingVertical: 8, marginTop: 16,
-        borderWidth: 1, borderColor: `${T.violet}18`,
+        borderWidth: 1, borderColor: T.hairlineMicro,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
@@ -949,7 +963,7 @@ const s = StyleSheet.create({
         borderColor: T.dangerBorder,
     },
     pillDot: { width: 7, height: 7, borderRadius: 3.5 },
-    pillTxt: { fontSize: 10, fontWeight: '600', color: T.ink3, letterSpacing: 0.3, textTransform: 'uppercase' },
+    pillTxt: { fontSize: 12, fontWeight: '700', color: T.ink3, letterSpacing: 0.4, textTransform: 'uppercase' },
     pillTxtLive: { color: T.dangerText },
 
     navWrap: {
@@ -991,8 +1005,8 @@ const s = StyleSheet.create({
     navIconBox: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: T.hairlineMicro,
         alignItems: 'center', justifyContent: 'center',
     },
     navIconBoxActive: {
