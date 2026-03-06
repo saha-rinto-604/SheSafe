@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle,
+    Modal, ScrollView, ViewStyle, Image,
 } from 'react-native';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
@@ -31,6 +31,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
+import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
 
@@ -396,13 +397,16 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
 // ─────────────────────────────────────────────────────────────────────────────
 // Side Drawer — Feather icons
 // ─────────────────────────────────────────────────────────────────────────────
-const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string }[] = [
-    { icon: 'shield', label: 'Safety Dashboard' },
-    { icon: 'message-circle', label: 'Group Chat' },
-    { icon: 'activity', label: 'Medical Help' },
+const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
+    { icon: 'user', label: 'Edit Profile' },
     { icon: 'phone-call', label: 'Emergency Contacts' },
+    { icon: 'shield', label: 'Safety Settings' },
+    { icon: 'check-circle', label: 'Volunteer Verification' },
+    { icon: 'clock', label: 'Incident History' },
+    { icon: 'lock', label: 'Privacy & Security' },
     { icon: 'settings', label: 'Settings' },
-    { icon: 'log-out', label: 'Logout' },
+    { icon: 'help-circle', label: 'Help & Support' },
+    { icon: 'log-out', label: 'Logout', danger: true },
 ];
 
 const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
@@ -425,11 +429,16 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
                     {DRAWER_ITEMS.map((item, i) => (
-                        <TouchableOpacity key={i} style={s.drawerRow} onPress={onClose} activeOpacity={0.65}>
-                            <View style={s.drawerIconBox}><Feather name={item.icon} size={18} color={T.violet} /></View>
-                            <Text style={s.drawerLabel}>{item.label}</Text>
-                            <Feather name="chevron-right" size={14} color={T.ink4} />
-                        </TouchableOpacity>
+                        <React.Fragment key={i}>
+                            {item.danger && <View style={s.drawerDivider} />}
+                            <TouchableOpacity style={s.drawerRow} onPress={onClose} activeOpacity={0.65}>
+                                <View style={[s.drawerIconBox, item.danger && s.drawerIconBoxDanger]}>
+                                    <Feather name={item.icon} size={18} color={item.danger ? T.danger : T.violet} />
+                                </View>
+                                <Text style={[s.drawerLabel, item.danger && s.drawerLabelDanger]}>{item.label}</Text>
+                                {!item.danger && <Feather name="chevron-right" size={14} color={T.ink4} />}
+                            </TouchableOpacity>
+                        </React.Fragment>
                     ))}
                 </ScrollView>
             </RNAnimated.View>
@@ -521,6 +530,7 @@ const lb = StyleSheet.create({
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SOSScreen() {
     const insets = useSafeAreaInsets();
+    const router = useRouter();
     const mapRef = useRef<MapView>(null);
 
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -677,10 +687,15 @@ export default function SOSScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={s.hBtn}
-                        onPress={() => setDrawerOpen(true)}
+                        onPress={() => router.push('/(tabs)/users/profile-menu')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Open profile menu"
+                        accessibilityRole="button"
                     >
-                        <Ionicons name="menu-outline" size={22} color={T.ink2} />
+                        <Image
+                            source={require('../../../assets/images/icon.png')}
+                            style={s.profileAvatar}
+                        />
                     </TouchableOpacity>
                 </View>
             </PremiumBar>
@@ -756,7 +771,13 @@ export default function SOSScreen() {
                             key={tab.id}
                             tab={tab}
                             isActive={activeTab === tab.id}
-                            onPress={() => setActiveTab(tab.id)}
+                            onPress={() => {
+                                if (tab.id === 'Explore') {
+                                    router.push('/(tabs)/users/ExploreScreen');
+                                } else {
+                                    setActiveTab(tab.id);
+                                }
+                            }}
                         />
                     ))}
                 </PremiumBar>
@@ -766,53 +787,29 @@ export default function SOSScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "Encrypted Professional" Tactical Map Style — 24 rules
-// Deep charcoal base, zero POIs, 3-tier road hierarchy, muted labels
-// Maximizes Electric Violet brand color contrast
+// Tactical Map Style — dark blue-charcoal base, visible hierarchy
 // ─────────────────────────────────────────────────────────────────────────────
 const TACTICAL_MAP_STYLE = [
-    // Base geometry — deep charcoal/black
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
-
-    // Kill ALL icons
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-
-    // Label text — barely visible tactical gray
-    { elementType: 'labels.text.fill', stylers: [{ color: '#636366' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#08070B' }, { weight: 2 }] },
-
-    // Kill ALL POIs — every subcategory explicitly
+    { elementType: 'labels.text.fill', stylers: [{ color: '#6B7A8D' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#0A0A0C' }] },
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.attraction', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.government', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.medical', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
-    { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.place_of_worship', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.school', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.sports_complex', stylers: [{ visibility: 'off' }] },
-
-    // Transit — off
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0d1a0d' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-
-    // Roads — 3-tier muted gray hierarchy
-    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2C2C2E' }] },
-    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1C1C1E' }] },
-    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#222224' }] },
-    { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#1A1A1C' }] },
-    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
-
-    // Water — near-black
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060608' }] },
-    { featureType: 'water', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-
-    // Landscape — slightly lighter than base for depth
-    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
-
-    // Administrative — barely visible
-    { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
-    { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1C2333' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0A0A0C' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#5a6a7a' }] },
+    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#1e2530' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2C3E58' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1a1f2a' }] },
+    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#8090a8' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#07070A' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#2a4060' }] },
+    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0a0f1a' }] },
+    { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#1a1f2a' }] },
+    { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#4a5a70' }] },
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -829,6 +826,11 @@ const s = StyleSheet.create({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 6 },
         }),
+    },
+    profileAvatar: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
     },
     headerContent: {
         flexDirection: 'row', alignItems: 'center',
@@ -1021,5 +1023,8 @@ const s = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid,
     },
     drawerIconBox: { width: 36, height: 36, borderRadius: R.sm, backgroundColor: T.violetDim, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
+    drawerIconBoxDanger: { backgroundColor: `${T.danger}18` },
     drawerLabel: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
+    drawerLabelDanger: { color: T.danger },
+    drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
 });
