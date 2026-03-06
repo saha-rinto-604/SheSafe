@@ -39,10 +39,10 @@ export default function Login() {
       setSubmitting(false);
 
       // We manually tell the app to navigate to the Map screen
-      router.replace('/(tabs)/sos_screen');
+      router.replace('/(tabs)/users/sos_screen');
 
       console.log("Mock Login Successful: Redirecting to Map");
-    }, 1000);
+    }
     // ---------------------------------
   };
 

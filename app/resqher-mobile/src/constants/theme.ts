@@ -81,6 +81,13 @@ export const T = {
   surfaceOverlay: 'rgba(138,56,246,0.07)', // Violet tint overlay
   gradientOverlayOpacity: 0.07 as number,
 
+  // ── Universal Bulky Glass — The Material Mandate
+  // Every UI bar, card, and floating element uses this exact material.
+  // Color + border are IDENTICAL across all screens for visual consistency.
+  surfaceBulky: '#1E153A',               // Solid tinted fill — carved from background
+  surfaceBulkyActive: '#251B48',         // Elevated for LIVE/active state
+  hairlineMicro: 'rgba(255,255,255,0.03)', // Microscopic edge-light catcher
+
   // ── Glow tokens for ambient lighting effects
   glowViolet: 'rgba(138,56,246,0.15)',   // Ambient violet halo
   glowDanger: 'rgba(226,54,54,0.15)',    // Ambient red halo (LIVE)

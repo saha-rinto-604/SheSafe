@@ -64,4 +64,11 @@ export const G = {
         start: { x: 0.5, y: 0 },
         end: { x: 0.5, y: 1 },
     },
+
+    // ── Atmospheric Environment — Deep Midnight Violet → Dark Indigo (no pure black)
+    atmosphericBg: {
+        colors: ['#120B29', '#0D0820', '#090514'] as const,
+        start: { x: 0, y: 0 },
+        end: { x: 0, y: 1 },
+    },
 };

@@ -4,7 +4,7 @@ import { AuthProvider } from "../src/context/AuthContext";
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#000000' }, animation: 'fade' }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
