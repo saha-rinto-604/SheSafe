@@ -1,5 +1,5 @@
 /**
- * app/(tabs)/users/ExploreScreen.tsx
+ * app/(tabs)/users/standard-user/ExploreScreen.tsx
  * Explore — Map view with animated search header, location card, and nav bar.
  */
 
@@ -414,7 +414,7 @@ export default function ExploreScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={s.hBtn}
-                        onPress={() => router.push('/(tabs)/users/profile-menu')}
+                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel="Open profile menu"
                         accessibilityRole="button"

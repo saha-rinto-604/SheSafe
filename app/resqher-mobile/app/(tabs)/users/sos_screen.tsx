@@ -687,7 +687,7 @@ export default function SOSScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={s.hBtn}
-                        onPress={() => router.push('/(tabs)/users/profile-menu')}
+                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel="Open profile menu"
                         accessibilityRole="button"
@@ -773,7 +773,7 @@ export default function SOSScreen() {
                             isActive={activeTab === tab.id}
                             onPress={() => {
                                 if (tab.id === 'Explore') {
-                                    router.push('/(tabs)/users/ExploreScreen');
+                                    router.push('/(tabs)/users/standard-user/ExploreScreen');
                                 } else {
                                     setActiveTab(tab.id);
                                 }

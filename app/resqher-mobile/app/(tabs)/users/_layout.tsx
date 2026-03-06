@@ -7,8 +7,6 @@ export default function UsersLayout() {
             <StatusBar style="light" />
             <Stack screenOptions={{ headerShown: false }}>
                 <Stack.Screen name="sos_screen" />
-                <Stack.Screen name="ExploreScreen" />
-                <Stack.Screen name="profile-menu" />
                 <Stack.Screen name="standard-user" />
                 <Stack.Screen name="volunteer" />
                 <Stack.Screen name="police" />
