@@ -739,13 +739,14 @@ export default function SOSScreen() {
                         accessibilityLabel="Open profile menu"
                         accessibilityRole="button"
                     >
-                        <Image
-                            source={profile?.photoUri 
-                                ? { uri: profile.photoUri }
-                                : { uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }
-                            }
-                            style={s.profileAvatar}
-                        />
+                        {profile?.photoUri ? (
+                            <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
+                        ) : (
+                            <Image
+                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
+                                style={s.profileAvatar}
+                            />
+                        )}
                     </TouchableOpacity>
                 </View>
             </PremiumBar>
