@@ -222,7 +222,7 @@ const s = StyleSheet.create({
         marginLeft: 4,
     },
     sectionCard: {
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
         borderWidth: 1,
         borderColor: T.lineMid,

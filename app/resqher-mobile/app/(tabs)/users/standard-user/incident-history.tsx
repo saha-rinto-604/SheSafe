@@ -247,7 +247,7 @@ const s = StyleSheet.create({
 
     // Incident card
     card: {
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
         borderWidth: 1,
         borderColor: T.lineMid,
@@ -332,7 +332,7 @@ const s = StyleSheet.create({
         width: 72,
         height: 72,
         borderRadius: 36,
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: T.lineMid,
         alignItems: 'center',

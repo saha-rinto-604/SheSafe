@@ -35,6 +35,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
 import AtmosphericShell from '../../../src/components/AtmosphericShell';
+import { getUserProfile, UserProfile } from '../../../src/services/profile';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -535,6 +536,7 @@ export default function SOSScreen() {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView>(null);
 
+    const [profile, setProfile] = useState<UserProfile | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
@@ -547,6 +549,13 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+
+    // Load profile picture on screen focus
+    useFocusEffect(
+        useCallback(() => {
+            getUserProfile().then(setProfile);
+        }, []),
+    );
 
     // Load persisted SOS cancel timer setting on mount
     useEffect(() => {
@@ -731,7 +740,10 @@ export default function SOSScreen() {
                         accessibilityRole="button"
                     >
                         <Image
-                            source={require('../../../assets/images/icon.png')}
+                            source={profile?.photoUri 
+                                ? { uri: profile.photoUri }
+                                : { uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }
+                            }
                             style={s.profileAvatar}
                         />
                     </TouchableOpacity>

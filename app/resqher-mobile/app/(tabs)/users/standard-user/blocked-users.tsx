@@ -178,7 +178,7 @@ const s = StyleSheet.create({
     noteCard: {
         flexDirection: 'row',
         gap: 10,
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.md,
         borderWidth: 1,
         borderColor: T.lineMid,
@@ -206,7 +206,7 @@ const s = StyleSheet.create({
         marginLeft: 4,
     },
     sectionCard: {
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
         borderWidth: 1,
         borderColor: T.lineMid,

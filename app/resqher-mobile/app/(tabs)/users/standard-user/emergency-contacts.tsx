@@ -606,7 +606,7 @@ const s = StyleSheet.create({
 
     // ── Empty state ───────────────────────────────────────────────────────────
     emptyCard: {
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
         borderWidth: 1,
         borderColor: T.lineMid,
@@ -631,7 +631,7 @@ const s = StyleSheet.create({
 
     // ── Contact Card ──────────────────────────────────────────────────────────
     contactCard: {
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
         borderWidth: 1,
         borderColor: T.lineMid,

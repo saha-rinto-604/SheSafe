@@ -1,0 +1,429 @@
+{
+  "colorPalette": {
+    "backgrounds": {
+      "bg": "#000000",
+      "bgElevated": "#0A0A0C",
+      "surface": "#111113",
+      "surfaceCard": "#1A1A1E",
+      "surfaceLight": "#1A1A1E",
+      "surfaceMid": "#2C2C2E",
+      "surfaceDark": "#3A3A3C"
+    },
+    "brand": {
+      "violet": "#8A38F6",
+      "violetDark": "#6D28D9",
+      "violetDim": "rgba(138,56,246,0.10)",
+      "violetLight": "#A855F7",
+      "violetLighter": "rgba(138,56,246,0.15)",
+      "brandGlow": "rgba(138,56,246,0.40)"
+    },
+    "text": {
+      "ink": "#F5F5F7",
+      "ink2": "#E5E5EA",
+      "ink3": "#8E8E93",
+      "ink4": "#636366",
+      "ink5": "#48484A"
+    },
+    "borders": {
+      "line": "rgba(255,255,255,0.04)",
+      "lineMid": "rgba(255,255,255,0.08)",
+      "lineBold": "rgba(255,255,255,0.14)"
+    },
+    "feedback": {
+      "danger": "#E23636",
+      "dangerMid": "#DC2626",
+      "dangerPressed": "#B91C1C",
+      "dangerLight": "rgba(226,54,54,0.12)",
+      "dangerBorder": "rgba(226,54,54,0.30)",
+      "dangerText": "#FCA5A5",
+      "dangerBg": "rgba(226,54,54,0.10)",
+      "success": "#10B981",
+      "safeLight": "rgba(16,185,129,0.10)",
+      "accent": "#F59E0B",
+      "accentLight": "rgba(245,158,11,0.12)"
+    },
+    "glass": {
+      "surfaceGlass": "rgba(26,26,30,0.80)",
+      "surfaceOverlay": "rgba(138,56,246,0.07)",
+      "surfaceBulky": "#1E153A",
+      "surfaceBulkyActive": "#251B48",
+      "hairlineMicro": "rgba(255,255,255,0.03)"
+    },
+    "disabled": {
+      "disabled": "#2C2C2E",
+      "disabledBg": "#1C1C1E",
+      "disabledText": "#48484A"
+    }
+  },
+  "radius": {
+    "xs": 8,
+    "sm": 12,
+    "md": 14,
+    "lg": 16,
+    "xl": 20,
+    "hBtn": 13,
+    "pill": 999,
+    "full": 999
+  },
+  "spacing": {
+    "s1": 4,
+    "s2": 8,
+    "s3": 12,
+    "s4": 16,
+    "s5": 24,
+    "s6": 32,
+    "s7": 48,
+    "s8": 64
+  },
+  "incidentCardStyling": {
+    "base": {
+      "flexDirection": "row",
+      "alignItems": "center",
+      "borderRadius": 28,
+      "padding": 16,
+      "gap": 16,
+      "borderWidth": 1
+    },
+    "live": {
+      "backgroundColor": "dynamic_cardFillActive",
+      "borderColor": "dynamic_hairlineActive",
+      "shadow": {
+        "ios": {
+          "shadowColor": "#8A38F6",
+          "shadowOpacity": 0.1,
+          "shadowRadius": 20,
+          "shadowOffset": { "width": 0, "height": 6 }
+        },
+        "android": { "elevation": 4 }
+      }
+    },
+    "sos": {
+      "borderColor": "dynamic_hairline",
+      "shadow": {
+        "ios": {
+          "shadowColor": "#E23636",
+          "shadowOpacity": 0.12,
+          "shadowRadius": 20,
+          "shadowOffset": { "width": 0, "height": 4 }
+        },
+        "android": { "elevation": 4 }
+      }
+    },
+    "resolved": {
+      "backgroundColor": "dynamic_cardFill",
+      "borderColor": "dynamic_hairline",
+      "opacity": 0.7
+    },
+    "iconBox": {
+      "width": 42,
+      "height": 42,
+      "borderRadius": 12,
+      "backgroundColor": "#2C2C2E",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "marginRight": 12,
+      "flexShrink": 0
+    },
+    "iconBoxLive": {
+      "backgroundColor": "rgba(226,54,54,0.12)",
+      "borderWidth": 1,
+      "borderColor": "rgba(226,54,54,0.30)"
+    }
+  },
+  "headerStyling": {
+    "sosScreen": {
+      "position": "absolute",
+      "left": 14,
+      "right": 14,
+      "borderRadius": 16,
+      "zIndex": 300,
+      "shadow": {
+        "ios": {
+          "shadowColor": "#8A38F6",
+          "shadowOpacity": 0.12,
+          "shadowRadius": 10,
+          "shadowOffset": { "width": 0, "height": 3 }
+        },
+        "android": { "elevation": 6 }
+      }
+    },
+    "premiumBar": {
+      "bar": {
+        "backgroundColor": "rgba(30,21,58,0.65)",
+        "borderWidth": 1,
+        "borderColor": "rgba(255,255,255,0.03)",
+        "overflow": "hidden"
+      },
+      "tint": {
+        "backgroundColor": "rgba(138,56,246,0.07)"
+      }
+    },
+    "incidentHistory": {
+      "flexDirection": "row",
+      "alignItems": "center",
+      "paddingHorizontal": 14,
+      "paddingBottom": 12,
+      "borderBottomWidth": 1,
+      "borderBottomColor": "rgba(255,255,255,0.08)",
+      "backgroundColor": "rgba(26,26,30,0.80)"
+    },
+    "headerBtn": {
+      "width": 36,
+      "height": 36,
+      "borderRadius": 13,
+      "alignItems": "center",
+      "justifyContent": "center",
+      "borderWidth": 1,
+      "borderColor": "rgba(255,255,255,0.08)",
+      "backgroundColor": "#1A1A1E"
+    }
+  },
+  "navbarStyling": {
+    "wrap": {
+      "position": "absolute",
+      "left": 0,
+      "right": 0,
+      "alignItems": "center",
+      "zIndex": 200
+    },
+    "bar": {
+      "width": "88%",
+      "borderRadius": 999,
+      "shadow": {
+        "ios": {
+          "shadowColor": "#8A38F6",
+          "shadowOpacity": 0.12,
+          "shadowRadius": 10,
+          "shadowOffset": { "width": 0, "height": 2 }
+        },
+        "android": { "elevation": 6 }
+      }
+    },
+    "barContent": {
+      "flexDirection": "row",
+      "alignItems": "center",
+      "justifyContent": "space-around",
+      "paddingHorizontal": 8,
+      "paddingVertical": 8
+    },
+    "tab": {
+      "flex": 1,
+      "alignItems": "center",
+      "justifyContent": "center",
+      "minHeight": 48
+    },
+    "underline": {
+      "width": 16,
+      "height": 3,
+      "borderRadius": 1.5,
+      "marginTop": 5
+    },
+    "iconBox": {
+      "width": 36,
+      "height": 36,
+      "borderRadius": 13,
+      "backgroundColor": "#1A1A1E",
+      "borderWidth": 1,
+      "borderColor": "rgba(255,255,255,0.08)",
+      "alignItems": "center",
+      "justifyContent": "center"
+    },
+    "iconBoxActive": {
+      "backgroundColor": "rgba(138,56,246,0.12)",
+      "borderColor": "rgba(138,56,246,0.40)"
+    }
+  },
+  "secondaryScreenPatterns": {
+    "sectionCard": {
+      "backgroundColor": "#1A1A1E",
+      "borderRadius": 16,
+      "borderWidth": 1,
+      "borderColor": "rgba(255,255,255,0.08)",
+      "paddingHorizontal": 16,
+      "paddingVertical": 12
+    },
+    "floatingCard": {
+      "borderRadius": 20,
+      "overflow": "hidden",
+      "borderWidth": 1,
+      "borderColor": "rgba(138,56,246,0.19)",
+      "shadow": {
+        "ios": {
+          "shadowColor": "#8A38F6",
+          "shadowOpacity": 0.3,
+          "shadowRadius": 24,
+          "shadowOffset": { "width": 0, "height": -8 }
+        },
+        "android": { "elevation": 16 }
+      }
+    },
+    "emergencyContactsCard": {
+      "backgroundColor": "#1A1A1E",
+      "borderRadius": 16,
+      "borderWidth": 1,
+      "borderColor": "rgba(255,255,255,0.08)",
+      "paddingHorizontal": 14
+    },
+    "statusCard": {
+      "alignItems": "center",
+      "backgroundColor": "#1A1A1E",
+      "borderRadius": 16,
+      "borderWidth": 1,
+      "borderColor": "rgba(255,255,255,0.08)",
+      "paddingVertical": 28,
+      "paddingHorizontal": 20,
+      "marginBottom": 20
+    },
+    "divider": {
+      "height": "StyleSheet.hairlineWidth",
+      "backgroundColor": "rgba(255,255,255,0.08)"
+    }
+  },
+  "screenFileMapping": [
+    {
+      "screen": "Profile Information",
+      "file": "app/(tabs)/users/standard-user/profile-information.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Edit Profile",
+      "file": "app/(tabs)/users/standard-user/edit-profile.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Emergency Contacts",
+      "file": "app/(tabs)/users/standard-user/emergency-contacts.tsx",
+      "styleKeys": ["emptyCard", "contactCard", "floatingCard"],
+      "cardBgColor": "#1A1A1E / rgba(18,11,41,0.85)",
+      "borderColor": "rgba(255,255,255,0.08) / rgba(138,56,246,0.19)"
+    },
+    {
+      "screen": "Safety Settings",
+      "file": "app/(tabs)/users/standard-user/safety-settings.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Privacy & Security",
+      "file": "app/(tabs)/users/standard-user/privacy-security.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Change Password",
+      "file": "app/(tabs)/users/standard-user/change-password.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Two-Factor Auth",
+      "file": "app/(tabs)/users/standard-user/two-factor-auth.tsx",
+      "styleKey": "sectionCard",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Blocked Users",
+      "file": "app/(tabs)/users/standard-user/blocked-users.tsx",
+      "styleKeys": ["sectionCard", "noteCard"],
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Volunteer Verification",
+      "file": "app/(tabs)/users/standard-user/volunteer-verification.tsx",
+      "styleKeys": ["statusCard", "sectionCard"],
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Incident History",
+      "file": "app/(tabs)/users/standard-user/incident-history.tsx",
+      "styleKey": "card",
+      "cardBgColor": "#1A1A1E",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "Chat Home",
+      "file": "app/(tabs)/users/standard-user/chat_home.tsx",
+      "styleKey": "card",
+      "cardBgColor": "dynamic_per_state",
+      "borderColor": "dynamic_per_state"
+    },
+    {
+      "screen": "Chat Room",
+      "file": "app/(tabs)/users/standard-user/chat_room.tsx",
+      "styleKeys": ["bubble", "inputPillContainer"],
+      "cardBgColor": "dynamic_per_state",
+      "borderColor": "dynamic_per_state"
+    },
+    {
+      "screen": "Explore Screen",
+      "file": "app/(tabs)/users/standard-user/ExploreScreen.tsx",
+      "styleKey": "navBar",
+      "cardBgColor": "N/A",
+      "borderColor": "rgba(255,255,255,0.08)"
+    },
+    {
+      "screen": "SOS Screen",
+      "file": "app/(tabs)/users/sos_screen.tsx",
+      "styleKey": "navBar",
+      "cardBgColor": "N/A",
+      "borderColor": "rgba(255,255,255,0.08)"
+    }
+  ],
+  "shadowPresets": {
+    "card": {
+      "ios": {
+        "shadowColor": "#8A38F6",
+        "shadowOpacity": 0.12,
+        "shadowRadius": 20,
+        "shadowOffset": { "width": 0, "height": 6 }
+      },
+      "android": { "elevation": 8 }
+    },
+    "modal": {
+      "ios": {
+        "shadowColor": "#8A38F6",
+        "shadowOpacity": 0.20,
+        "shadowRadius": 32,
+        "shadowOffset": { "width": 0, "height": 10 }
+      },
+      "android": { "elevation": 16 }
+    },
+    "map": {
+      "ios": {
+        "shadowColor": "#8A38F6",
+        "shadowOpacity": 0.08,
+        "shadowRadius": 10,
+        "shadowOffset": { "width": 0, "height": 3 }
+      },
+      "android": { "elevation": 4 }
+    },
+    "sosGlow": {
+      "ios": {
+        "shadowColor": "#8A38F6",
+        "shadowOpacity": 0.40,
+        "shadowRadius": 30,
+        "shadowOffset": { "width": 0, "height": 0 }
+      },
+      "android": { "elevation": 12 }
+    },
+    "sosGlowDanger": {
+      "ios": {
+        "shadowColor": "#E23636",
+        "shadowOpacity": 0.30,
+        "shadowRadius": 28,
+        "shadowOffset": { "width": 0, "height": 0 }
+      },
+      "android": { "elevation": 12 }
+    }
+  }
+}

@@ -157,7 +157,7 @@ export default function ProfileMenuScreen() {
                             <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
                         ) : (
                             <Image
-                                source={require('../../../../assets/images/icon.png')}
+                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
                                 style={s.profileAvatar}
                             />
                         )}
@@ -273,7 +273,7 @@ const s = StyleSheet.create({
     profileCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: T.lineMid,
         borderRadius: R.lg,
@@ -358,7 +358,7 @@ const s = StyleSheet.create({
         paddingVertical: 13,
         paddingHorizontal: S.s3,
         borderRadius: R.md,
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: T.lineMid,
         marginBottom: 10,
