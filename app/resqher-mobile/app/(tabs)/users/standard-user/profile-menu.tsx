@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
     TouchableOpacity,
+    Pressable,
     StyleSheet,
     Alert,
     ScrollView,
@@ -12,9 +13,13 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
+import { VERIFICATION_KEY } from './volunteer-verification';
 import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
 
 type MenuItem = {
     label: string;
@@ -27,21 +32,9 @@ type MenuSection = {
     items: MenuItem[];
 };
 
-// ── Profile data ─────────────────────────────────────────────────────────────
-// Replace placeholder values with real fields from AuthContext / API once the
-// backend /me endpoint is wired up. Only this object needs to change — the
-// card UI below is already data-driven.
-type ProfileInfo = {
-    fullName: string;
-    phone: string;
-    role: string;
-};
-
-const PLACEHOLDER_PROFILE: ProfileInfo = {
-    fullName: 'Your Name',
-    phone: '+880 1XXX-XXXXXX',
-    role: 'Standard User',
-};
+// ── Profile display data ─────────────────────────────────────────────────────
+// Loaded from local profile service (SecureStore) on focus.
+// Swap getUserProfile() for an API call once the backend /me endpoint is ready.
 
 const MENU_SECTIONS: MenuSection[] = [
     {
@@ -75,8 +68,22 @@ export default function ProfileMenuScreen() {
     const router = useRouter();
     const { signOut } = useAuth();
 
-    // Swap PLACEHOLDER_PROFILE for real data from AuthContext / fetch once backend is ready
-    const [profile] = useState<ProfileInfo>(PLACEHOLDER_PROFILE);
+    const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [isVerifiedVolunteer, setIsVerifiedVolunteer] = useState(false);
+
+    // Reload profile and volunteer status whenever this screen is focused
+    useFocusEffect(
+        useCallback(() => {
+            getUserProfile().then(setProfile);
+            SecureStore.getItemAsync(VERIFICATION_KEY).then(raw => {
+                if (!raw) return;
+                try {
+                    const rec = JSON.parse(raw);
+                    setIsVerifiedVolunteer(rec?.status === 'verified');
+                } catch { /* ignore */ }
+            });
+        }, []),
+    );
 
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
@@ -91,6 +98,31 @@ export default function ProfileMenuScreen() {
                     },
                 },
             ]);
+            return;
+        }
+
+        if (item.label === 'Emergency Contacts') {
+            router.push('/(tabs)/users/standard-user/emergency-contacts');
+            return;
+        }
+
+        if (item.label === 'Safety Settings') {
+            router.push('/(tabs)/users/standard-user/safety-settings');
+            return;
+        }
+
+        if (item.label === 'Volunteer Verification') {
+            router.push('/(tabs)/users/standard-user/volunteer-verification');
+            return;
+        }
+
+        if (item.label === 'Incident History') {
+            router.push('/(tabs)/users/standard-user/incident-history');
+            return;
+        }
+
+        if (item.label === 'Privacy & Security') {
+            router.push('/(tabs)/users/standard-user/privacy-security');
             return;
         }
 
@@ -113,30 +145,49 @@ export default function ProfileMenuScreen() {
             <ScrollView contentContainerStyle={s.listWrap} showsVerticalScrollIndicator={false}>
 
                 {/* ── Top Profile Info Card ─────────────────────────────────── */}
-                <View style={s.profileCard}>
+                {/* Tap card body → Profile Information; tap edit icon → Edit Profile */}
+                <Pressable
+                    style={s.profileCard}
+                    onPress={() => router.push('/(tabs)/users/standard-user/profile-information')}
+                    accessibilityLabel="View profile information"
+                    accessibilityRole="button"
+                >
                     <View style={s.profileAvatarWrap}>
-                        <Image
-                            source={require('../../../../assets/images/icon.png')}
-                            style={s.profileAvatar}
-                        />
+                        {profile?.photoUri ? (
+                            <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
+                        ) : (
+                            <Image
+                                source={require('../../../../assets/images/icon.png')}
+                                style={s.profileAvatar}
+                            />
+                        )}
                     </View>
                     <View style={s.profileInfo}>
-                        <Text style={s.profileName} numberOfLines={1}>{profile.fullName}</Text>
-                        <Text style={s.profilePhone} numberOfLines={1}>{profile.phone}</Text>
+                        <Text style={s.profileName} numberOfLines={1}>
+                            {profile ? displayName(profile) : 'Your Name'}
+                        </Text>
+                        <Text style={s.profilePhone} numberOfLines={1}>
+                            {profile?.phone || '+880 1XXX-XXXXXX'}
+                        </Text>
                         <View style={s.roleBadge}>
-                            <Text style={s.roleBadgeText}>{profile.role}</Text>
+                            <Text style={s.roleBadgeText}>Standard User</Text>
                         </View>
+                        {isVerifiedVolunteer && (
+                            <View style={s.verifiedBadge}>
+                                <Text style={s.verifiedBadgeText}>Verified Volunteer ✓</Text>
+                            </View>
+                        )}
                     </View>
                     <TouchableOpacity
                         style={s.editBtn}
-                        onPress={() => Alert.alert('Edit Profile', 'This section will be available soon.')}
+                        onPress={() => router.push('/(tabs)/users/standard-user/edit-profile')}
                         accessibilityLabel="Edit profile"
                         accessibilityRole="button"
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Feather name="edit-2" size={16} color={T.violet} />
                     </TouchableOpacity>
-                </View>
+                </Pressable>
 
                 {/* ── Grouped Menu Sections ─────────────────────────────────── */}
                 {MENU_SECTIONS.map((section) => (
@@ -276,6 +327,21 @@ const s = StyleSheet.create({
         color: T.violet,
         letterSpacing: 0.3,
     },
+    verifiedBadge: {
+        alignSelf: 'flex-start',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: R.xs,
+        backgroundColor: T.safeLight,
+        borderWidth: 1,
+        borderColor: `${T.success}35`,
+    },
+    verifiedBadgeText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.success,
+        letterSpacing: 0.3,
+    },
     editBtn: {
         width: 36,
         height: 36,
@@ -325,7 +391,7 @@ const s = StyleSheet.create({
     sectionHeader: {
         fontSize: 11,
         fontWeight: '700',
-        color: T.ink4,
+        color: T.ink3,
         letterSpacing: 1.1,
         textTransform: 'uppercase',
         marginBottom: 8,

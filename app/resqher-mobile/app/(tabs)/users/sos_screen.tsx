@@ -82,7 +82,8 @@ const SOS_WRAP_SIZE = 320;
 const ARC_SIZE = SOS_BTN_SIZE + 20;
 const ARC_RADIUS = ARC_SIZE / 2;
 
-const CANCEL_DURATION = 10;
+// CANCEL_DURATION is now loaded from SafetySettings (default 10 sec)
+const CANCEL_DURATION_DEFAULT = 10;
 const HOLD_MS = 2000;
 const HINT_HIDE_MS = 2200;
 
@@ -532,13 +533,13 @@ const lb = StyleSheet.create({
 export default function SOSScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const router = useRouter();
     const mapRef = useRef<MapView>(null);
 
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(0);
+    const [cancelDuration, setCancelDuration] = useState(CANCEL_DURATION_DEFAULT);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
@@ -546,6 +547,24 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+
+    // Load persisted SOS cancel timer setting on mount
+    useEffect(() => {
+        import('../../../src/constants/theme').then(() => {
+            import('expo-secure-store').then(SecureStore => {
+                SecureStore.getItemAsync('resqher_safety_settings_v1').then(raw => {
+                    if (raw) {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            if (parsed?.sosCancelTimerSec) {
+                                setCancelDuration(parsed.sosCancelTimerSec);
+                            }
+                        } catch { /* use default */ }
+                    }
+                });
+            });
+        });
+    }, []);
 
     const handleNavigation = useCallback((tabId: string) => {
         setActiveTab(tabId);
@@ -616,7 +635,7 @@ export default function SOSScreen() {
     // SOS logic
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(CANCEL_DURATION);
+        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
     }, []);
 
     useEffect(() => {
@@ -629,7 +648,7 @@ export default function SOSScreen() {
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sosActive, cancelCountdown === CANCEL_DURATION]);
+    }, [sosActive, cancelCountdown === cancelDuration]);
 
     const cancelSOS = useCallback(() => {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
