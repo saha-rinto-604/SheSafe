@@ -32,18 +32,28 @@ export default function Login() {
     setSubmitting(true);
     try {
       /* Real auth: await signIn(data.phone.trim(), data.password); */
-      router.replace('/(tabs)/users/standard-user/sos_screen');
+      // Mock success
+      console.log("Mock Login Started...");
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
       setSubmitting(false);
 
+<<<<<<< HEAD
       // We manually tell the app to navigate to the Map screen
       router.replace('/(tabs)/users/sos_screen');
 
       console.log("Mock Login Successful: Redirecting to Map");
     }
     // ---------------------------------
+=======
+      // We manually tell the app to navigate to the Map screen after a short delay
+      setTimeout(() => {
+        router.replace('/(tabs)/users/sos_screen' as any);
+        console.log("Mock Login Successful: Redirecting to Map");
+      }, 1000);
+    }
+>>>>>>> 6a36279c83aa0fecd2a92f8dba553e6c925e588d
   };
 
   return (
