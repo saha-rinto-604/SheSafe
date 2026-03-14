@@ -18,6 +18,11 @@ export default function StandardUserLayout() {
             <Stack.Screen name="two-factor-auth" />
             <Stack.Screen name="blocked-users" />
             <Stack.Screen name="profile-information" />
+            <Stack.Screen name="MedicalDashboard" />
+            <Stack.Screen name="DoctorListing" />
+            <Stack.Screen name="AmbulanceListing" />
+            <Stack.Screen name="HospitalBookingWebView" />
+            <Stack.Screen name="MedicalMapView" />
         </Stack>
     );
 }

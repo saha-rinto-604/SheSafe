@@ -17,10 +17,11 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 
 const { width, height } = Dimensions.get('window');
 
@@ -55,7 +56,7 @@ const PremiumBar = memo(function PremiumBar({
     );
 });
 const pb = StyleSheet.create({
-    bar: { backgroundColor: T.surfaceGlass, borderWidth: 1, borderColor: `${T.violet}22`, overflow: 'hidden' },
+    bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
     tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
@@ -231,6 +232,14 @@ export default function ExploreScreen() {
     const [searchText, setSearchText] = useState('');
     const [showLocationCard, setShowLocationCard] = useState(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [profile, setProfile] = useState<UserProfile | null>(null);
+
+    // Load profile picture on screen focus
+    useFocusEffect(
+        useCallback(() => {
+            getUserProfile().then(setProfile);
+        }, []),
+    );
 
     // Animation values
     const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
@@ -320,189 +329,195 @@ export default function ExploreScreen() {
 
     return (
         <AtmosphericShell>
-        <View style={s.root}>
-            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+            <View style={s.root}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-            {/* ── Map ─────────────────────────────────────────────────────── */}
-            <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={PROVIDER_GOOGLE}
-                initialRegion={DEFAULT_REGION}
-                showsUserLocation
-                showsMyLocationButton={false}
-                showsCompass={false}
-                moveOnMarkerPress={false}
-                customMapStyle={TACTICAL_MAP_STYLE}
-            />
+                {/* ── Map ─────────────────────────────────────────────────────── */}
+                <MapView
+                    ref={mapRef}
+                    style={StyleSheet.absoluteFillObject}
+                    provider={PROVIDER_GOOGLE}
+                    initialRegion={DEFAULT_REGION}
+                    showsUserLocation
+                    showsMyLocationButton={false}
+                    showsCompass={false}
+                    moveOnMarkerPress={false}
+                    customMapStyle={TACTICAL_MAP_STYLE}
+                />
 
-            {locationStatus === 'idle' && <PulseRadar />}
+                {locationStatus === 'idle' && <PulseRadar />}
 
-            
-            
 
-            {/* ── Header with Animated Search ──────────────────────────────── */}
-            <PremiumBar
-                style={[s.header, { top: insets.top + 8 }]}
-                contentStyle={s.headerContent}
-            >
-                {/** Back button — animates in when search expands */}
-                <RNAnimated.View
-                    style={{
-                        width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
-                        opacity: searchProgress,
-                        transform: [{
-                            translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }),
-                        }],
-                        marginRight: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }),
-                        overflow: 'hidden',
-                    }}
+
+
+                {/* ── Header with Animated Search ──────────────────────────────── */}
+                <PremiumBar
+                    style={[s.header, { top: insets.top + 8 }]}
+                    contentStyle={s.headerContent}
                 >
-                    <TouchableOpacity
-                        style={s.hBtn}
-                        onPress={deactivateSearch}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    {/** Back button — animates in when search expands */}
+                    <RNAnimated.View
+                        style={{
+                            width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
+                            opacity: searchProgress,
+                            transform: [{
+                                translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }),
+                            }],
+                            marginRight: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }),
+                            overflow: 'hidden',
+                        }}
                     >
-                        <Ionicons name="arrow-back" size={20} color={T.ink2} />
-                    </TouchableOpacity>
-                </RNAnimated.View>
-
-                {/* Search bar — always visible, expands on focus */}
-                <TouchableOpacity
-                    style={s.searchBarWrap}
-                    activeOpacity={1}
-                    onPress={activateSearch}
-                >
-                    <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
-                    <TextInput
-                        ref={searchInputRef}
-                        style={s.searchInput}
-                        placeholder="Search location…"
-                        placeholderTextColor={T.ink4}
-                        value={searchText}
-                        onChangeText={setSearchText}
-                        onFocus={activateSearch}
-                        returnKeyType="search"
-                        selectionColor={T.violet}
-                    />
-                    {searchText.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                            <Ionicons name="close-circle" size={16} color={T.ink4} />
+                        <TouchableOpacity
+                            style={s.hBtn}
+                            onPress={deactivateSearch}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Ionicons name="arrow-back" size={20} color={T.ink2} />
                         </TouchableOpacity>
-                    )}
-                </TouchableOpacity>
-
-                {/** Notification + burger — animate out AND release space so search expands */}
-                <RNAnimated.View
-                    style={{
-                        width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
-                        opacity: searchProgress.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0.25, 0] }),
-                        transform: [{
-                            translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 18] }),
-                        }],
-                        overflow: 'hidden',
-                    }}
-                    pointerEvents={searchActive ? 'none' : 'auto'}
-                >
-                    <View style={s.headerBtns}>
-                    <TouchableOpacity
-                        style={s.hBtn}
-                        onPress={() => Alert.alert('Notifications', 'No new notifications.')}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                        <Ionicons name="notifications-outline" size={20} color={T.ink2} />
-                        <View style={s.notifDot} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={s.hBtn}
-                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Open profile menu"
-                        accessibilityRole="button"
-                    >
-                        <Image
-                            source={require('../../../../assets/images/icon.png')}
-                            style={s.profileAvatar}
-                        />
-                    </TouchableOpacity>
-                    </View>
-                </RNAnimated.View>
-            </PremiumBar>
-
-            {/* ── Current location button ──────────────────────────────────── */}
-            <View style={[s.mapControls, { top: height * 0.50 }]}>
-                <TouchableOpacity
-                    style={s.ctrlBtn}
-                    onPress={openLocationCard}
-                    accessibilityLabel="Show my location"
-                    accessibilityRole="button"
-                >
-                    <Ionicons name="locate-outline" size={22} color={T.violet} />
-                </TouchableOpacity>
-            </View>
-
-            {/* ── Location Card — slides up from bottom ───────────────────── */}
-            {showLocationCard && (
-                <>
-                    <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}> 
-                        <Pressable style={StyleSheet.absoluteFill} onPress={closeLocationCard} />
                     </RNAnimated.View>
 
-                    <RNAnimated.View style={[
-                        s.locationCard,
-                        { bottom: navBottom + NAV_HEIGHT + 16 },
-                        { opacity: locationCardOpacity, transform: [{ translateY: locationCardY }] },
-                    ]}>
-                        <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-                        <View style={s.locationCardTint} pointerEvents="none" />
-                        <View style={s.locationCardGrabberWrap}>
-                            <View style={s.locationCardGrabber} />
-                        </View>
-                        <View style={s.locationCardContent}>
-                            <View style={s.locationCardLeft}>
-                                <View style={s.locationCardIconWrap}>
-                                    <Ionicons name="location" size={20} color={T.violet} />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={s.locationCardTitle}>Your Location</Text>
-                                    <Text style={s.locationCardAddr} numberOfLines={2}>
-                                        {address || 'Fetching address…'}
-                                    </Text>
-                                </View>
-                            </View>
+                    {/* Search bar — always visible, expands on focus */}
+                    <TouchableOpacity
+                        style={s.searchBarWrap}
+                        activeOpacity={1}
+                        onPress={activateSearch}
+                    >
+                        <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
+                        <TextInput
+                            ref={searchInputRef}
+                            style={s.searchInput}
+                            placeholder="Search location…"
+                            placeholderTextColor={T.ink4}
+                            value={searchText}
+                            onChangeText={setSearchText}
+                            onFocus={activateSearch}
+                            returnKeyType="search"
+                            selectionColor={T.violet}
+                        />
+                        {searchText.length > 0 && (
+                            <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <Ionicons name="close-circle" size={16} color={T.ink4} />
+                            </TouchableOpacity>
+                        )}
+                    </TouchableOpacity>
+
+                    {/** Notification + burger — animate out AND release space so search expands */}
+                    <RNAnimated.View
+                        style={{
+                            width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
+                            opacity: searchProgress.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0.25, 0] }),
+                            transform: [{
+                                translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 18] }),
+                            }],
+                            overflow: 'hidden',
+                        }}
+                        pointerEvents={searchActive ? 'none' : 'auto'}
+                    >
+                        <View style={s.headerBtns}>
                             <TouchableOpacity
-                                style={s.locationCardClose}
-                                onPress={closeLocationCard}
+                                style={s.hBtn}
+                                onPress={() => Alert.alert('Notifications', 'No new notifications.')}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
-                                <Ionicons name="chevron-down" size={22} color={T.ink3} />
+                                <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                                <View style={s.notifDot} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={s.profileBtn}
+                                onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityLabel="Open profile menu"
+                                accessibilityRole="button"
+                            >
+                                {profile?.photoUri ? (
+                                    <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
+                                ) : (
+                                    <Image
+                                        source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
+                                        style={s.profileAvatar}
+                                    />
+                                )}
                             </TouchableOpacity>
                         </View>
                     </RNAnimated.View>
-                </>
-            )}
-
-            {/* ── Bottom Navbar ─────────────────────────────────────────────── */}
-            <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
-                <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
-                    {NAV_TABS.map(tab => (
-                        <NavTab
-                            key={tab.id}
-                            tab={tab}
-                            isActive={tab.id === 'Explore'}
-                            onPress={() => {
-                                if (tab.id === 'Home') {
-                                    router.replace('/(tabs)/users/sos_screen');
-                                } else if (tab.id === 'Chat') {
-                                    router.push('/(tabs)/users/standard-user/chat_home');
-                                }
-                            }}
-                        />
-                    ))}
                 </PremiumBar>
+
+                {/* ── Current location button (35% from top) ───────────────────── */}
+                <View style={s.mapControls}>
+                    <TouchableOpacity
+                        style={s.ctrlBtn}
+                        onPress={openLocationCard}
+                        accessibilityLabel="Show my location"
+                        accessibilityRole="button"
+                    >
+                        <Ionicons name="locate-outline" size={22} color={T.violet} />
+                    </TouchableOpacity>
+                </View>
+
+                {/* ── Location Card — slides up from bottom ───────────────────── */}
+                {showLocationCard && (
+                    <>
+                        <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}>
+                            <Pressable style={StyleSheet.absoluteFill} onPress={closeLocationCard} />
+                        </RNAnimated.View>
+
+                        <RNAnimated.View style={[
+                            s.locationCard,
+                            { bottom: navBottom + NAV_HEIGHT + 16 },
+                            { opacity: locationCardOpacity, transform: [{ translateY: locationCardY }] },
+                        ]}>
+                            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={s.locationCardTint} pointerEvents="none" />
+                            <View style={s.locationCardGrabberWrap}>
+                                <View style={s.locationCardGrabber} />
+                            </View>
+                            <View style={s.locationCardContent}>
+                                <View style={s.locationCardLeft}>
+                                    <View style={s.locationCardIconWrap}>
+                                        <Ionicons name="location" size={20} color={T.violet} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={s.locationCardTitle}>Your Location</Text>
+                                        <Text style={s.locationCardAddr} numberOfLines={2}>
+                                            {address || 'Fetching address…'}
+                                        </Text>
+                                    </View>
+                                </View>
+                                <TouchableOpacity
+                                    style={s.locationCardClose}
+                                    onPress={closeLocationCard}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <Ionicons name="chevron-down" size={22} color={T.ink3} />
+                                </TouchableOpacity>
+                            </View>
+                        </RNAnimated.View>
+                    </>
+                )}
+
+                {/* ── Bottom Navbar ─────────────────────────────────────────────── */}
+                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
+                    <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
+                        {NAV_TABS.map(tab => (
+                            <NavTab
+                                key={tab.id}
+                                tab={tab}
+                                isActive={tab.id === 'Explore'}
+                                onPress={() => {
+                                    if (tab.id === 'Home') {
+                                        router.replace('/(tabs)/users/sos_screen');
+                                    } else if (tab.id === 'Chat') {
+                                        router.push('/(tabs)/users/standard-user/chat_home');
+                                    } else if (tab.id === 'Medical') {
+                                        router.push('/(tabs)/users/standard-user/MedicalDashboard');
+                                    }
+                                }}
+                            />
+                        ))}
+                    </PremiumBar>
+                </View>
             </View>
-        </View>
         </AtmosphericShell>
     );
 }
@@ -558,7 +573,7 @@ const s = StyleSheet.create({
     // ── Header ─────────────────────────────────────────────────────────────
     header: {
         position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, zIndex: 300,
+        borderRadius: 28, zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 6 },
@@ -566,19 +581,29 @@ const s = StyleSheet.create({
     },
     headerContent: {
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s3, paddingVertical: 9,
+        paddingHorizontal: S.s4, paddingVertical: 11,
     },
     headerBtns: { flexDirection: 'row', gap: S.s2, alignItems: 'center', marginLeft: S.s2 },
     hBtn: {
         width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
+    profileBtn: {
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 6, shadowColor: '#8A38F6' },
+        }),
+    },
     profileAvatar: {
-        width: 26,
-        height: 26,
-        borderRadius: 13,
+        width: 38,
+        height: 38,
+        borderRadius: 19,
     },
     notifDot: {
         position: 'absolute', top: 7, right: 7,
@@ -590,9 +615,9 @@ const s = StyleSheet.create({
     searchBarWrap: {
         flex: 1,
         flexDirection: 'row', alignItems: 'center',
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.md,
-        borderWidth: 1, borderColor: T.lineMid,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         paddingHorizontal: 10,
         height: 38,
     },
@@ -606,12 +631,12 @@ const s = StyleSheet.create({
     },
 
     // ── Map controls ───────────────────────────────────────────────────────
-    mapControls: { position: 'absolute', right: 14, gap: 8, alignItems: 'flex-end' },
+    mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     ctrlBtn: {
-        width: 44, height: 44, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceGlass,
+        width: 44, height: 44, borderRadius: 12,
+        backgroundColor: T.surfaceBulky,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1.5, borderColor: T.lineBold,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
@@ -662,8 +687,8 @@ const s = StyleSheet.create({
     locationCardAddr: { fontSize: 13, fontWeight: '600', color: T.ink, letterSpacing: -0.1, lineHeight: 18 },
     locationCardClose: {
         width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
 
@@ -689,8 +714,8 @@ const s = StyleSheet.create({
     navUnderline: { width: 16, height: 3, borderRadius: 1.5, marginTop: 5 },
     navIconBox: {
         width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
     navIconBoxActive: {

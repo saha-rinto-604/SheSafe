@@ -60,7 +60,7 @@ const pb = StyleSheet.create({
     bar: {
         backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% — lets blur show through
         borderWidth: 1,
-        borderColor: T.hairlineMicro,
+        borderColor: 'rgba(255,255,255,0.1)',     // Global 1px white translucent stroke
         overflow: 'hidden',
     },
     tint: {
@@ -581,6 +581,8 @@ export default function SOSScreen() {
             router.push('/(tabs)/users/standard-user/chat_home');
         } else if (tabId === 'Explore') {
             router.push('/(tabs)/users/standard-user/ExploreScreen');
+        } else if (tabId === 'Medical') {
+            router.push('/(tabs)/users/standard-user/MedicalDashboard');
         }
     }, [router]);
 
@@ -733,7 +735,7 @@ export default function SOSScreen() {
                         <View style={s.notifDot} />
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={s.hBtn}
+                        style={s.profileBtn}
                         onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel="Open profile menu"
@@ -750,6 +752,9 @@ export default function SOSScreen() {
                     </TouchableOpacity>
                 </View>
             </PremiumBar>
+
+            {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
+            <View style={{ marginTop: 12 }} />
 
             {/* ── Map controls — High contrast GPS/Recenter ───────────────── */}
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
@@ -873,10 +878,20 @@ const s = StyleSheet.create({
             android: { elevation: 6 },
         }),
     },
+    profileBtn: {
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 6, shadowColor: '#8A38F6' },
+        }),
+    },
     profileAvatar: {
-        width: 26,
-        height: 26,
-        borderRadius: 13,
+        width: 38,
+        height: 38,
+        borderRadius: 19,
     },
     headerContent: {
         flexDirection: 'row', alignItems: 'center',
@@ -896,7 +911,7 @@ const s = StyleSheet.create({
         width: 36, height: 36,
         borderRadius: R.hBtn,
         backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: T.hairlineMicro,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
     notifDot: {
@@ -905,22 +920,22 @@ const s = StyleSheet.create({
         backgroundColor: T.danger, borderWidth: 1.5, borderColor: T.surface,
     },
 
-    mapControls: { position: 'absolute', right: 14, gap: 8, alignItems: 'flex-end' },
+    mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     gpsPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
         backgroundColor: T.surfaceBulky,
         borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 5,
-        borderWidth: 1, borderColor: T.hairlineMicro,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
     gpsPillEmg: { backgroundColor: T.dangerLight, borderColor: T.dangerBorder },
     gpsDot: { width: 6, height: 6, borderRadius: 3 },
     gpsTxt: { fontSize: 10, fontWeight: '700', color: T.ink2, letterSpacing: 0.5 },
     gpsTxtEmg: { color: T.dangerText },
     ctrlBtn: {
-        width: 44, height: 44, borderRadius: R.hBtn,
+        width: 44, height: 44, borderRadius: 12,
         backgroundColor: T.surfaceBulky,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: T.hairlineMicro,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
@@ -968,7 +983,7 @@ const s = StyleSheet.create({
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: T.hairlineMicro,
+        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#E23636', shadowOpacity: 0.20, shadowRadius: 18, shadowOffset: { width: 0, height: 5 } },
@@ -984,7 +999,7 @@ const s = StyleSheet.create({
         backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
         paddingHorizontal: 16, paddingVertical: 8, marginTop: 16,
-        borderWidth: 1, borderColor: T.hairlineMicro,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
@@ -1038,7 +1053,7 @@ const s = StyleSheet.create({
         width: 36, height: 36,
         borderRadius: R.hBtn,
         backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: T.hairlineMicro,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
     navIconBoxActive: {

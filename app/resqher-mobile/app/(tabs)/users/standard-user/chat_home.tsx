@@ -39,8 +39,8 @@ const D = {
     cardFill: T.surfaceBulky,
     cardFillActive: T.surfaceBulkyActive,
 
-    hairline: 'rgba(255,255,255,0.10)',  // Crisp glass edge — visible light-reflection
-    hairlineActive: 'rgba(168,85,247,0.15)',
+    hairline: 'rgba(255, 255, 255, 0.1)',
+    hairlineActive: 'rgba(255, 255, 255, 0.1)',
 
     title: '#FFFFFF',
     subtitle: '#C4C1D4',   // High-contrast silver-lavender — emergency readable
@@ -195,10 +195,12 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
             activeOpacity={0.7}
         >
             {/* LEFT — 48×48 avatar */}
-            <GroupAvatar isLive={isLive} isEmergency={isEmergency} />
+            <View style={{ alignSelf: 'center' }}>
+                <GroupAvatar isLive={isLive} isEmergency={isEmergency} />
+            </View>
 
             {/* CENTER — Title + muted case ID */}
-            <View style={st.cardCenter}>
+            <View style={[st.cardCenter, { alignSelf: 'center' }]}>
                 <Text
                     style={st.cardTitle}
                     numberOfLines={1}
@@ -212,7 +214,7 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
                         <View style={st.resolvedDot} />
                     )}
                     <Text style={st.cardMeta} numberOfLines={1}>
-                        {caseId(incident.id)}  ·  {incident.latestMessage?.sender.name ?? 'Unknown'}
+                        <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontWeight: 'bold' }}>{caseId(incident.id)}</Text>  ·  {incident.latestMessage?.sender.name ?? 'Unknown'}
                     </Text>
                 </View>
             </View>
@@ -292,6 +294,9 @@ export default function ChatHome() {
                     </TouchableOpacity>
                 </View>
 
+                {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
+                <View style={{ marginTop: 12 }} />
+
                 {/* ── Search ── */}
                 <View style={st.searchArea}>
                     <View style={st.searchBlock}>
@@ -323,6 +328,7 @@ export default function ChatHome() {
 
                 {/* ── Incident List — full height, no navbar ── */}
                 <FlatList
+                    style={{ marginHorizontal: 20 }}
                     data={filtered}
                     renderItem={({ item }) => (
                         <IncidentModule incident={item} onPress={() => openChat(item.id)} />
@@ -347,7 +353,7 @@ export default function ChatHome() {
                             <Text style={st.emptySub}>Active incidents will appear here</Text>
                         </View>
                     }
-                    ItemSeparatorComponent={() => <View style={{ height: S.s3 }} />}
+                    ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
                 />
             </View>
         </AtmosphericShell>
@@ -367,20 +373,22 @@ const st = StyleSheet.create({
         paddingHorizontal: S.s4,
         paddingTop: S.s3,
         paddingBottom: S.s4,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
     },
     headerBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: D.cardFill,
+        width: 36,
+        height: 36,
+        borderRadius: R.hBtn,
+        backgroundColor: T.surfaceBulky,
         borderWidth: 1,
-        borderColor: D.hairline,
+        borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center',
         justifyContent: 'center',
     },
     headerTitleArea: { flex: 1, alignItems: 'center' },
     headerTitle: {
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: '700',
         color: D.title,
         letterSpacing: -0.3,
@@ -390,7 +398,7 @@ const st = StyleSheet.create({
     searchArea: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: S.s4,
+        marginHorizontal: 20,
         paddingBottom: S.s4,
         gap: S.s3,
     },
@@ -400,7 +408,7 @@ const st = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: D.cardFill,
         borderWidth: 1,
-        borderColor: D.hairline,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
         borderRadius: D.cardRadius,
         paddingHorizontal: D.cardPadding,
         height: 50,
@@ -419,14 +427,13 @@ const st = StyleSheet.create({
         borderRadius: D.cardRadius,  // 28 — matches cards
         backgroundColor: D.cardFill,
         borderWidth: 1,
-        borderColor: D.hairline,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
         alignItems: 'center',
         justifyContent: 'center',
     },
 
     // ── List — full height, no bottom inset for navbar ──────────────────
     list: {
-        paddingHorizontal: S.s4,
         paddingTop: S.s1,
         paddingBottom: S.s5,
     },
@@ -434,15 +441,16 @@ const st = StyleSheet.create({
     // ── Card ─────────────────────────────────────────────────────────────
     card: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         borderRadius: D.cardRadius,
         padding: D.cardPadding,
         gap: S.s4,
-        borderWidth: 1,
+        backgroundColor: T.surfaceBulky,
+        borderColor: T.lineMid,
     },
     cardLive: {
         backgroundColor: D.cardFillActive,
-        borderColor: D.hairlineActive,
+        borderColor: T.lineMid,
         ...Platform.select({
             ios: {
                 shadowColor: D.neonViolet,
@@ -466,8 +474,8 @@ const st = StyleSheet.create({
         }),
     },
     cardResolved: {
-        backgroundColor: D.cardFill,
-        borderColor: D.hairline,
+        backgroundColor: T.surfaceBulky, // Updated
+        borderColor: T.lineMid, // Updated
         opacity: 0.70,  // Interactive, not disabled — lower priority but clearly tappable
     },
 

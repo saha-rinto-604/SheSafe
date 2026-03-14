@@ -207,16 +207,17 @@ const st = StyleSheet.create({
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 50,
-    borderRadius: R.sm,
-    borderWidth: 1.5,
-    borderColor: T.lineBold,
+    height: 52,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
     backgroundColor: T.surfaceCard,
     paddingHorizontal: S.s4,
+    marginBottom: S.s3,
   },
   inputFocused: {
     borderColor: T.violet,
-    borderWidth: 2,
+    borderWidth: 1,
     backgroundColor: 'rgba(138,56,246,0.06)',
   },
   inputError: {

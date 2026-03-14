@@ -224,7 +224,7 @@ const RoleBadge = memo(function RoleBadge({ role }: { role: Role }) {
     const meta = ROLE_META[role];
     return (
         <View style={st.roleBadge}>
-            <Text style={st.roleBadgeText}>{meta.label.toUpperCase()}</Text>
+            <Text style={[st.roleBadgeText, { color: meta.color }]}>{meta.label.toUpperCase()}</Text>
         </View>
     );
 });
@@ -256,12 +256,16 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     // Directional radii per exact design specs
     const tailStyle = isOwn
         ? {
-            borderRadius: 20,
-            borderBottomRightRadius: 4,
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            borderBottomRightRadius: 2,
+            borderBottomLeftRadius: 16,
         }
         : {
-            borderRadius: 20,
-            borderBottomLeftRadius: 4,
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            borderBottomRightRadius: 16,
+            borderBottomLeftRadius: 2,
         };
 
     return (
@@ -342,39 +346,6 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
 
 
-// ─── SOS Alert Floating Glass Capsule ───────────────────────────────────────
-const SOSAlertCapsule = memo(function SOSAlertCapsule({ incident }: { incident: Incident }) {
-    if (incident.status !== 'LIVE') return null;
-
-    const scale = useSharedValue(1);
-    useEffect(() => {
-        scale.value = withRepeat(
-            withSequence(
-                withTiming(1.3, { duration: 300, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 600, easing: REasing.inOut(REasing.ease) }),
-            ),
-            -1,
-        );
-    }, []);
-    const dotAnim = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-    }));
-
-    return (
-        <View style={st.sosCapsuleOuter}>
-            <BlurView intensity={40} tint="dark" style={st.sosCapsuleBlur}>
-                <View style={st.sosCapsuleInner}>
-                    <Animated.View style={[st.sosCapsuleDot, dotAnim]} />
-                    <Text style={st.sosCapsuleType}>{incident.type}</Text>
-                    <View style={st.sosCapsuleDivider} />
-                    <Feather name="users" size={12} color={T.ink3} />
-                    <Text style={st.sosCapsuleCount}>{incident.participantCount}</Text>
-                </View>
-            </BlurView>
-        </View>
-    );
-});
-
 // ─── Floating Glass Pill Input ──────────────────────────────────────────────
 function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void; bottomInset: number }) {
     const [text, setText] = useState('');
@@ -391,7 +362,7 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
     };
 
     return (
-        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, S.s4) }]}>
+        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 30) }]}>
             {/* ── Floating Evidence Menu ── */}
             {isAttachMenuVisible && (
                 <View style={st.attachMenuOuter}>
@@ -430,7 +401,9 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
 
             <View style={st.inputPillContainer}>
                 {/* Background equivalent to #1E153A @ 0.45 */}
-                <View style={[StyleSheet.absoluteFill, st.inputPillBg]} />
+                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
+                    <View style={[StyleSheet.absoluteFill, st.inputPillBg]} />
+                </BlurView>
 
                 <View style={st.inputPill}>
                     {/* Attach button */}
@@ -603,8 +576,8 @@ export default function ChatRoom() {
                     </BlurView>
                 </View>
 
-                {/* ── SOS Alert Capsule (LIVE only) ────────── */}
-                <SOSAlertCapsule incident={incident} />
+                {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
+                <View style={{ marginTop: 12 }} />
 
                 {/* ── Messages + Input ────────────────────── */}
                 <KeyboardAvoidingView
@@ -690,6 +663,7 @@ const st = StyleSheet.create({
         paddingHorizontal: S.s3,
         paddingTop: S.s2,
         paddingBottom: S.s2,
+        marginBottom: 12,
     },
     headerBlur: {
         borderRadius: R.pill,
@@ -703,7 +677,8 @@ const st = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: S.s3,
-        paddingVertical: 12,
+        paddingVertical: 8,
+        minHeight: 58,
     },
     headerBtn: {
         alignItems: 'center',
@@ -817,50 +792,6 @@ const st = StyleSheet.create({
         textTransform: 'uppercase',
     },
 
-    // ── SOS Alert Floating Capsule — glass, does NOT touch edges
-    sosCapsuleOuter: {
-        paddingHorizontal: S.s5,
-        paddingVertical: S.s2,
-        alignItems: 'center',
-    },
-    sosCapsuleBlur: {
-        borderRadius: R.pill,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: T.dangerBorder,
-        backgroundColor: T.surfaceBulky,
-    },
-    sosCapsuleInner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: S.s2,
-        paddingHorizontal: S.s4,
-        paddingVertical: S.s2,
-    },
-    sosCapsuleDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: T.danger,
-    },
-    sosCapsuleType: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: T.dangerText,
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
-    },
-    sosCapsuleDivider: {
-        width: 1,
-        height: 12,
-        backgroundColor: T.lineBold,
-    },
-    sosCapsuleCount: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: T.ink3,
-    },
-
     // Removed Map Strip Styles
 
     // ── Chat area
@@ -874,7 +805,7 @@ const st = StyleSheet.create({
     // ── Bubble row
     bubbleRow: {
         flexDirection: 'row',
-        marginBottom: S.s4,
+        marginBottom: 20,
         gap: S.s2,
     },
     bubbleRowOwn: {
@@ -891,7 +822,7 @@ const st = StyleSheet.create({
         width: 32,
         height: 32,
         borderRadius: 16,
-        alignSelf: 'flex-end',
+        alignSelf: 'flex-start',
         flexShrink: 0,
     },
 
@@ -919,17 +850,11 @@ const st = StyleSheet.create({
     roleBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#FFFFFF',
     },
     roleBadgeText: {
-        fontSize: 8,
+        fontSize: 9,
         fontWeight: '700',
-        letterSpacing: 0.5,
-        color: '#FFFFFF',
+        letterSpacing: 1,
         textTransform: 'uppercase',
     },
 
@@ -1055,7 +980,8 @@ const st = StyleSheet.create({
 
     // ── Floating Glass Input
     inputOuter: {
-        paddingHorizontal: S.s3,
+        width: '90%',
+        alignSelf: 'center',
         paddingTop: S.s2,
     },
     inputPillContainer: {
@@ -1101,9 +1027,18 @@ const st = StyleSheet.create({
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: 'transparent',
+        backgroundColor: '#8A38F6',
         alignItems: 'center',
         justifyContent: 'center',
+        ...Platform.select({
+            ios: {
+                shadowColor: '#8A38F6',
+                shadowOpacity: 0.8,
+                shadowRadius: 12,
+                shadowOffset: { width: 0, height: 0 },
+            },
+            android: { elevation: 8 },
+        }),
     },
     sendBtnOff: {
         opacity: 0.5,

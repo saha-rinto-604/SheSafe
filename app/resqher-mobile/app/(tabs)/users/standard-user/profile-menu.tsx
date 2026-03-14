@@ -239,7 +239,7 @@ const s = StyleSheet.create({
         paddingHorizontal: 14,
         paddingBottom: 12,
         borderBottomWidth: 1,
-        borderBottomColor: T.lineMid,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
         backgroundColor: T.surfaceGlass,
     },
     backBtn: {
@@ -249,8 +249,8 @@ const s = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: T.lineMid,
-        backgroundColor: T.surfaceCard,
+        borderColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: T.surfaceBulky,
     },
     headerTitle: {
         flex: 1,
@@ -275,7 +275,7 @@ const s = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
-        borderColor: T.lineMid,
+        borderColor: 'rgba(255,255,255,0.1)',
         borderRadius: R.lg,
         paddingHorizontal: S.s4,
         paddingVertical: 16,
@@ -360,7 +360,7 @@ const s = StyleSheet.create({
         borderRadius: R.md,
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
-        borderColor: T.lineMid,
+        borderColor: 'rgba(255,255,255,0.1)',
         marginBottom: 10,
     },
     iconBox: {
