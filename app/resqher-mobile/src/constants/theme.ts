@@ -38,10 +38,10 @@ export const T = {
   ink4: '#636366',           // Muted text, icons — low emphasis
   ink5: '#48484A',           // Placeholder text — very muted
 
-  // ── Borders — subtle dividers on dark backgrounds
-  line: 'rgba(255,255,255,0.04)',     // Very faint divider
-  lineMid: 'rgba(255,255,255,0.08)', // Standard border
-  lineBold: 'rgba(255,255,255,0.14)', // Stronger border for contrast
+  // ── Borders — Unified 1px White Stroke Requirement across the system
+  line: 'rgba(255,255,255,0.1)',     // Standardized to 0.1
+  lineMid: 'rgba(255,255,255,0.1)',  // Standardized to 0.1
+  lineBold: 'rgba(255,255,255,0.1)', // Standardized to 0.1
 
   // ── Neutral grays for UI components (dark scale)
   gray50: '#1C1C1E',
@@ -80,6 +80,13 @@ export const T = {
   surfaceGlass: 'rgba(26,26,30,0.80)',   // 80% dark glass
   surfaceOverlay: 'rgba(138,56,246,0.07)', // Violet tint overlay
   gradientOverlayOpacity: 0.07 as number,
+
+  // ── Universal Bulky Glass — The Material Mandate
+  // Every UI bar, card, and floating element uses this exact material.
+  // Color + border are IDENTICAL across all screens for visual consistency.
+  surfaceBulky: '#1E153A',               // Solid tinted fill — carved from background
+  surfaceBulkyActive: '#251B48',         // Elevated for LIVE/active state
+  hairlineMicro: 'rgba(255, 255, 255, 0.1)', // Standardized to 0.1
 
   // ── Glow tokens for ambient lighting effects
   glowViolet: 'rgba(138,56,246,0.15)',   // Ambient violet halo

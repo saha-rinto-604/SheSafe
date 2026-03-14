@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle,
+    Modal, ScrollView, ViewStyle, Image,
 } from 'react-native';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
@@ -31,8 +31,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
+import AtmosphericShell from '../../../src/components/AtmosphericShell';
+import { getUserProfile, UserProfile } from '../../../src/services/profile';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -55,14 +58,14 @@ const PremiumBar = memo(function PremiumBar({
 
 const pb = StyleSheet.create({
     bar: {
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% — lets blur show through
         borderWidth: 1,
-        borderColor: `${T.violet}22`,
+        borderColor: 'rgba(255,255,255,0.1)',     // Global 1px white translucent stroke
         overflow: 'hidden',
     },
     tint: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: T.surfaceOverlay,
+        backgroundColor: T.surfaceOverlay,  // Violet tint overlay for glass depth
     },
     content: {
         flexDirection: 'row',
@@ -80,7 +83,8 @@ const SOS_WRAP_SIZE = 320;
 const ARC_SIZE = SOS_BTN_SIZE + 20;
 const ARC_RADIUS = ARC_SIZE / 2;
 
-const CANCEL_DURATION = 10;
+// CANCEL_DURATION is now loaded from SafetySettings (default 10 sec)
+const CANCEL_DURATION_DEFAULT = 10;
 const HOLD_MS = 2000;
 const HINT_HIDE_MS = 2200;
 
@@ -396,13 +400,16 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
 // ─────────────────────────────────────────────────────────────────────────────
 // Side Drawer — Feather icons
 // ─────────────────────────────────────────────────────────────────────────────
-const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string }[] = [
-    { icon: 'shield', label: 'Safety Dashboard' },
-    { icon: 'message-circle', label: 'Group Chat' },
-    { icon: 'activity', label: 'Medical Help' },
+const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
+    { icon: 'user', label: 'Edit Profile' },
     { icon: 'phone-call', label: 'Emergency Contacts' },
+    { icon: 'shield', label: 'Safety Settings' },
+    { icon: 'check-circle', label: 'Volunteer Verification' },
+    { icon: 'clock', label: 'Incident History' },
+    { icon: 'lock', label: 'Privacy & Security' },
     { icon: 'settings', label: 'Settings' },
-    { icon: 'log-out', label: 'Logout' },
+    { icon: 'help-circle', label: 'Help & Support' },
+    { icon: 'log-out', label: 'Logout', danger: true },
 ];
 
 const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
@@ -425,11 +432,16 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
                     {DRAWER_ITEMS.map((item, i) => (
-                        <TouchableOpacity key={i} style={s.drawerRow} onPress={onClose} activeOpacity={0.65}>
-                            <View style={s.drawerIconBox}><Feather name={item.icon} size={18} color={T.violet} /></View>
-                            <Text style={s.drawerLabel}>{item.label}</Text>
-                            <Feather name="chevron-right" size={14} color={T.ink4} />
-                        </TouchableOpacity>
+                        <React.Fragment key={i}>
+                            {item.danger && <View style={s.drawerDivider} />}
+                            <TouchableOpacity style={s.drawerRow} onPress={onClose} activeOpacity={0.65}>
+                                <View style={[s.drawerIconBox, item.danger && s.drawerIconBoxDanger]}>
+                                    <Feather name={item.icon} size={18} color={item.danger ? T.danger : T.violet} />
+                                </View>
+                                <Text style={[s.drawerLabel, item.danger && s.drawerLabelDanger]}>{item.label}</Text>
+                                {!item.danger && <Feather name="chevron-right" size={14} color={T.ink4} />}
+                            </TouchableOpacity>
+                        </React.Fragment>
                     ))}
                 </ScrollView>
             </RNAnimated.View>
@@ -520,13 +532,16 @@ const lb = StyleSheet.create({
 // Main Screen — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SOSScreen() {
+    const router = useRouter();
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView>(null);
 
+    const [profile, setProfile] = useState<UserProfile | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(0);
+    const [cancelDuration, setCancelDuration] = useState(CANCEL_DURATION_DEFAULT);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
@@ -534,6 +549,49 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+
+    // Load profile picture on screen focus
+    useFocusEffect(
+        useCallback(() => {
+            getUserProfile().then(setProfile);
+        }, []),
+    );
+
+    // Load persisted SOS cancel timer setting on mount
+    useEffect(() => {
+        import('../../../src/constants/theme').then(() => {
+            import('expo-secure-store').then(SecureStore => {
+                SecureStore.getItemAsync('resqher_safety_settings_v1').then(raw => {
+                    if (raw) {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            if (parsed?.sosCancelTimerSec) {
+                                setCancelDuration(parsed.sosCancelTimerSec);
+                            }
+                        } catch { /* use default */ }
+                    }
+                });
+            });
+        });
+    }, []);
+
+    const handleNavigation = useCallback((tabId: string) => {
+        setActiveTab(tabId);
+        if (tabId === 'Chat') {
+            router.push('/(tabs)/users/standard-user/chat_home');
+        } else if (tabId === 'Explore') {
+            router.push('/(tabs)/users/standard-user/ExploreScreen');
+        } else if (tabId === 'Medical') {
+            router.push('/(tabs)/users/standard-user/MedicalDashboard');
+        }
+    }, [router]);
+
+    // Reset active tab when screen regains focus (e.g. returning from Chat)
+    useFocusEffect(
+        useCallback(() => {
+            setActiveTab('Home');
+        }, [])
+    );
 
     // Pulse ring anims (SOS active state — RN Animated for compatibility)
     const p0s = useRef(new RNAnimated.Value(1)).current; const p0o = useRef(new RNAnimated.Value(0)).current;
@@ -588,7 +646,7 @@ export default function SOSScreen() {
     // SOS logic
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(CANCEL_DURATION);
+        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
     }, []);
 
     useEffect(() => {
@@ -601,7 +659,7 @@ export default function SOSScreen() {
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sosActive, cancelCountdown === CANCEL_DURATION]);
+    }, [sosActive, cancelCountdown === cancelDuration]);
 
     const cancelSOS = useCallback(() => {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
@@ -622,6 +680,7 @@ export default function SOSScreen() {
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
     return (
+        <AtmosphericShell>
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             {isEmergencyLive && <EmergencyOverlay />}
@@ -672,18 +731,30 @@ export default function SOSScreen() {
                         onPress={() => Alert.alert('Notifications', 'No new notifications.')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                        <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
                         <View style={s.notifDot} />
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={s.hBtn}
-                        onPress={() => setDrawerOpen(true)}
+                        style={s.profileBtn}
+                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Open profile menu"
+                        accessibilityRole="button"
                     >
-                        <Ionicons name="menu-outline" size={22} color={T.ink2} />
+                        {profile?.photoUri ? (
+                            <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
+                        ) : (
+                            <Image
+                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
+                                style={s.profileAvatar}
+                            />
+                        )}
                     </TouchableOpacity>
                 </View>
             </PremiumBar>
+
+            {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
+            <View style={{ marginTop: 12 }} />
 
             {/* ── Map controls — High contrast GPS/Recenter ───────────────── */}
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
@@ -698,7 +769,7 @@ export default function SOSScreen() {
                     </Text>
                 </View>
                 <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
-                    <Ionicons name="locate-outline" size={22} color={T.violet} />
+                    <Ionicons name="locate-outline" size={22} color={T.onPrimary} />
                 </TouchableOpacity>
             </View>
 
@@ -756,79 +827,71 @@ export default function SOSScreen() {
                             key={tab.id}
                             tab={tab}
                             isActive={activeTab === tab.id}
-                            onPress={() => setActiveTab(tab.id)}
+                            onPress={() => handleNavigation(tab.id)}
                         />
                     ))}
                 </PremiumBar>
             </View>
         </View>
+        </AtmosphericShell>
     );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "Encrypted Professional" Tactical Map Style — 24 rules
-// Deep charcoal base, zero POIs, 3-tier road hierarchy, muted labels
-// Maximizes Electric Violet brand color contrast
+// Tactical Map Style — dark blue-charcoal base, visible hierarchy
 // ─────────────────────────────────────────────────────────────────────────────
 const TACTICAL_MAP_STYLE = [
-    // Base geometry — deep charcoal/black
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
-
-    // Kill ALL icons
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-
-    // Label text — barely visible tactical gray
-    { elementType: 'labels.text.fill', stylers: [{ color: '#636366' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#08070B' }, { weight: 2 }] },
-
-    // Kill ALL POIs — every subcategory explicitly
+    { elementType: 'labels.text.fill', stylers: [{ color: '#6B7A8D' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#0A0A0C' }] },
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.attraction', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.government', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.medical', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
-    { featureType: 'poi.park', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.place_of_worship', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.school', stylers: [{ visibility: 'off' }] },
-    { featureType: 'poi.sports_complex', stylers: [{ visibility: 'off' }] },
-
-    // Transit — off
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#0d1a0d' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-
-    // Roads — 3-tier muted gray hierarchy
-    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2C2C2E' }] },
-    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1C1C1E' }] },
-    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#222224' }] },
-    { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#1A1A1C' }] },
-    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
-
-    // Water — near-black
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#060608' }] },
-    { featureType: 'water', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-
-    // Landscape — slightly lighter than base for depth
-    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0D0D10' }] },
-
-    // Administrative — barely visible
-    { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
-    { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#48484A' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1C2333' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0A0A0C' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#5a6a7a' }] },
+    { featureType: 'road.arterial', elementType: 'geometry', stylers: [{ color: '#1e2530' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#2C3E58' }] },
+    { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1a1f2a' }] },
+    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#8090a8' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#07070A' }] },
+    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#2a4060' }] },
+    { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#0a0f1a' }] },
+    { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#1a1f2a' }] },
+    { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#4a5a70' }] },
+    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StyleSheet — Premium Tactical Command Center
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-    root: { flex: 1, backgroundColor: T.bg },
+    root: { flex: 1, backgroundColor: '#090514' },  // Matches AtmosphericShell gradient end
 
     header: {
         position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg,
+        borderRadius: 28,  // Bulky Glass Mandate — matches Hub cards
         zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 6 },
         }),
+    },
+    profileBtn: {
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 6, shadowColor: '#8A38F6' },
+        }),
+    },
+    profileAvatar: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
     },
     headerContent: {
         flexDirection: 'row', alignItems: 'center',
@@ -847,8 +910,8 @@ const s = StyleSheet.create({
     hBtn: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
     notifDot: {
@@ -857,22 +920,22 @@ const s = StyleSheet.create({
         backgroundColor: T.danger, borderWidth: 1.5, borderColor: T.surface,
     },
 
-    mapControls: { position: 'absolute', right: 14, gap: 8, alignItems: 'flex-end' },
+    mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     gpsPill: {
         flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.full, paddingHorizontal: 10, paddingVertical: 5,
-        borderWidth: 1, borderColor: T.lineMid,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
     },
     gpsPillEmg: { backgroundColor: T.dangerLight, borderColor: T.dangerBorder },
     gpsDot: { width: 6, height: 6, borderRadius: 3 },
     gpsTxt: { fontSize: 10, fontWeight: '700', color: T.ink2, letterSpacing: 0.5 },
     gpsTxtEmg: { color: T.dangerText },
     ctrlBtn: {
-        width: 44, height: 44, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceGlass,
+        width: 44, height: 44, borderRadius: 12,
+        backgroundColor: T.surfaceBulky,
         alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1.5, borderColor: T.lineBold,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
@@ -915,28 +978,28 @@ const s = StyleSheet.create({
         justifyContent: 'center',
     },
 
-    sosTxt: { color: T.onPrimary, fontSize: 32, fontWeight: '900', letterSpacing: 1 },
-    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginTop: 4 },
+    sosTxt: { color: T.onPrimary, fontSize: 38, fontWeight: '900', letterSpacing: 1.5 },
+    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.surfaceCard, borderWidth: 1.5, borderColor: T.dangerBorder,
+        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#E23636', shadowOpacity: 0.20, shadowRadius: 18, shadowOffset: { width: 0, height: 5 } },
             android: { elevation: 10 },
         }),
     },
-    cancelLabel: { color: T.ink3, fontSize: 12, fontWeight: '700', letterSpacing: 1.5 },
-    cancelCount: { color: T.danger, fontSize: 40, fontWeight: '900', lineHeight: 44 },
-    cancelSub: { color: T.ink4, fontSize: 10, fontWeight: '500', marginTop: 3 },
+    cancelLabel: { color: T.ink3, fontSize: 14, fontWeight: '900', letterSpacing: 1.5 },
+    cancelCount: { color: T.danger, fontSize: 48, fontWeight: '900', lineHeight: 52 },
+    cancelSub: { color: T.ink4, fontSize: 12, fontWeight: '700', marginTop: 3 },
 
     statusPill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
-        backgroundColor: T.surfaceGlass,
+        backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
         paddingHorizontal: 16, paddingVertical: 8, marginTop: 16,
-        borderWidth: 1, borderColor: `${T.violet}18`,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
@@ -947,7 +1010,7 @@ const s = StyleSheet.create({
         borderColor: T.dangerBorder,
     },
     pillDot: { width: 7, height: 7, borderRadius: 3.5 },
-    pillTxt: { fontSize: 10, fontWeight: '600', color: T.ink3, letterSpacing: 0.3, textTransform: 'uppercase' },
+    pillTxt: { fontSize: 12, fontWeight: '700', color: T.ink3, letterSpacing: 0.4, textTransform: 'uppercase' },
     pillTxtLive: { color: T.dangerText },
 
     navWrap: {
@@ -989,8 +1052,8 @@ const s = StyleSheet.create({
     navIconBox: {
         width: 36, height: 36,
         borderRadius: R.hBtn,
-        backgroundColor: T.surfaceCard,
-        borderWidth: 1, borderColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center', justifyContent: 'center',
     },
     navIconBoxActive: {
@@ -1021,5 +1084,8 @@ const s = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid,
     },
     drawerIconBox: { width: 36, height: 36, borderRadius: R.sm, backgroundColor: T.violetDim, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
+    drawerIconBoxDanger: { backgroundColor: `${T.danger}18` },
     drawerLabel: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
+    drawerLabelDanger: { color: T.danger },
+    drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
 });

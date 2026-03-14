@@ -408,7 +408,7 @@ const st = StyleSheet.create({
   stepNode: { alignItems: 'center', gap: 4 },
   stepCircle: {
     width: 28, height: 28, borderRadius: 14,
-    borderWidth: 1.5, borderColor: T.lineBold,
+    borderWidth: 1, borderColor: T.lineBold,
     backgroundColor: T.surfaceCard,
     alignItems: 'center', justifyContent: 'center',
   },
@@ -447,7 +447,7 @@ const st = StyleSheet.create({
   },
   roleTileActive: {
     borderColor: T.violet,
-    borderWidth: 1.5,
+    borderWidth: 1,
     ...Platform.select({
       ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 0 } },
       android: { elevation: 6 },
@@ -477,10 +477,10 @@ const st = StyleSheet.create({
 
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', height: 48,
-    borderRadius: R.sm, borderWidth: 1.5, borderColor: T.lineBold,
+    borderRadius: R.sm, borderWidth: 1, borderColor: T.lineBold,
     backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, marginBottom: S.s2,
   },
-  inputFocused: { borderColor: T.violet, borderWidth: 2, backgroundColor: 'rgba(138,56,246,0.06)' },
+  inputFocused: { borderColor: T.violet, borderWidth: 1, backgroundColor: 'rgba(138,56,246,0.06)' },
   inputError: { borderColor: T.danger, backgroundColor: T.dangerLight },
   inputIcon: { marginRight: S.s2 },
   input: { flex: 1, height: '100%', color: T.ink, fontSize: 14 },

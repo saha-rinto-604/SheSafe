@@ -46,9 +46,9 @@ const st = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: S.s4,
-        backgroundColor: T.surface,
         borderBottomWidth: 1,
         borderBottomColor: T.lineMid,
+        backgroundColor: T.surfaceBulky,
     },
     title: {
         ...Ty.h2,
@@ -67,7 +67,7 @@ const st = StyleSheet.create({
         gap: S.s4,
     },
     card: {
-        backgroundColor: T.surface,
+        backgroundColor: T.surfaceBulky,
         padding: S.s5,
         borderRadius: R.lg,
         borderWidth: 1,

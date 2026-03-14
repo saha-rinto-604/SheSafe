@@ -24,8 +24,17 @@
       },
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
-      ]
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "READ_MEDIA_IMAGES"
+      ],
+      "package": "com.anonymous.resqhermobile"
     },
     "ios": {
       "supportsTablet": true,
@@ -34,7 +43,9 @@
       },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "ResQher needs your location for emergency assistance.",
-        "NSLocationAlwaysUsageDescription": "ResQher needs your location for emergency assistance."
+        "NSLocationAlwaysUsageDescription": "ResQher needs your location for emergency assistance.",
+        "NSCameraUsageDescription": "ResQher needs camera access to capture verification photos.",
+        "NSPhotoLibraryUsageDescription": "ResQher needs photo access to upload verification documents."
       }
     },
     "web": {

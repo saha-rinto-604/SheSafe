@@ -39,12 +39,21 @@ export default function Login() {
     } finally {
       setSubmitting(false);
 
+<<<<<<< HEAD
+      // We manually tell the app to navigate to the Map screen
+      router.replace('/(tabs)/users/sos_screen');
+
+      console.log("Mock Login Successful: Redirecting to Map");
+    }
+    // ---------------------------------
+=======
       // We manually tell the app to navigate to the Map screen after a short delay
       setTimeout(() => {
         router.replace('/(tabs)/users/sos_screen' as any);
         console.log("Mock Login Successful: Redirecting to Map");
       }, 1000);
     }
+>>>>>>> 6a36279c83aa0fecd2a92f8dba553e6c925e588d
   };
 
   return (
@@ -208,16 +217,17 @@ const st = StyleSheet.create({
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 50,
-    borderRadius: R.sm,
-    borderWidth: 1.5,
-    borderColor: T.lineBold,
+    height: 52,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
     backgroundColor: T.surfaceCard,
     paddingHorizontal: S.s4,
+    marginBottom: S.s3,
   },
   inputFocused: {
     borderColor: T.violet,
-    borderWidth: 2,
+    borderWidth: 1,
     backgroundColor: 'rgba(138,56,246,0.06)',
   },
   inputError: {
