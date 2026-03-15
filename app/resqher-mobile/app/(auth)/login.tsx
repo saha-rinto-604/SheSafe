@@ -186,13 +186,13 @@ export default function Login() {
 
 const st = StyleSheet.create({
   card: {
-    backgroundColor: T.surface,
+    backgroundColor: T.surfaceBulkyGlass,
     borderRadius: R.xl,
     padding: S.s5,
     paddingBottom: S.s4,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(138,56,246,0.15)',
+    borderColor: T.hairlineMicro,
     ...Platform.select({
       ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } },
       android: { elevation: 12 },

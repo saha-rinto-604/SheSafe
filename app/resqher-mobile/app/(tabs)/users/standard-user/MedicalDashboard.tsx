@@ -129,7 +129,7 @@ export default function MedicalDashboard() {
 
                 <ScrollView
                     style={st.scroll}
-                    contentContainerStyle={[st.scrollContent, { paddingBottom: 100 }]}
+                    contentContainerStyle={[st.scrollContent, { paddingBottom: 140 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     {/* ── Header — SOS-matching 1px white stroke ── */}
@@ -205,7 +205,7 @@ export default function MedicalDashboard() {
                 </ScrollView>
 
                 {/* ── Floating Gradient Pill — Find Button ── */}
-                <View style={[st.findFABWrap, { bottom: 40 }]}>
+                <View style={[st.findFABWrap, { bottom: Math.max(insets.bottom + 20, 32) }]}>
                     <TouchableOpacity
                         style={st.findFAB}
                         onPress={handleFind}
@@ -357,8 +357,8 @@ const st = StyleSheet.create({
         overflow: 'hidden',
         borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)',
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.6, shadowRadius: 20, shadowOffset: { width: 0, height: 5 } },
-            android: { elevation: 12, shadowColor: '#8A38F6' },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 6, shadowColor: '#8A38F6' },
         }),
     },
     findFABGradient: {
