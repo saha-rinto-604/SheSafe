@@ -7,10 +7,10 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
-    TextInput, Keyboard, Pressable, Modal, ScrollView, Image,
+    TextInput, Keyboard, Pressable, Modal, ScrollView, Image, PanResponder,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
@@ -22,6 +22,9 @@ import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
+import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 const { width, height } = Dimensions.get('window');
 
@@ -60,6 +63,73 @@ const pb = StyleSheet.create({
     tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
+
+type LatLng = { latitude: number; longitude: number };
+
+type PlacePrediction = {
+    id: string;
+    name: string;
+    address: string;
+    placeId: string;
+};
+
+type PlaceSuggestion = {
+    id: string;
+    name: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+    placeId?: string;
+};
+
+const AUTOCOMPLETE_DEBOUNCE_MS = 260;
+
+const createSessionToken = () => Math.random().toString(36).slice(2);
+
+const buildAutocompleteUrl = (input: string, sessionToken: string, bias: LatLng) => {
+    const encodedInput = encodeURIComponent(input);
+    const location = `${bias.latitude},${bias.longitude}`;
+    const radius = 50000;
+    return `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodedInput}&key=${GOOGLE_MAPS_API_KEY}&location=${location}&radius=${radius}&components=country:bd&types=geocode&language=en&sessiontoken=${sessionToken}`;
+};
+
+const buildPlaceDetailsUrl = (placeId: string, sessionToken: string) => (
+    `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,geometry/location&key=${GOOGLE_MAPS_API_KEY}&language=en&sessiontoken=${sessionToken}`
+);
+
+function decodePolyline(encoded: string): LatLng[] {
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+    const coordinates: LatLng[] = [];
+
+    while (index < encoded.length) {
+        let result = 0;
+        let shift = 0;
+        let byte = 0;
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lat += deltaLat;
+
+        result = 0;
+        shift = 0;
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lng += deltaLng;
+
+        coordinates.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+
+    return coordinates;
+}
 
 // ── PulseRadar — identical to SOS screen (locating state) ───────────────────
 const PulseRadar = memo(function PulseRadar() {
@@ -224,6 +294,7 @@ export default function ExploreScreen() {
     const router = useRouter();
     const mapRef = useRef<MapView>(null);
     const searchInputRef = useRef<TextInput>(null);
+    const startInputRef = useRef<TextInput>(null);
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -233,6 +304,24 @@ export default function ExploreScreen() {
     const [showLocationCard, setShowLocationCard] = useState(false);
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
+    const [recentPlaces, setRecentPlaces] = useState<PlaceSuggestion[]>([]);
+    const [placeIncidents, setPlaceIncidents] = useState<PlaceIncident[]>([]);
+    const [placeSheetOpen, setPlaceSheetOpen] = useState(false);
+    const [directionsMode, setDirectionsMode] = useState(false);
+    const [startLocation, setStartLocation] = useState<PlaceSuggestion | null>(null);
+    const [endLocation, setEndLocation] = useState<PlaceSuggestion | null>(null);
+    const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+    const [startSearchActive, setStartSearchActive] = useState(false);
+    const [startSearchText, setStartSearchText] = useState('');
+    const [searchSuggestions, setSearchSuggestions] = useState<PlacePrediction[]>([]);
+    const [startSuggestions, setStartSuggestions] = useState<PlacePrediction[]>([]);
+    const [searchStatus, setSearchStatus] = useState<string | null>(null);
+    const [startStatus, setStartStatus] = useState<string | null>(null);
+    const searchSessionTokenRef = useRef<string | null>(null);
+    const startSessionTokenRef = useRef<string | null>(null);
+    const searchRequestIdRef = useRef(0);
+    const startRequestIdRef = useRef(0);
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -245,6 +334,10 @@ export default function ExploreScreen() {
     const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
     const locationCardY = useRef(new RNAnimated.Value(300)).current;
     const locationCardOpacity = useRef(new RNAnimated.Value(0)).current;
+    const placeSheetY = useRef(new RNAnimated.Value(height)).current;
+    const placeSheetOpacity = useRef(new RNAnimated.Value(0)).current;
+    const placeSheetDragY = useRef(new RNAnimated.Value(0)).current;
+    const directionsProgress = useRef(new RNAnimated.Value(0)).current;
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
@@ -292,10 +385,10 @@ export default function ExploreScreen() {
     }, [searchActive, searchProgress]);
 
     // Animate search bar collapse
-    const deactivateSearch = useCallback(() => {
+    const deactivateSearch = useCallback((clearText: boolean) => {
         Keyboard.dismiss();
         setSearchActive(false);
-        setSearchText('');
+        if (clearText) setSearchText('');
         RNAnimated.timing(searchProgress, {
             toValue: 0,
             duration: 260,
@@ -304,9 +397,178 @@ export default function ExploreScreen() {
         }).start();
     }, [searchProgress]);
 
+    const query = searchText.trim();
+    const startQuery = startSearchText.trim();
+
+    const fetchAutocomplete = useCallback(async (input: string, sessionToken: string, bias: LatLng) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            return { results: [] as PlacePrediction[], status: 'MISSING_KEY' };
+        }
+        try {
+            const res = await fetch(buildAutocompleteUrl(input, sessionToken, bias));
+            const data = await res.json();
+            if (data?.status !== 'OK') {
+                return { results: [] as PlacePrediction[], status: data?.status ?? 'ERROR' };
+            }
+            return {
+                results: (data.predictions ?? []).map((p: any) => ({
+                id: p.place_id,
+                placeId: p.place_id,
+                name: p.structured_formatting?.main_text ?? p.description,
+                address: p.structured_formatting?.secondary_text ?? p.description,
+                })),
+                status: 'OK',
+            };
+        } catch {
+            return { results: [] as PlacePrediction[], status: 'ERROR' };
+        }
+    }, []);
+
+    const resolvePlaceDetails = useCallback(async (prediction: PlacePrediction, sessionToken: string) => {
+        if (!GOOGLE_MAPS_API_KEY) return null as PlaceSuggestion | null;
+        try {
+            const res = await fetch(buildPlaceDetailsUrl(prediction.placeId, sessionToken));
+            const data = await res.json();
+            if (data?.status !== 'OK') return null;
+            const loc = data.result?.geometry?.location;
+            if (!loc) return null;
+            return {
+                id: prediction.placeId,
+                placeId: prediction.placeId,
+                name: data.result?.name ?? prediction.name,
+                address: data.result?.formatted_address ?? prediction.address,
+                latitude: loc.lat,
+                longitude: loc.lng,
+            };
+        } catch {
+            return null;
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!searchActive) return;
+        if (query.length < 1) {
+            setSearchSuggestions([]);
+            setSearchStatus(null);
+            searchSessionTokenRef.current = null;
+            return;
+        }
+        const requestId = ++searchRequestIdRef.current;
+        if (!searchSessionTokenRef.current) searchSessionTokenRef.current = createSessionToken();
+        const token = searchSessionTokenRef.current;
+        const bias = userLoc ?? DEFAULT_REGION;
+        const handle = setTimeout(async () => {
+            const { results, status } = await fetchAutocomplete(query, token, bias);
+            if (searchRequestIdRef.current === requestId) {
+                setSearchSuggestions(results);
+                setSearchStatus(status);
+            }
+        }, AUTOCOMPLETE_DEBOUNCE_MS);
+        return () => clearTimeout(handle);
+    }, [fetchAutocomplete, query, searchActive, userLoc]);
+
+    useEffect(() => {
+        if (!startSearchActive) return;
+        if (startQuery.length < 1) {
+            setStartSuggestions([]);
+            setStartStatus(null);
+            startSessionTokenRef.current = null;
+            return;
+        }
+        const requestId = ++startRequestIdRef.current;
+        if (!startSessionTokenRef.current) startSessionTokenRef.current = createSessionToken();
+        const token = startSessionTokenRef.current;
+        const bias = userLoc ?? DEFAULT_REGION;
+        const handle = setTimeout(async () => {
+            const { results, status } = await fetchAutocomplete(startQuery, token, bias);
+            if (startRequestIdRef.current === requestId) {
+                setStartSuggestions(results);
+                setStartStatus(status);
+            }
+        }, AUTOCOMPLETE_DEBOUNCE_MS);
+        return () => clearTimeout(handle);
+    }, [fetchAutocomplete, startQuery, startSearchActive, userLoc]);
+
+    useEffect(() => {
+        const buildRoute = async () => {
+            if (!startLocation || !endLocation) return;
+            if (!GOOGLE_MAPS_API_KEY) {
+                setRouteCoords([
+                    { latitude: startLocation.latitude, longitude: startLocation.longitude },
+                    { latitude: endLocation.latitude, longitude: endLocation.longitude },
+                ]);
+                return;
+            }
+
+            const origin = `${startLocation.latitude},${startLocation.longitude}`;
+            const destination = `${endLocation.latitude},${endLocation.longitude}`;
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`;
+
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                const points = data?.routes?.[0]?.overview_polyline?.points;
+                if (points) {
+                    const coords = decodePolyline(points);
+                    setRouteCoords(coords);
+                    mapRef.current?.fitToCoordinates(coords, {
+                        edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
+                        animated: true,
+                    });
+                }
+            } catch {
+                setRouteCoords([
+                    { latitude: startLocation.latitude, longitude: startLocation.longitude },
+                    { latitude: endLocation.latitude, longitude: endLocation.longitude },
+                ]);
+            }
+        };
+
+        if (directionsMode) {
+            buildRoute();
+        }
+    }, [directionsMode, endLocation, startLocation]);
+
+    const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
+        setSelectedPlace(place);
+        setSearchText(place.name);
+        setRecentPlaces(prev => [
+            place,
+            ...prev.filter(item => item.id !== place.id),
+        ].slice(0, 6));
+        deactivateSearch(false);
+        if (showLocationCard) closeLocationCard();
+        const latitudeDelta = 0.012;
+        const longitudeDelta = 0.012;
+        const offsetLat = latitudeDelta * 0.25;
+        mapRef.current?.animateToRegion({
+            latitude: place.latitude - offsetLat,
+            longitude: place.longitude,
+            latitudeDelta,
+            longitudeDelta,
+        }, 700);
+        openPlaceSheet(place);
+    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
+
+    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
+            return;
+        }
+        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
+        const place = await resolvePlaceDetails(prediction, sessionToken);
+        searchSessionTokenRef.current = null;
+        if (!place) {
+            Alert.alert('Place not found', 'Unable to fetch location details.');
+            return;
+        }
+        handleResolvedPlaceSelect(place);
+    }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
+
     // Show location card
     const openLocationCard = useCallback(() => {
         if (!userLoc) return;
+        if (placeSheetOpen) closePlaceSheet();
         setShowLocationCard(true);
         locationCardY.setValue(300);
         locationCardOpacity.setValue(0);
@@ -317,7 +579,7 @@ export default function ExploreScreen() {
             RNAnimated.spring(locationCardY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }),
             RNAnimated.timing(locationCardOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
-    }, [locationCardOpacity, locationCardY, userLoc]);
+    }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
 
     // Hide location card
     const closeLocationCard = useCallback(() => {
@@ -326,6 +588,111 @@ export default function ExploreScreen() {
             RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
         ]).start(() => setShowLocationCard(false));
     }, []);
+
+    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
+        setPlaceSheetOpen(true);
+        placeSheetY.setValue(height);
+        placeSheetOpacity.setValue(0);
+        placeSheetDragY.setValue(0);
+        setPlaceIncidents(DHAKA_INCIDENTS[place.id] ?? []);
+        RNAnimated.parallel([
+            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]).start();
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const closePlaceSheet = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => setPlaceSheetOpen(false));
+        placeSheetDragY.setValue(0);
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
+        setDirectionsMode(true);
+        setEndLocation(destination);
+        setRouteCoords([]);
+        RNAnimated.timing(directionsProgress, {
+            toValue: 1,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+        closePlaceSheet();
+    }, [closePlaceSheet, directionsProgress]);
+
+    const exitDirectionsMode = useCallback(() => {
+        setDirectionsMode(false);
+        setStartSearchActive(false);
+        setStartSearchText('');
+        setStartLocation(null);
+        setRouteCoords([]);
+        RNAnimated.timing(directionsProgress, {
+            toValue: 0,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+    }, [directionsProgress]);
+
+    const handleStartSelect = useCallback((place: PlaceSuggestion) => {
+        setStartLocation(place);
+        setStartSearchText(place.name);
+        setStartSearchActive(false);
+    }, []);
+
+    const handleStartPredictionSelect = useCallback(async (prediction: PlacePrediction) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
+            return;
+        }
+        const sessionToken = startSessionTokenRef.current ?? createSessionToken();
+        const place = await resolvePlaceDetails(prediction, sessionToken);
+        startSessionTokenRef.current = null;
+        if (!place) {
+            Alert.alert('Place not found', 'Unable to fetch location details.');
+            return;
+        }
+        setRecentPlaces(prev => [
+            place,
+            ...prev.filter(item => item.id !== place.id),
+        ].slice(0, 6));
+        handleStartSelect(place);
+    }, [handleStartSelect, resolvePlaceDetails]);
+
+    const openStartSearch = useCallback(() => {
+        setStartSearchActive(true);
+        setTimeout(() => startInputRef.current?.focus(), 60);
+    }, []);
+
+    const handleStartCurrentLocation = useCallback(() => {
+        if (!userLoc) return;
+        const current: PlaceSuggestion = {
+            id: 'current-location',
+            name: 'Your location',
+            address: address || 'Current location',
+            latitude: userLoc.latitude,
+            longitude: userLoc.longitude,
+        };
+        handleStartSelect(current);
+    }, [address, handleStartSelect, userLoc]);
+
+    const sheetPanResponder = useRef(
+        PanResponder.create({
+            onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 6,
+            onPanResponderMove: (_, gesture) => {
+                if (gesture.dy > 0) placeSheetDragY.setValue(gesture.dy);
+            },
+            onPanResponderRelease: (_, gesture) => {
+                if (gesture.dy > 120) {
+                    closePlaceSheet();
+                } else {
+                    RNAnimated.spring(placeSheetDragY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }).start();
+                }
+            },
+        })
+    ).current;
 
     return (
         <AtmosphericShell>
@@ -344,7 +711,36 @@ export default function ExploreScreen() {
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
-                />
+                >
+                    {selectedPlace && (
+                        <Marker
+                            key={selectedPlace.id}
+                            coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
+                            anchor={{ x: 0.5, y: 1 }}
+                            calloutAnchor={{ x: 0.5, y: 0 }}
+                            tracksViewChanges={true}
+                            zIndex={999}
+                            onPress={() => openPlaceSheet(selectedPlace)}
+                        >
+                            <View style={s.placeMarkerWrap}>
+                                <View style={s.placeMarkerIconWrap}>
+                                    <Ionicons name="location" size={26} color={T.violet} />
+                                </View>
+                                <View style={s.placeMarkerStem} />
+                            </View>
+                        </Marker>
+                    )}
+
+                    {routeCoords.length > 1 && (
+                        <Polyline
+                            coordinates={routeCoords}
+                            strokeColor={T.violet}
+                            strokeWidth={4}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                </MapView>
 
                 {locationStatus === 'idle' && <PulseRadar />}
 
@@ -356,6 +752,51 @@ export default function ExploreScreen() {
                     style={[s.header, { top: insets.top + 8 }]}
                     contentStyle={s.headerContent}
                 >
+                    {directionsMode ? (
+                        startSearchActive ? null : (
+                            <RNAnimated.View
+                                style={[
+                                    s.directionsHeaderWrap,
+                                    {
+                                        height: directionsProgress.interpolate({
+                                            inputRange: [0, 1],
+                                            outputRange: [48, 96],
+                                        }),
+                                        opacity: directionsProgress,
+                                    },
+                                ]}
+                            >
+                                <TouchableOpacity
+                                    style={s.hBtn}
+                                    onPress={exitDirectionsMode}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                                </TouchableOpacity>
+
+                                <View style={s.directionsFields}>
+                                    <TouchableOpacity
+                                        style={s.directionsInput}
+                                        activeOpacity={0.8}
+                                        onPress={openStartSearch}
+                                    >
+                                        <Ionicons name="radio-button-off" size={14} color={T.ink4} style={s.directionsIcon} />
+                                        <Text style={s.directionsInputText}>
+                                            {startLocation ? startLocation.name : 'Choose start location'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <View style={s.directionsDivider} />
+                                    <View style={s.directionsInput}>
+                                        <Ionicons name="location" size={14} color={T.violet} style={s.directionsIcon} />
+                                        <Text style={s.directionsInputText} numberOfLines={1}>
+                                            {endLocation?.name ?? 'Destination'}
+                                        </Text>
+                                    </View>
+                                </View>
+                            </RNAnimated.View>
+                        )
+                    ) : (
+                        <>
                     {/** Back button — animates in when search expands */}
                     <RNAnimated.View
                         style={{
@@ -370,7 +811,7 @@ export default function ExploreScreen() {
                     >
                         <TouchableOpacity
                             style={s.hBtn}
-                            onPress={deactivateSearch}
+                            onPress={() => deactivateSearch(true)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
                             <Ionicons name="arrow-back" size={20} color={T.ink2} />
@@ -441,19 +882,196 @@ export default function ExploreScreen() {
                             </TouchableOpacity>
                         </View>
                     </RNAnimated.View>
+                        </>
+                    )}
                 </PremiumBar>
 
+                {/* ── Search Overlay — suggestions + recent (map hidden) ───────── */}
+                {searchActive && (
+                    <View style={s.searchOverlay}>
+                        <Pressable
+                            style={s.searchOverlayBackdrop}
+                            onPress={() => deactivateSearch(false)}
+                            pointerEvents="box-only"
+                        />
+                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 76 }]}>
+                            {query.length === 0 ? (
+                                <>
+                                    <Text style={s.searchSectionTitle}>Recent searches</Text>
+                                    {recentPlaces.length === 0 ? (
+                                        <Text style={s.searchEmptyText}>No recent searches yet</Text>
+                                    ) : (
+                                        recentPlaces.map(place => (
+                                            <TouchableOpacity
+                                                key={place.id}
+                                                style={s.searchRow}
+                                                onPress={() => handleResolvedPlaceSelect(place)}
+                                                activeOpacity={0.7}
+                                            >
+                                                <View style={s.searchIconWrap}>
+                                                    <Ionicons name="time-outline" size={16} color={T.violet} />
+                                                </View>
+                                                <View style={s.searchTextWrap}>
+                                                    <Text style={s.searchTitle}>{place.name}</Text>
+                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <Text style={s.searchSectionTitle}>Suggestions</Text>
+                                    {searchSuggestions.length === 0 ? (
+                                        <Text style={s.searchEmptyText}>
+                                            {searchStatus === 'MISSING_KEY'
+                                                ? 'Missing Google Maps API key'
+                                                : searchStatus && searchStatus !== 'OK'
+                                                    ? `Places API error: ${searchStatus}`
+                                                    : 'No results found'}
+                                        </Text>
+                                    ) : (
+                                        searchSuggestions.slice(0, 10).map(place => (
+                                            <TouchableOpacity
+                                                key={place.id}
+                                                style={s.searchRow}
+                                                onPress={() => handlePlaceSelect(place)}
+                                                activeOpacity={0.7}
+                                            >
+                                                <View style={s.searchIconWrap}>
+                                                    <Ionicons name="location" size={16} color={T.violet} />
+                                                </View>
+                                                <View style={s.searchTextWrap}>
+                                                    <Text style={s.searchTitle}>{place.name}</Text>
+                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    )}
+                                </>
+                            )}
+                        </View>
+                    </View>
+                )}
+
+                {/* ── Start Location Overlay ─────────────────────────────── */}
+                {startSearchActive && (
+                    <View style={s.searchOverlay}>
+                        <Pressable
+                            style={s.searchOverlayBackdrop}
+                            onPress={() => setStartSearchActive(false)}
+                            pointerEvents="box-only"
+                        />
+                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 56 }]}
+                        >
+                            <View style={s.startSearchHeader}>
+                                <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
+                                <TextInput
+                                    ref={startInputRef}
+                                    style={s.startSearchInput}
+                                    placeholder="Choose start location"
+                                    placeholderTextColor={T.ink4}
+                                    value={startSearchText}
+                                    onChangeText={setStartSearchText}
+                                    returnKeyType="search"
+                                    selectionColor={T.violet}
+                                />
+                                {startSearchText.length > 0 && (
+                                    <TouchableOpacity
+                                        onPress={() => setStartSearchText('')}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                        <Ionicons name="close-circle" size={16} color={T.ink4} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                            <Text style={s.searchSectionTitle}>Start location</Text>
+                            <TouchableOpacity
+                                style={s.searchRow}
+                                onPress={handleStartCurrentLocation}
+                                activeOpacity={0.7}
+                            >
+                                <View style={s.searchIconWrap}>
+                                    <Ionicons name="locate" size={16} color={T.violet} />
+                                </View>
+                                <View style={s.searchTextWrap}>
+                                    <Text style={s.searchTitle}>Your location</Text>
+                                    <Text style={s.searchSubtitle} numberOfLines={1}>Use current GPS location</Text>
+                                </View>
+                            </TouchableOpacity>
+
+                            {startQuery.length === 0 ? (
+                                <>
+                                    <Text style={s.searchSectionTitle}>Recent searches</Text>
+                                    {recentPlaces.length === 0 ? (
+                                        <Text style={s.searchEmptyText}>No recent searches yet</Text>
+                                    ) : (
+                                        recentPlaces.map(place => (
+                                            <TouchableOpacity
+                                                key={place.id}
+                                                style={s.searchRow}
+                                                onPress={() => handleStartSelect(place)}
+                                                activeOpacity={0.7}
+                                            >
+                                                <View style={s.searchIconWrap}>
+                                                    <Ionicons name="time-outline" size={16} color={T.violet} />
+                                                </View>
+                                                <View style={s.searchTextWrap}>
+                                                    <Text style={s.searchTitle}>{place.name}</Text>
+                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <Text style={s.searchSectionTitle}>Suggestions</Text>
+                                    {startSuggestions.length === 0 ? (
+                                        <Text style={s.searchEmptyText}>
+                                            {startStatus === 'MISSING_KEY'
+                                                ? 'Missing Google Maps API key'
+                                                : startStatus && startStatus !== 'OK'
+                                                    ? `Places API error: ${startStatus}`
+                                                    : 'No results found'}
+                                        </Text>
+                                    ) : (
+                                        startSuggestions.slice(0, 10).map(place => (
+                                            <TouchableOpacity
+                                                key={place.id}
+                                                style={s.searchRow}
+                                                onPress={() => handleStartPredictionSelect(place)}
+                                                activeOpacity={0.7}
+                                            >
+                                                <View style={s.searchIconWrap}>
+                                                    <Ionicons name="location" size={16} color={T.violet} />
+                                                </View>
+                                                <View style={s.searchTextWrap}>
+                                                    <Text style={s.searchTitle}>{place.name}</Text>
+                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    )}
+                                </>
+                            )}
+                        </View>
+                    </View>
+                )}
+
                 {/* ── Current location button (35% from top) ───────────────────── */}
-                <View style={s.mapControls}>
-                    <TouchableOpacity
-                        style={s.ctrlBtn}
-                        onPress={openLocationCard}
-                        accessibilityLabel="Show my location"
-                        accessibilityRole="button"
-                    >
-                        <Ionicons name="locate-outline" size={22} color={T.violet} />
-                    </TouchableOpacity>
-                </View>
+                {!directionsMode && !selectedPlace && (
+                    <View style={s.mapControls}>
+                        <TouchableOpacity
+                            style={s.ctrlBtn}
+                            onPress={openLocationCard}
+                            accessibilityLabel="Show my location"
+                            accessibilityRole="button"
+                        >
+                            <Ionicons name="locate-outline" size={22} color={T.violet} />
+                        </TouchableOpacity>
+                    </View>
+                )}
 
                 {/* ── Location Card — slides up from bottom ───────────────────── */}
                 {showLocationCard && (
@@ -491,6 +1109,70 @@ export default function ExploreScreen() {
                                 >
                                     <Ionicons name="chevron-down" size={22} color={T.ink3} />
                                 </TouchableOpacity>
+                            </View>
+                        </RNAnimated.View>
+                    </>
+                )}
+
+                {/* ── Place Detail Sheet — half screen ─────────────────────── */}
+                {placeSheetOpen && selectedPlace && (
+                    <>
+                        <RNAnimated.View style={[s.placeSheetBackdrop, { opacity: placeSheetOpacity }]}>
+                            <Pressable style={StyleSheet.absoluteFill} onPress={closePlaceSheet} />
+                        </RNAnimated.View>
+
+                        <RNAnimated.View
+                            style={[
+                                s.placeSheet,
+                                { transform: [{ translateY: RNAnimated.add(placeSheetY, placeSheetDragY) }] },
+                                { opacity: placeSheetOpacity },
+                            ]}
+                            {...sheetPanResponder.panHandlers}
+                        >
+                            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={s.placeSheetTint} pointerEvents="none" />
+
+                            <View style={s.placeSheetHandleWrap}>
+                                <View style={s.placeSheetHandle} />
+                            </View>
+
+                            <View style={s.placeSheetHeader}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={s.placeSheetTitle}>{selectedPlace.name}</Text>
+                                    <Text style={s.placeSheetSubtitle} numberOfLines={1}>{selectedPlace.address}</Text>
+                                </View>
+                                <TouchableOpacity
+                                    style={s.placeSheetDirectionBtn}
+                                    onPress={() => enterDirectionsMode(selectedPlace)}
+                                    activeOpacity={0.75}
+                                >
+                                    <Ionicons name="navigate" size={16} color={T.onPrimary} />
+                                    <Text style={s.placeSheetDirectionText}>Directions</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <View style={s.placeSheetSection}>
+                                <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
+                                {placeIncidents.length === 0 ? (
+                                    <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
+                                ) : (
+                                    placeIncidents.map(inc => (
+                                        <View key={inc.id} style={s.placeIncidentRow}>
+                                            <View style={s.placeIncidentInfo}>
+                                                <Text style={s.placeIncidentName}>{inc.reporter}</Text>
+                                                <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                                            </View>
+                                            <View style={[
+                                                s.placeIncidentPill,
+                                                inc.status === 'ACTIVE' && s.placeIncidentPillActive,
+                                                inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
+                                                inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
+                                            ]}>
+                                                <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                            </View>
+                                        </View>
+                                    ))
+                                )}
                             </View>
                         </RNAnimated.View>
                     </>
@@ -583,6 +1265,63 @@ const s = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: S.s4, paddingVertical: 11,
     },
+    directionsHeaderWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        width: '100%',
+    },
+    directionsFields: {
+        flex: 1,
+        backgroundColor: T.surfaceBulky,
+        borderRadius: R.md,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        gap: 6,
+    },
+    directionsInput: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 4,
+    },
+    directionsInputText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: T.ink,
+    },
+    directionsIcon: {
+        width: 16,
+        textAlign: 'center',
+    },
+    directionsDivider: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        marginVertical: 2,
+    },
+
+    // ── Start search input ─────────────────────────────────────────────
+    startSearchHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: T.surfaceBulky,
+        borderRadius: R.md,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        paddingHorizontal: 10,
+        height: 38,
+        marginBottom: 12,
+    },
+    startSearchInput: {
+        flex: 1,
+        fontSize: 13,
+        fontWeight: '500',
+        color: T.ink,
+        height: 38,
+        padding: 0,
+    },
     headerBtns: { flexDirection: 'row', gap: S.s2, alignItems: 'center', marginLeft: S.s2 },
     hBtn: {
         width: 36, height: 36, borderRadius: R.hBtn,
@@ -630,6 +1369,69 @@ const s = StyleSheet.create({
         padding: 0,
     },
 
+    // ── Search Overlay ───────────────────────────────────────────────────
+    searchOverlay: {
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: '#0B0716',
+        zIndex: 240,
+    },
+    searchOverlayBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    searchOverlayContent: {
+        paddingHorizontal: 16,
+        gap: 12,
+    },
+    searchSectionTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.ink3,
+        letterSpacing: 1.1,
+        textTransform: 'uppercase',
+        marginBottom: 4,
+    },
+    searchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        borderRadius: 12,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        marginBottom: 8,
+    },
+    searchIconWrap: {
+        width: 30,
+        height: 30,
+        borderRadius: 10,
+        backgroundColor: T.violetDim,
+        borderWidth: 1,
+        borderColor: `${T.violet}35`,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 10,
+    },
+    searchTextWrap: { flex: 1 },
+    searchTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: T.ink,
+        letterSpacing: -0.2,
+    },
+    searchSubtitle: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: T.ink3,
+        marginTop: 2,
+    },
+    searchEmptyText: {
+        fontSize: 13,
+        color: T.ink4,
+        marginTop: 4,
+    },
+
     // ── Map controls ───────────────────────────────────────────────────────
     mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     ctrlBtn: {
@@ -641,6 +1443,168 @@ const s = StyleSheet.create({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
         }),
+    },
+
+    // ── Selected Place Marker ───────────────────────────────────────────
+    placeMarkerWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 26,
+        height: 26,
+    },
+    placeMarkerIconWrap: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.45, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 7, shadowColor: '#8A38F6' },
+        }),
+    },
+    placeMarkerStem: {
+        width: 0,
+        height: 0,
+    },
+
+    // ── Place Detail Sheet ──────────────────────────────────────────────
+    placeSheetBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(3,3,8,0.35)',
+        zIndex: 230,
+    },
+    placeSheet: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        height: height * 0.5,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        zIndex: 240,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 18, shadowOffset: { width: 0, height: -4 } },
+            android: { elevation: 12 },
+        }),
+    },
+    placeSheetTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(12,9,22,0.92)',
+    },
+    placeSheetHandleWrap: {
+        alignItems: 'center',
+        paddingTop: 10,
+    },
+    placeSheetHandle: {
+        width: 44,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: T.lineBold,
+        opacity: 0.6,
+    },
+    placeSheetHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 18,
+        paddingTop: 8,
+        paddingBottom: 12,
+    },
+    placeSheetTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    placeSheetSubtitle: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: T.ink3,
+        marginTop: 4,
+    },
+    placeSheetDirectionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 999,
+        backgroundColor: T.violet,
+        borderWidth: 1,
+        borderColor: `${T.violet}70`,
+    },
+    placeSheetDirectionText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: T.onPrimary,
+        letterSpacing: 0.2,
+    },
+    placeSheetSection: {
+        paddingHorizontal: 18,
+        paddingTop: 6,
+        gap: 10,
+    },
+    placeSheetSectionTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.ink3,
+        letterSpacing: 1.0,
+        textTransform: 'uppercase',
+    },
+    placeSheetEmpty: {
+        fontSize: 13,
+        color: T.ink4,
+    },
+    placeIncidentRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    placeIncidentInfo: {
+        flex: 1,
+    },
+    placeIncidentName: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: T.ink,
+    },
+    placeIncidentTime: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: T.ink3,
+        marginTop: 2,
+    },
+    placeIncidentPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    placeIncidentPillActive: {
+        backgroundColor: T.violetDim,
+        borderColor: `${T.violet}55`,
+    },
+    placeIncidentPillResolved: {
+        backgroundColor: T.safeLight,
+        borderColor: `${T.success}40`,
+    },
+    placeIncidentPillCancelled: {
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderColor: 'rgba(255,255,255,0.15)',
+    },
+    placeIncidentPillText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.ink,
+        letterSpacing: 0.6,
     },
 
     // ── Location Card ──────────────────────────────────────────────────────
