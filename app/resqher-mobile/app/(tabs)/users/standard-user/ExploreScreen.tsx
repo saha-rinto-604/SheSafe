@@ -10,8 +10,9 @@ import {
     TextInput, Keyboard, Pressable, Modal, ScrollView, Image, PanResponder,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
+import * as Speech from 'expo-speech';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +36,66 @@ const DEFAULT_REGION = {
     latitude: 23.8103, longitude: 90.4125,
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
+
+// ── Red Zones (No-Go Areas) ─────────────────────────────────────────────────
+const RED_ZONES: { id: string; name: string; latitude: number; longitude: number; radius: number }[] = [
+    { id: 'rz1', name: 'Pragati Sarani Area', latitude: 23.813546, longitude: 90.421659, radius: 100 },
+    { id: 'rz2', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 100 }
+];
+
+const EARTH_RADIUS_M = 6_371_000;
+
+/**
+ * Haversine distance in metres.
+ * d = 2R · arcsin( √( sin²((φ₂−φ₁)/2) + cos(φ₁)·cos(φ₂)·sin²((λ₂−λ₁)/2) ) )
+ */
+function haversineDistance(a: LatLng, b: LatLng): number {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(b.latitude - a.latitude);
+    const dLon = toRad(b.longitude - a.longitude);
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
+}
+
+/** Returns an object indicating safety and the name of the avoided zone if applicable. */
+function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
+    for (let i = 0; i < coordinates.length; i++) {
+        const point = coordinates[i];
+        for (const zone of RED_ZONES) {
+            if (haversineDistance(point, zone) <= zone.radius) {
+                return { isSafe: false, blockedZoneName: zone.name };
+            }
+        }
+    }
+    return { isSafe: true };
+}
+
+/** Strip HTML tags from Google's html_instructions. */
+const stripHtml = (html: string): string => html.replace(/<[^>]*>/g, '');
+
+type NavStep = {
+    instruction: string;
+    distance: string;
+    maneuver?: string;
+    endLocation?: LatLng;
+};
+
+/** Map Google maneuver strings → Ionicons names with string-contains fallback. */
+function getManeuverIcon(maneuver?: string): string {
+    if (!maneuver) return 'arrow-up';
+    const m = maneuver.toLowerCase();
+    if (m.includes('uturn')) return 'return-up-back';
+    if (m.includes('left')) return 'arrow-back';
+    if (m.includes('right')) return 'arrow-forward';
+    if (m.includes('merge')) return 'git-merge';
+    if (m.includes('roundabout')) return 'sync';
+    if (m.includes('fork')) return 'git-branch';
+    return 'arrow-up';
+}
 
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;
@@ -90,7 +151,7 @@ const buildAutocompleteUrl = (input: string, sessionToken: string, bias: LatLng)
     const encodedInput = encodeURIComponent(input);
     const location = `${bias.latitude},${bias.longitude}`;
     const radius = 50000;
-    return `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodedInput}&key=${GOOGLE_MAPS_API_KEY}&location=${location}&radius=${radius}&components=country:bd&types=geocode&language=en&sessiontoken=${sessionToken}`;
+    return `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodedInput}&key=${GOOGLE_MAPS_API_KEY}&location=${location}&radius=${radius}&components=country:bd&language=en&sessiontoken=${sessionToken}`;
 };
 
 const buildPlaceDetailsUrl = (placeId: string, sessionToken: string) => (
@@ -297,7 +358,10 @@ export default function ExploreScreen() {
     const startInputRef = useRef<TextInput>(null);
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
-    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
+    const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('driving');
+    const [isLiveNav, setIsLiveNav] = useState(false);
+    const [audioEnabled, setAudioEnabled] = useState(false);
     const [address, setAddress] = useState('');
     const [searchActive, setSearchActive] = useState(false);
     const [searchText, setSearchText] = useState('');
@@ -322,6 +386,10 @@ export default function ExploreScreen() {
     const startSessionTokenRef = useRef<string | null>(null);
     const searchRequestIdRef = useRef(0);
     const startRequestIdRef = useRef(0);
+    const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
+    const [currentStepIdx, setCurrentStepIdx] = useState(0);
+
+    const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -368,8 +436,58 @@ export default function ExploreScreen() {
             } catch {
                 setAddress('Current location');
             }
+
+            locationSubRef.current = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: 2000,
+                    distanceInterval: 5,
+                },
+                (loc) => {
+                    setUserLoc({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                        heading: loc.coords.heading ?? undefined,
+                    });
+                }
+            );
         })();
+
+        return () => {
+            if (locationSubRef.current) {
+                locationSubRef.current.remove();
+            }
+        };
     }, []);
+
+    // Auto-Camera & Auto-Step Advance
+    useEffect(() => {
+        if (!directionsMode || !userLoc || !isLiveNav) return;
+
+        mapRef.current?.animateCamera({
+            center: { latitude: userLoc.latitude, longitude: userLoc.longitude },
+            pitch: 45,
+            heading: userLoc.heading ?? 0,
+            zoom: 19,
+        }, { duration: 1000 });
+
+        if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
+            const currentStep = navInstructions[currentStepIdx];
+            if (currentStep.endLocation) {
+                const dist = haversineDistance(userLoc, currentStep.endLocation);
+                if (dist <= 25) {
+                    setCurrentStepIdx(prev => prev + 1);
+                }
+            }
+        }
+    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav]);
+
+    // Audio Guidance
+    useEffect(() => {
+        if (isLiveNav && audioEnabled && navInstructions.length > 0 && currentStepIdx < navInstructions.length) {
+            Speech.speak(navInstructions[currentStepIdx].instruction);
+        }
+    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
 
     // Animate search bar expand
     const activateSearch = useCallback(() => {
@@ -407,15 +525,18 @@ export default function ExploreScreen() {
         try {
             const res = await fetch(buildAutocompleteUrl(input, sessionToken, bias));
             const data = await res.json();
+
+            console.log(`[Google Places API] Autocomplete status for "${input}":`, data?.status);
+
             if (data?.status !== 'OK') {
                 return { results: [] as PlacePrediction[], status: data?.status ?? 'ERROR' };
             }
             return {
                 results: (data.predictions ?? []).map((p: any) => ({
-                id: p.place_id,
-                placeId: p.place_id,
-                name: p.structured_formatting?.main_text ?? p.description,
-                address: p.structured_formatting?.secondary_text ?? p.description,
+                    id: p.place_id,
+                    placeId: p.place_id,
+                    name: p.structured_formatting?.main_text ?? p.description,
+                    address: p.structured_formatting?.secondary_text ?? p.description,
                 })),
                 status: 'OK',
             };
@@ -502,32 +623,92 @@ export default function ExploreScreen() {
 
             const origin = `${startLocation.latitude},${startLocation.longitude}`;
             const destination = `${endLocation.latitude},${endLocation.longitude}`;
-            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_API_KEY}`;
+            const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
+            const baseUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${apiMode}&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
 
             try {
-                const res = await fetch(url);
+                // 1️⃣  Fetch all routes
+                const res = await fetch(baseUrl);
                 const data = await res.json();
-                const points = data?.routes?.[0]?.overview_polyline?.points;
-                if (points) {
-                    const coords = decodePolyline(points);
-                    setRouteCoords(coords);
-                    mapRef.current?.fitToCoordinates(coords, {
+
+                if (!data?.routes?.length) {
+                    Alert.alert('Route error', 'No route found between these locations.');
+                    return;
+                }
+
+                let chosenRoute = data.routes[0];
+                let chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
+
+                // 2️⃣  Red-Zone safety check with "Memory"
+                let safetyCheck = checkRouteSafety(chosenCoords);
+                let foundSafe = safetyCheck.isSafe;
+                const primaryAvoidedArea = safetyCheck.blockedZoneName;
+
+                if (!foundSafe && data.routes.length > 1) {
+                    for (let i = 1; i < data.routes.length; i++) {
+                        const route = data.routes[i];
+                        const altCoords = decodePolyline(route.overview_polyline?.points ?? '');
+                        const altCheck = checkRouteSafety(altCoords);
+                        if (altCheck.isSafe) {
+                            chosenRoute = route;
+                            chosenCoords = altCoords;
+                            foundSafe = true;
+                            break;
+                        }
+                    }
+                }
+
+                // 3️⃣  Apply polyline
+                setRouteCoords(chosenCoords);
+
+                // 4️⃣  Extract turn-by-turn instructions
+                const steps = chosenRoute?.legs?.[0]?.steps ?? [];
+                const instructions: NavStep[] = steps.map((step: any) => ({
+                    instruction: stripHtml(step.html_instructions ?? ''),
+                    distance: step.distance?.text ?? '',
+                    maneuver: step.maneuver,
+                    endLocation: step.end_location ? { latitude: step.end_location.lat, longitude: step.end_location.lng } : undefined,
+                }));
+                setNavInstructions(instructions);
+                setCurrentStepIdx(0);
+
+                // 5️⃣  Fit map to safe route and trigger Notification
+                if (chosenCoords.length > 1) {
+                    mapRef.current?.fitToCoordinates(chosenCoords, {
                         edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
                         animated: true,
                     });
+                }
+
+                if (primaryAvoidedArea) {
+                    setTimeout(() => {
+                        if (foundSafe) {
+                            Alert.alert(
+                                '🛡️ Secure Path Active',
+                                `Safety Optimization: We have bypassed the standard ${primaryAvoidedArea} route due to security cautions and selected the safest alternative for your journey.`
+                            );
+                            Speech.speak("Safety update: Redirecting to avoid high risk areas.");
+                        } else {
+                            Alert.alert(
+                                '⚠️ Security Alert',
+                                'No fully safe route identified. Proceed with extreme caution.'
+                            );
+                        }
+                    }, 800);
                 }
             } catch {
                 setRouteCoords([
                     { latitude: startLocation.latitude, longitude: startLocation.longitude },
                     { latitude: endLocation.latitude, longitude: endLocation.longitude },
                 ]);
+                setNavInstructions([]);
             }
         };
 
         if (directionsMode) {
             buildRoute();
         }
-    }, [directionsMode, endLocation, startLocation]);
+    }, [directionsMode, endLocation, startLocation, travelMode]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
@@ -624,10 +805,13 @@ export default function ExploreScreen() {
 
     const exitDirectionsMode = useCallback(() => {
         setDirectionsMode(false);
+        setIsLiveNav(false);
         setStartSearchActive(false);
         setStartSearchText('');
         setStartLocation(null);
         setRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
         RNAnimated.timing(directionsProgress, {
             toValue: 0,
             duration: 220,
@@ -712,6 +896,17 @@ export default function ExploreScreen() {
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
                 >
+                    {RED_ZONES.map(zone => (
+                        <Circle
+                            key={zone.id}
+                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                            radius={zone.radius}
+                            fillColor="rgba(255, 60, 60, 0.15)"
+                            strokeColor="rgba(255, 60, 60, 0.5)"
+                            strokeWidth={1}
+                        />
+                    ))}
+
                     {selectedPlace && (
                         <Marker
                             key={selectedPlace.id}
@@ -748,143 +943,206 @@ export default function ExploreScreen() {
 
 
                 {/* ── Header with Animated Search ──────────────────────────────── */}
-                <PremiumBar
-                    style={[s.header, { top: insets.top + 8 }]}
-                    contentStyle={s.headerContent}
-                >
-                    {directionsMode ? (
-                        startSearchActive ? null : (
-                            <RNAnimated.View
-                                style={[
-                                    s.directionsHeaderWrap,
-                                    {
-                                        height: directionsProgress.interpolate({
-                                            inputRange: [0, 1],
-                                            outputRange: [48, 96],
-                                        }),
-                                        opacity: directionsProgress,
-                                    },
-                                ]}
-                            >
-                                <TouchableOpacity
-                                    style={s.hBtn}
-                                    onPress={exitDirectionsMode}
-                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                {!isLiveNav && (
+                    <PremiumBar
+                        style={[s.header, { top: insets.top + 8 }]}
+                        contentStyle={s.headerContent}
+                    >
+                        {directionsMode ? (
+                            startSearchActive ? null : (
+                                <RNAnimated.View
+                                    style={[
+                                        s.directionsHeaderWrap,
+                                        {
+                                            height: directionsProgress.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [48, 140],
+                                            }),
+                                            opacity: directionsProgress,
+                                            flexDirection: 'column',
+                                            alignItems: 'stretch',
+                                        },
+                                    ]}
                                 >
-                                    <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                        <TouchableOpacity
+                                            style={s.hBtn}
+                                            onPress={exitDirectionsMode}
+                                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                        >
+                                            <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                                        </TouchableOpacity>
+
+                                        <View style={s.directionsFields}>
+                                            <TouchableOpacity
+                                                style={s.directionsInput}
+                                                activeOpacity={0.8}
+                                                onPress={openStartSearch}
+                                            >
+                                                <Ionicons name="radio-button-off" size={14} color={T.ink4} style={s.directionsIcon} />
+                                                <Text style={s.directionsInputText}>
+                                                    {startLocation ? startLocation.name : 'Choose start location'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                            <View style={s.directionsDivider} />
+                                            <View style={s.directionsInput}>
+                                                <Ionicons name="location" size={14} color={T.violet} style={s.directionsIcon} />
+                                                <Text style={s.directionsInputText} numberOfLines={1}>
+                                                    {endLocation?.name ?? 'Destination'}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    </View>
+
+                                    {/* Travel Mode Selector */}
+                                    <View style={s.travelModeWrap}>
+                                        {(['driving', 'walking', 'motorcycle', 'transit'] as const).map((mode) => (
+                                            <TouchableOpacity
+                                                key={mode}
+                                                style={[s.travelModeBtn, travelMode === mode && s.travelModeBtnActive]}
+                                                onPress={() => setTravelMode(mode)}
+                                            >
+                                                <Ionicons
+                                                    name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
+                                                    size={16}
+                                                    color={travelMode === mode ? T.onPrimary : T.ink3}
+                                                />
+                                                <Text style={[s.travelModeText, travelMode === mode && s.travelModeTextActive]}>
+                                                    {mode === 'motorcycle' ? 'Bike' : mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </RNAnimated.View>
+                            )
+                        ) : (
+                            <>
+                                {/** Back button — animates in when search expands */}
+                                <RNAnimated.View
+                                    style={{
+                                        width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
+                                        opacity: searchProgress,
+                                        transform: [{
+                                            translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }),
+                                        }],
+                                        marginRight: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }),
+                                        overflow: 'hidden',
+                                    }}
+                                >
+                                    <TouchableOpacity
+                                        style={s.hBtn}
+                                        onPress={() => deactivateSearch(true)}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                        <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                                    </TouchableOpacity>
+                                </RNAnimated.View>
+
+                                {/* Search bar — always visible, expands on focus */}
+                                <TouchableOpacity
+                                    style={s.searchBarWrap}
+                                    activeOpacity={1}
+                                    onPress={activateSearch}
+                                >
+                                    <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
+                                    <TextInput
+                                        ref={searchInputRef}
+                                        style={s.searchInput}
+                                        placeholder="Search location…"
+                                        placeholderTextColor={T.ink4}
+                                        value={searchText}
+                                        onChangeText={setSearchText}
+                                        onFocus={activateSearch}
+                                        returnKeyType="search"
+                                        selectionColor={T.violet}
+                                    />
+                                    {searchText.length > 0 && (
+                                        <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                            <Ionicons name="close-circle" size={16} color={T.ink4} />
+                                        </TouchableOpacity>
+                                    )}
                                 </TouchableOpacity>
 
-                                <View style={s.directionsFields}>
-                                    <TouchableOpacity
-                                        style={s.directionsInput}
-                                        activeOpacity={0.8}
-                                        onPress={openStartSearch}
-                                    >
-                                        <Ionicons name="radio-button-off" size={14} color={T.ink4} style={s.directionsIcon} />
-                                        <Text style={s.directionsInputText}>
-                                            {startLocation ? startLocation.name : 'Choose start location'}
-                                        </Text>
-                                    </TouchableOpacity>
-                                    <View style={s.directionsDivider} />
-                                    <View style={s.directionsInput}>
-                                        <Ionicons name="location" size={14} color={T.violet} style={s.directionsIcon} />
-                                        <Text style={s.directionsInputText} numberOfLines={1}>
-                                            {endLocation?.name ?? 'Destination'}
-                                        </Text>
+                                {/** Notification + burger — animate out AND release space so search expands */}
+                                <RNAnimated.View
+                                    style={{
+                                        width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
+                                        opacity: searchProgress.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0.25, 0] }),
+                                        transform: [{
+                                            translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 18] }),
+                                        }],
+                                        overflow: 'hidden',
+                                    }}
+                                    pointerEvents={searchActive ? 'none' : 'auto'}
+                                >
+                                    <View style={s.headerBtns}>
+                                        <TouchableOpacity
+                                            style={s.hBtn}
+                                            onPress={() => Alert.alert('Notifications', 'No new notifications.')}
+                                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                        >
+                                            <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                                            <View style={s.notifDot} />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={s.profileBtn}
+                                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
+                                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                            accessibilityLabel="Open profile menu"
+                                            accessibilityRole="button"
+                                        >
+                                            {profile?.photoUri ? (
+                                                <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
+                                            ) : (
+                                                <Image
+                                                    source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
+                                                    style={s.profileAvatar}
+                                                />
+                                            )}
+                                        </TouchableOpacity>
                                     </View>
-                                </View>
-                            </RNAnimated.View>
-                        )
-                    ) : (
-                        <>
-                    {/** Back button — animates in when search expands */}
-                    <RNAnimated.View
-                        style={{
-                            width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
-                            opacity: searchProgress,
-                            transform: [{
-                                translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }),
-                            }],
-                            marginRight: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }),
-                            overflow: 'hidden',
-                        }}
-                    >
-                        <TouchableOpacity
-                            style={s.hBtn}
-                            onPress={() => deactivateSearch(true)}
-                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                            <Ionicons name="arrow-back" size={20} color={T.ink2} />
-                        </TouchableOpacity>
-                    </RNAnimated.View>
-
-                    {/* Search bar — always visible, expands on focus */}
-                    <TouchableOpacity
-                        style={s.searchBarWrap}
-                        activeOpacity={1}
-                        onPress={activateSearch}
-                    >
-                        <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
-                        <TextInput
-                            ref={searchInputRef}
-                            style={s.searchInput}
-                            placeholder="Search location…"
-                            placeholderTextColor={T.ink4}
-                            value={searchText}
-                            onChangeText={setSearchText}
-                            onFocus={activateSearch}
-                            returnKeyType="search"
-                            selectionColor={T.violet}
-                        />
-                        {searchText.length > 0 && (
-                            <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                <Ionicons name="close-circle" size={16} color={T.ink4} />
-                            </TouchableOpacity>
+                                </RNAnimated.View>
+                            </>
                         )}
-                    </TouchableOpacity>
+                    </PremiumBar>
+                )}
 
-                    {/** Notification + burger — animate out AND release space so search expands */}
-                    <RNAnimated.View
-                        style={{
-                            width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
-                            opacity: searchProgress.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0.25, 0] }),
-                            transform: [{
-                                translateX: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 18] }),
-                            }],
-                            overflow: 'hidden',
-                        }}
-                        pointerEvents={searchActive ? 'none' : 'auto'}
+                {/* ── Top Live Banner ────────────────────────────────────────── */}
+                {isLiveNav && navInstructions.length > 0 && (
+                    <PremiumBar
+                        style={[lb.bannerWrap, { top: insets.top + 8 }]}
+                        contentStyle={lb.bannerBody}
                     >
-                        <View style={s.headerBtns}>
-                            <TouchableOpacity
-                                style={s.hBtn}
-                                onPress={() => Alert.alert('Notifications', 'No new notifications.')}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                            >
-                                <Ionicons name="notifications-outline" size={20} color={T.ink2} />
-                                <View style={s.notifDot} />
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={s.profileBtn}
-                                onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                accessibilityLabel="Open profile menu"
-                                accessibilityRole="button"
-                            >
-                                {profile?.photoUri ? (
-                                    <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
-                                ) : (
-                                    <Image
-                                        source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                        style={s.profileAvatar}
-                                    />
-                                )}
-                            </TouchableOpacity>
+                        <View style={ns.iconWrap}>
+                            <Ionicons
+                                name={getManeuverIcon(navInstructions[currentStepIdx]?.maneuver) as any}
+                                size={28}
+                                color={T.violet}
+                            />
                         </View>
-                    </RNAnimated.View>
-                        </>
-                    )}
-                </PremiumBar>
+                        <View style={lb.textWrap}>
+                            <Text style={lb.distText}>
+                                {navInstructions[currentStepIdx]?.distance}
+                            </Text>
+                            <Text style={lb.instrText} numberOfLines={2}>
+                                {navInstructions[currentStepIdx]?.instruction}
+                            </Text>
+                        </View>
+                        <TouchableOpacity
+                            style={lb.audioBtn}
+                            onPress={() => {
+                                setAudioEnabled(prev => {
+                                    if (prev) Speech.stop();
+                                    return !prev;
+                                });
+                            }}
+                            activeOpacity={0.7}
+                            accessibilityLabel="Toggle audio guidance"
+                        >
+                            <Ionicons name={audioEnabled ? "volume-high" : "volume-mute"} size={22} color={audioEnabled ? T.violet : T.ink4} />
+                        </TouchableOpacity>
+                    </PremiumBar>
+                )}
 
                 {/* ── Search Overlay — suggestions + recent (map hidden) ───────── */}
                 {searchActive && (
@@ -1178,6 +1436,74 @@ export default function ExploreScreen() {
                     </>
                 )}
 
+                {/* ── Step-by-Step Instruction Card ────────────────────────────── */}
+                {directionsMode && navInstructions.length > 0 && (
+                    <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
+                        <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={ns.cardTint} pointerEvents="none" />
+                        <View style={ns.cardBody}>
+                            <View style={ns.iconWrap}>
+                                <Ionicons
+                                    name={getManeuverIcon(navInstructions[currentStepIdx]?.maneuver) as any}
+                                    size={22}
+                                    color={T.violet}
+                                />
+                            </View>
+                            <View style={ns.textWrap}>
+                                <Text style={ns.instrText} numberOfLines={2}>
+                                    {navInstructions[currentStepIdx]?.instruction}
+                                </Text>
+                                <Text style={ns.distText}>
+                                    {navInstructions[currentStepIdx]?.distance}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={ns.cardFooter}>
+                            <Text style={ns.stepCounter}>
+                                Step {currentStepIdx + 1} of {navInstructions.length}
+                            </Text>
+                            {!isLiveNav ? (
+                                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                    {currentStepIdx > 0 && (
+                                        <TouchableOpacity
+                                            style={ns.navBtn}
+                                            onPress={() => setCurrentStepIdx(prev => Math.max(prev - 1, 0))}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="chevron-back" size={16} color={T.ink2} />
+                                        </TouchableOpacity>
+                                    )}
+                                    {currentStepIdx < navInstructions.length - 1 && (
+                                        <TouchableOpacity
+                                            style={ns.navBtn}
+                                            onPress={() => setCurrentStepIdx(prev => Math.min(prev + 1, navInstructions.length - 1))}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="chevron-forward" size={16} color={T.ink2} />
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity
+                                        style={ns.goLiveBtn}
+                                        onPress={() => setIsLiveNav(true)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />
+                                        <Text style={ns.goLiveBtnText}>GO LIVE</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <TouchableOpacity
+                                    style={ns.endLiveBtn}
+                                    onPress={() => setIsLiveNav(false)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={ns.endLiveBtnText}>Exit Live Mode</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                )}
+
                 {/* ── Bottom Navbar ─────────────────────────────────────────────── */}
                 <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
@@ -1300,6 +1626,37 @@ const s = StyleSheet.create({
         height: StyleSheet.hairlineWidth,
         backgroundColor: 'rgba(255,255,255,0.12)',
         marginVertical: 2,
+    },
+    travelModeWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 10,
+        gap: 8,
+    },
+    travelModeBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        paddingVertical: 8,
+        backgroundColor: T.surfaceBulky,
+        borderRadius: R.md,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    travelModeBtnActive: {
+        backgroundColor: T.violet,
+        borderColor: `${T.violet}80`,
+    },
+    travelModeText: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: T.ink3,
+    },
+    travelModeTextActive: {
+        color: T.onPrimary,
     },
 
     // ── Start search input ─────────────────────────────────────────────
@@ -1685,6 +2042,121 @@ const s = StyleSheet.create({
     navIconBoxActive: {
         backgroundColor: 'rgba(138,56,246,0.12)',
         borderColor: `${T.violet}40`,
+    },
+});
+
+// ── Navigation Instruction Card Styles ───────────────────────────────────────
+const ns = StyleSheet.create({
+    cardWrap: {
+        position: 'absolute', left: 14, right: 14,
+        borderRadius: R.lg, overflow: 'hidden',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        zIndex: 260,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    cardTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,10,18,0.88)',
+    },
+    cardBody: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2,
+        gap: S.s3,
+    },
+    iconWrap: {
+        width: 44, height: 44, borderRadius: R.sm,
+        backgroundColor: T.violetDim,
+        borderWidth: 1, borderColor: `${T.violet}35`,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    textWrap: { flex: 1 },
+    instrText: {
+        fontSize: 14, fontWeight: '700',
+        color: T.ink, letterSpacing: -0.2,
+        lineHeight: 20,
+    },
+    distText: {
+        fontSize: 12, fontWeight: '600',
+        color: T.ink3, marginTop: 2,
+    },
+    cardFooter: {
+        flexDirection: 'row', alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2,
+    },
+    stepCounter: {
+        fontSize: 11, fontWeight: '600',
+        color: T.ink4, letterSpacing: 0.4,
+    },
+    autoAdvanceText: {
+        fontSize: 11, fontWeight: '500',
+        color: T.violet, letterSpacing: 0.2,
+    },
+    navBtn: {
+        width: 32, height: 32, borderRadius: R.hBtn,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+    },
+    goLiveBtn: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 12, height: 32,
+        borderRadius: R.pill,
+        backgroundColor: T.violet,
+        borderWidth: 1, borderColor: `${T.violet}70`,
+    },
+    goLiveBtnText: {
+        fontSize: 11, fontWeight: '700',
+        color: T.onPrimary, letterSpacing: 0.2,
+    },
+    endLiveBtn: {
+        paddingHorizontal: 14, paddingVertical: 8,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    },
+    endLiveBtnText: {
+        fontSize: 11, fontWeight: '700',
+        color: T.onPrimary, letterSpacing: 0.2,
+    },
+});
+
+// ── Top Live Banner Styles ───────────────────────────────────────────
+const lb = StyleSheet.create({
+    bannerWrap: {
+        position: 'absolute', left: 14, right: 14,
+        borderRadius: R.lg, overflow: 'hidden',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        zIndex: 360,
+    },
+    bannerTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,10,18,0.85)',
+    },
+    bannerBody: {
+        width: '100%',
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: S.s4, paddingVertical: S.s4,
+        gap: S.s4,
+    },
+    textWrap: { flex: 1 },
+    distText: {
+        fontSize: 16, fontWeight: '800',
+        color: T.violet, marginBottom: 4, letterSpacing: -0.2,
+    },
+    instrText: {
+        fontSize: 18, fontWeight: '700',
+        color: T.ink, letterSpacing: -0.3,
+        lineHeight: 22,
+    },
+    audioBtn: {
+        width: 44, height: 44, borderRadius: R.hBtn,
+        backgroundColor: `${T.violet}10`,
+        borderWidth: 1, borderColor: `${T.violet}25`,
+        alignItems: 'center', justifyContent: 'center',
     },
 });
 
