@@ -15,11 +15,6 @@ import {
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
     Modal, Pressable
 } from 'react-native';
-import Animated, {
-    useSharedValue, useAnimatedStyle,
-    withRepeat, withSequence, withTiming,
-    Easing as REasing,
-} from 'react-native-reanimated';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +25,7 @@ import * as Haptics from 'expo-haptics';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
-import type { Incident, Message, Role } from '../../../../src/types/chat';
+import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
@@ -199,26 +194,6 @@ function caseLabel(id: string, createdAt: string): string {
     return `CASE #${year}-${num}`;
 }
 
-// ─── LivePulse — header heartbeat ───────────────────────────────────────────
-const LivePulse = memo(function LivePulse() {
-    const scale = useSharedValue(1);
-    useEffect(() => {
-        scale.value = withRepeat(
-            withSequence(
-                withTiming(1.5, { duration: 250, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 200, easing: REasing.in(REasing.quad) }),
-                withTiming(1.35, { duration: 220, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 700, easing: REasing.inOut(REasing.ease) }),
-            ),
-            -1,
-        );
-    }, []);
-    const animStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-    }));
-    return <Animated.View style={[st.livePulseDot, animStyle]} />;
-});
-
 // ─── RoleBadge ──────────────────────────────────────────────────────────────
 const RoleBadge = memo(function RoleBadge({ role }: { role: Role }) {
     const meta = ROLE_META[role];
@@ -251,10 +226,11 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
     const role = msg.sender.role;
-    const isVictim = role === 'USER' && !isOwn;
+    const isVictimMessage = role === 'USER' && msg.sender.id !== 'system';
+    const alignRight = isOwn || isVictimMessage;
 
     // Directional radii per exact design specs
-    const tailStyle = isOwn
+    const tailStyle = alignRight
         ? {
             borderTopLeftRadius: 16,
             borderTopRightRadius: 16,
@@ -269,9 +245,9 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
         };
 
     return (
-        <View style={[st.bubbleRow, isOwn ? st.bubbleRowOwn : st.bubbleRowOther]}>
+        <View style={[st.bubbleRow, alignRight ? st.bubbleRowOwn : st.bubbleRowOther]}>
             {/* Avatar for others */}
-            {!isOwn && (
+            {!alignRight && (
                 <Image
                     source={{ uri: `https://i.pravatar.cc/150?u=${msg.sender.id}` }}
                     style={st.avatar}
@@ -280,7 +256,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
             <View style={st.bubbleCol}>
                 {/* Sender + badge */}
-                {!isOwn && (
+                {!alignRight && (
                     <View style={st.senderRow}>
                         <Text style={st.senderName}>
                             {msg.sender.name}
@@ -292,12 +268,11 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                 {/* Directional pill bubble */}
                 <View style={[
                     st.bubble,
-                    isOwn ? st.bubbleOwn : st.bubbleOther,
-                    isVictim && st.bubbleVictim,
+                    alignRight ? st.bubbleOwn : st.bubbleOther,
                     tailStyle,
                 ]}>
                     {/* Separate absolute view for glass effect to preserve pure white text */}
-                    {!isOwn && <View style={[StyleSheet.absoluteFill, st.bubbleOtherBg, tailStyle]} />}
+                    {!alignRight && <View style={[StyleSheet.absoluteFill, st.bubbleOtherBg, tailStyle]} />}
                     {/* Audio type */}
                     {msg.type === 'AUDIO' ? (
                         <View style={st.audioWrap}>
@@ -328,7 +303,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                     ) : (
                         <Text style={[
                             st.msgText,
-                            isOwn && st.msgTextOwn
+                            alignRight && st.msgTextOwn
                         ]}>
                             {msg.content}
                         </Text>
@@ -336,7 +311,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                 </View>
 
                 {/* Timestamp */}
-                <Text style={[st.msgTime, isOwn && st.msgTimeOwn]}>
+                <Text style={[st.msgTime, alignRight && st.msgTimeOwn]}>
                     {formatTime(msg.timestamp)}
                 </Text>
             </View>
@@ -530,23 +505,22 @@ export default function ChatRoom() {
                                     style={st.headerBtn}
                                     activeOpacity={0.7}
                                 >
-                                    <Feather name="chevron-left" size={24} color="#FFFFFF" />
+                                    <Feather name="chevron-left" size={22} color={T.ink} />
                                 </TouchableOpacity>
-
-                                <Image
-                                    source={{ uri: 'https://i.pravatar.cc/150?u=case' }}
-                                    style={st.headerAvatar}
-                                />
 
                                 <View style={st.headerTitleBlock}>
                                     <Text style={st.headerTitle} numberOfLines={1}>
-                                        {caseLabel(incident.id, incident.createdAt)}
+                                        {DEFAULT_GROUP_CHAT_NAME}
                                     </Text>
                                     <View style={st.headerMeta}>
-                                        {isLive && <LivePulse />}
-                                        <Text style={[st.headerStatus, isLive && { color: T.dangerText }]}>
-                                            {isLive ? 'LIVE' : 'ARCHIVED'}
-                                        </Text>
+                                        <View style={[
+                                            st.headerStatusPill,
+                                            isLive ? st.headerStatusPillLive : st.headerStatusPillArchived,
+                                        ]}>
+                                            <Text style={isLive ? st.headerStatusTextLive : st.headerStatusTextArchived}>
+                                                {isLive ? 'LIVE' : 'ARCHIVED'}
+                                            </Text>
+                                        </View>
                                     </View>
                                 </View>
                             </View>
@@ -681,6 +655,12 @@ const st = StyleSheet.create({
         minHeight: 58,
     },
     headerBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: R.hBtn,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -701,16 +681,11 @@ const st = StyleSheet.create({
     headerLeft: {
         flexDirection: 'row',
         alignItems: 'center',
-    },
-    headerAvatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        marginLeft: 12,
+        gap: 10,
     },
     headerTitleBlock: {
         justifyContent: 'center',
-        marginLeft: 12,
+        marginLeft: 8,
     },
     headerRight: {
         flexDirection: 'row',
@@ -778,13 +753,28 @@ const st = StyleSheet.create({
         gap: 5,
         marginTop: 2,
     },
-    livePulseDot: {
-        width: 7,
-        height: 7,
-        borderRadius: 3.5,
-        backgroundColor: T.danger,
+    headerStatusPill: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 999,
+        borderWidth: 1,
     },
-    headerStatus: {
+    headerStatusPillLive: {
+        backgroundColor: T.violetDim,
+        borderColor: `${T.violet}55`,
+    },
+    headerStatusPillArchived: {
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderColor: 'rgba(255,255,255,0.12)',
+    },
+    headerStatusTextLive: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.violet,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    headerStatusTextArchived: {
         fontSize: 10,
         fontWeight: '700',
         color: T.ink4,
@@ -873,8 +863,9 @@ const st = StyleSheet.create({
         opacity: 0.70,
     },
     bubbleOwn: {
-        backgroundColor: T.violet,
-        borderWidth: 0,
+        backgroundColor: T.violetDim,
+        borderWidth: 1,
+        borderColor: `${T.violet}35`,
     },
     bubbleVictim: {
     },
@@ -886,7 +877,7 @@ const st = StyleSheet.create({
         lineHeight: 20,
     },
     msgTextOwn: {
-        color: '#FFFFFF',
+        color: T.ink,
     },
     msgTextVictim: {
         color: '#FFFFFF',
@@ -900,6 +891,7 @@ const st = StyleSheet.create({
     },
     msgTimeOwn: {
         alignSelf: 'flex-end',
+        textAlign: 'right',
     },
 
     // ── System message

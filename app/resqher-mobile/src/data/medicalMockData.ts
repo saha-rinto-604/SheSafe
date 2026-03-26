@@ -14,8 +14,7 @@ export const CATEGORIES: CategoryItem[] = [
     { id: 'specialists', label: 'Specialists', icon: 'medkit-outline', description: 'Find specialist doctors' },
     { id: 'hospital', label: 'Hospitals', icon: 'business-outline', description: 'Navigate to hospitals' },
     { id: 'ambulance', label: 'Ambulance', icon: 'car-outline', description: 'Request ambulance' },
-    { id: 'diagnostics', label: 'Diagnostics', icon: 'flask-outline', description: 'Lab & pathology' },
-    { id: 'pharmacy', label: 'Pharmacy', icon: 'bandage-outline', description: 'Medicine delivery' },
+    { id: 'pharmacy', label: 'Pharmacy', icon: 'bandage-outline', description: 'Find nearby pharmacy' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════

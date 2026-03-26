@@ -86,7 +86,6 @@ const ARC_RADIUS = ARC_SIZE / 2;
 // CANCEL_DURATION is now loaded from SafetySettings (default 10 sec)
 const CANCEL_DURATION_DEFAULT = 10;
 const HOLD_MS = 2000;
-const HINT_HIDE_MS = 2200;
 
 const NAV_HEIGHT = 58;
 const NAV_BOT_OFFSET = 14;
@@ -279,38 +278,58 @@ const mkr = StyleSheet.create({
 // ─────────────────────────────────────────────────────────────────────────────
 // Hold SOS Button — two-semicircle arc progress ring (RN Animated for arc)
 // ─────────────────────────────────────────────────────────────────────────────
-const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: () => void }) {
+const HoldSosButton = memo(function HoldSosButton({
+    onTrigger,
+    onPhaseChange,
+}: {
+    onTrigger: () => void;
+    onPhaseChange?: (phase: 'idle' | 'holding' | 'armed') => void;
+}) {
     const progress = useRef(new RNAnimated.Value(0)).current;
     const scale = useRef(new RNAnimated.Value(1)).current;
     const holdRef = useRef<RNAnimated.CompositeAnimation | null>(null);
-    const [holding, setHolding] = useState(false);
+
+    const phaseRef = useRef<'idle' | 'holding' | 'armed'>('idle');
+    const setPhase = useCallback((next: 'idle' | 'holding' | 'armed') => {
+        phaseRef.current = next;
+        onPhaseChange?.(next);
+    }, [onPhaseChange]);
 
     const startHold = useCallback(() => {
-        setHolding(true);
+        setPhase('holding');
         Haptics.selectionAsync();
         RNAnimated.spring(scale, { toValue: 0.94, useNativeDriver: true, tension: 200, friction: 10 }).start();
         holdRef.current = RNAnimated.timing(progress, {
             toValue: 1, duration: HOLD_MS, easing: Easing.linear, useNativeDriver: false,
         });
         holdRef.current.start(({ finished }) => {
-            if (finished) {
+            if (finished && phaseRef.current === 'holding') {
+                // Armed: user must release to trigger
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                onTrigger();
-                progress.setValue(0);
-                scale.setValue(1);
-                setHolding(false);
+                setPhase('armed');
             }
         });
-    }, [onTrigger]);
+    }, [progress, scale, setPhase]);
 
     const cancelHold = useCallback(() => {
         holdRef.current?.stop();
-        setHolding(false);
+        setPhase('idle');
         RNAnimated.parallel([
             RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 10 }),
             RNAnimated.timing(progress, { toValue: 0, duration: 240, useNativeDriver: false }),
         ]).start();
-    }, []);
+    }, [progress, scale, setPhase]);
+
+    const endHold = useCallback(() => {
+        if (phaseRef.current === 'armed') {
+            onTrigger();
+            progress.setValue(0);
+            scale.setValue(1);
+            setPhase('idle');
+            return;
+        }
+        cancelHold();
+    }, [cancelHold, onTrigger, progress, scale, setPhase]);
 
     const rightRot = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['0deg', '180deg', '180deg'], extrapolate: 'clamp' });
     const leftRot = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['0deg', '0deg', '180deg'], extrapolate: 'clamp' });
@@ -335,7 +354,7 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
             </RNAnimated.View>
 
             {/* SOS button — Electric Violet gradient with glow */}
-            <TouchableOpacity onPressIn={startHold} onPressOut={cancelHold} activeOpacity={1}>
+            <TouchableOpacity onPressIn={startHold} onPressOut={endHold} activeOpacity={1}>
                 <LinearGradient
                     colors={G.sosIdle.colors}
                     start={G.sosIdle.start}
@@ -343,7 +362,6 @@ const HoldSosButton = memo(function HoldSosButton({ onTrigger }: { onTrigger: ()
                     style={s.sosBtn}
                 >
                     <Text style={s.sosTxt}>SOS</Text>
-                    <Text style={s.sosSubTxt}>{holding ? 'Release' : 'Hold 2s'}</Text>
                 </LinearGradient>
             </TouchableOpacity>
         </RNAnimated.View>
@@ -364,35 +382,15 @@ const hs = StyleSheet.create({
 // LIVE SOS Button — Heartbeat scale sync (1.0 ↔ 1.05) via Reanimated
 // ─────────────────────────────────────────────────────────────────────────────
 const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => void }) {
-    const heartbeat = useSharedValue(1.0);
-
-    useEffect(() => {
-        heartbeat.value = withRepeat(
-            withSequence(
-                withTiming(1.05, { duration: 250, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 150, easing: REasing.in(REasing.quad) }),
-                withTiming(1.05, { duration: 250, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 800, easing: REasing.inOut(REasing.ease) }),
-            ),
-            -1,
-        );
-    }, []);
-
-    const animStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: heartbeat.value }],
-    }));
-
     return (
         <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
-            <Animated.View style={animStyle}>
-                <View style={[s.sosBtn, s.sosBtnEmg]}>
-                    <View style={s.sosBtnDangerFill}>
-                        <Ionicons name="location-sharp" size={24} color={T.onDanger} />
-                        <Text style={s.sosTxt}>LIVE</Text>
-                        <Text style={s.sosSubTxt}>TAP TO STOP</Text>
-                    </View>
+            <View style={[s.sosBtn, s.sosBtnEmg]}>
+                <View style={s.sosBtnDangerFill}>
+                    <Ionicons name="location-sharp" size={24} color={T.onDanger} />
+                    <Text style={s.sosTxt}>LIVE</Text>
+                    <Text style={s.sosSubTxt}>TAP TO STOP</Text>
                 </View>
-            </Animated.View>
+            </View>
         </TouchableOpacity>
     );
 });
@@ -545,9 +543,8 @@ export default function SOSScreen() {
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
-    const [showHint, setShowHint] = useState(true);
+    const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
 
     // Load profile picture on screen focus
@@ -603,12 +600,6 @@ export default function SOSScreen() {
         { scale: p2s, op: p2o },
     ];
 
-    // Auto-hide hint
-    useEffect(() => {
-        hintTimerRef.current = setTimeout(() => setShowHint(false), HINT_HIDE_MS);
-        return () => { if (hintTimerRef.current) clearTimeout(hintTimerRef.current); };
-    }, []);
-
     // Location
     useEffect(() => {
         (async () => {
@@ -646,8 +637,9 @@ export default function SOSScreen() {
     // SOS logic
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-    }, []);
+    }, [cancelDuration]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -663,6 +655,7 @@ export default function SOSScreen() {
 
     const cancelSOS = useCallback(() => {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
+        setHoldPhase('idle');
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
     }, []);
 
@@ -679,12 +672,19 @@ export default function SOSScreen() {
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
+    // SOS overlay placement: below map center (thumb-reachable) and clamped
+    const targetCenterY = height * 0.62;
+    const headerSafeTop = insets.top + 120;
+    const bottomSafe = navBottom + NAV_HEIGHT + 18;
+    const extraBelowWrap = 76; // status pill + spacing
+    const maxTop = Math.max(headerSafeTop, height - bottomSafe - (SOS_WRAP_SIZE + extraBelowWrap));
+    const sosTop = Math.min(Math.max(targetCenterY - SOS_WRAP_SIZE / 2, headerSafeTop), maxTop);
+
     return (
         <AtmosphericShell>
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            {isEmergencyLive && <EmergencyOverlay />}
-            {isEmergencyLive && <HeartbeatAura />}
+            {/* Live-state overlays removed (keep ring pulse only) */}
             <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
             {/* Map — Encrypted Professional Dark Tactical Style */}
@@ -776,7 +776,7 @@ export default function SOSScreen() {
             {/* ── SOS Section ─────────────────────────────────────────────── */}
             <View
                 pointerEvents="box-none"
-                style={[s.sosSection, { top: height / 2 - SOS_WRAP_SIZE / 2 - 20 }]}
+                style={[s.sosSection, { top: sosTop }]}
             >
                 <View style={s.sosWrap}>
                     {sosActive && cancelCountdown > 0 ? (
@@ -790,7 +790,7 @@ export default function SOSScreen() {
                     ) : isEmergencyLive ? (
                         <LiveSOSButton onPress={confirmStop} />
                     ) : (
-                        <HoldSosButton onTrigger={triggerSOS} />
+                        <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
                     )}
 
                     {sosActive && pulseAnims.map(({ scale, op }, i) => (
@@ -801,9 +801,16 @@ export default function SOSScreen() {
                     ))}
                 </View>
 
-                {!sosActive && showHint && (
+                {!sosActive && (
                     <View style={s.statusPill}>
-                        <Text style={s.pillTxt}>Hold 2s to send emergency alert</Text>
+                        <Text style={s.pillTxt}>
+                            {holdPhase === 'idle'
+                                ? 'Press and hold for 2 sec'
+                                : holdPhase === 'holding'
+                                    ? 'Holding...'
+                                    : 'Release'
+                            }
+                        </Text>
                     </View>
                 )}
                 {sosActive && (
@@ -972,7 +979,7 @@ const s = StyleSheet.create({
     sosBtnDangerFill: {
         ...StyleSheet.absoluteFillObject,
         borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.danger,
+        backgroundColor: '#D92D20',
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
@@ -998,7 +1005,7 @@ const s = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', gap: 6,
         backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
-        paddingHorizontal: 16, paddingVertical: 8, marginTop: 16,
+        paddingHorizontal: 16, paddingVertical: 8, marginTop: 22,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },

@@ -12,24 +12,19 @@
  * • NO navbar — list occupies full screen height
  */
 
-import React, { useState, useCallback, useEffect, memo } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
     Platform, StatusBar, RefreshControl, TextInput,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-    useSharedValue, useAnimatedStyle,
-    withRepeat, withSequence, withTiming,
-    Easing as REasing,
-} from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
-import type { Incident } from '../../../../src/types/chat';
+import { DEFAULT_GROUP_CHAT_NAME, type Incident } from '../../../../src/types/chat';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
@@ -46,16 +41,16 @@ const D = {
     subtitle: '#C4C1D4',   // High-contrast silver-lavender — emergency readable
     timestamp: '#A09CB2',   // Brighter muted — passes squint test
 
-    neonViolet: '#A855F7',
+    neonViolet: T.violet,
     vividRed: '#FF453A',
 
     // SOS avatar — tinted, not solid
-    sosAvatarBg: 'rgba(255,69,58,0.15)',
-    sosAvatarBorder: '#FF453A',
+    sosAvatarBg: T.violetDim,
+    sosAvatarBorder: T.violet,
 
     cardRadius: 28,
     cardPadding: 20,
-    avatarSize: 48,
+    avatarSize: 44,
 } as const;
 
 // ─── Mock Data ──────────────────────────────────────────────────────────────
@@ -123,54 +118,17 @@ function isSOS(type: string): boolean {
     return type.toLowerCase().includes('sos');
 }
 
-// ─── PulseDot — Reanimated heartbeat, color-matched to incident type ───────
-const PulseDot = memo(function PulseDot({ color }: { color: string }) {
-    const scale = useSharedValue(1);
-
-    useEffect(() => {
-        scale.value = withRepeat(
-            withSequence(
-                withTiming(1.5, { duration: 220, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 140, easing: REasing.in(REasing.quad) }),
-                withTiming(1.4, { duration: 200, easing: REasing.out(REasing.quad) }),
-                withTiming(1.0, { duration: 750, easing: REasing.inOut(REasing.ease) }),
-            ),
-            -1,
-        );
-    }, []);
-
-    const animStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-        opacity: 0.6 + (scale.value - 1.0) * 0.8,
-    }));
-
-    return (
-        <Animated.View
-            style={[st.pulseDot, { backgroundColor: color }, animStyle]}
-        />
-    );
-});
-
 // ─── GroupAvatar — Chromatic monochromatism ─────────────────────────────────
 // SOS: Red-tinted circle + 1px red border + white icon
 // Non-SOS LIVE: Violet gradient + white icon
 // Resolved: Dark muted fill + muted icon
 const GroupAvatar = memo(function GroupAvatar({ isLive, isEmergency }: { isLive: boolean; isEmergency: boolean }) {
-    if (isEmergency && isLive) {
-        // SOS — Tinted red glass, NOT solid red
-        return (
-            <View style={st.avatarSOS}>
-                <Feather name="users" size={20} color={T.onPrimary} />
-            </View>
-        );
-    }
-
     return (
         <View style={[st.avatar, isLive ? st.avatarLive : st.avatarResolved]}>
             <Feather
                 name="users"
-                size={20}
-                color={isLive ? T.onPrimary : D.subtitle}
+                size={18}
+                color={isLive ? T.violet : D.subtitle}
             />
         </View>
     );
@@ -180,9 +138,8 @@ const GroupAvatar = memo(function GroupAvatar({ isLive, isEmergency }: { isLive:
 function IncidentModule({ incident, onPress }: { incident: Incident; onPress: () => void }) {
     const isLive = incident.status === 'LIVE';
     const isEmergency = isSOS(incident.type);
-
-    // Chromatic monochromatism: SOS pulses Red, others pulse Violet
-    const pulseColor = isEmergency ? D.vividRed : D.neonViolet;
+    const lastMessage = incident.latestMessage?.content ?? 'No messages yet';
+    const lastSender = incident.latestMessage?.sender.name ?? 'Unknown';
 
     return (
         <TouchableOpacity
@@ -201,22 +158,14 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
 
             {/* CENTER — Title + muted case ID */}
             <View style={[st.cardCenter, { alignSelf: 'center' }]}>
-                <Text
-                    style={st.cardTitle}
-                    numberOfLines={1}
-                >
-                    {incident.type}
+                <Text style={st.cardTitle} numberOfLines={1}>
+                    Incident {caseId(incident.id)}
                 </Text>
-                <View style={st.cardMetaRow}>
-                    {isLive ? (
-                        <PulseDot color={pulseColor} />
-                    ) : (
-                        <View style={st.resolvedDot} />
-                    )}
-                    <Text style={st.cardMeta} numberOfLines={1}>
-                        <Text style={{ fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontWeight: 'bold' }}>{caseId(incident.id)}</Text>  ·  {incident.latestMessage?.sender.name ?? 'Unknown'}
-                    </Text>
-                </View>
+                <Text style={st.cardMeta} numberOfLines={1}>
+                    <Text style={st.cardMetaName}>{lastSender}</Text>
+                    {': '}
+                    {lastMessage}
+                </Text>
             </View>
 
             {/* RIGHT — Timestamp + badge */}
@@ -224,17 +173,14 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
                 <Text style={st.cardTime}>
                     {timeAgo(incident.createdAt)}
                 </Text>
-                {isLive && incident.participantCount > 0 && (
-                    <View style={[
-                        st.badge,
-                        isEmergency && { backgroundColor: D.vividRed },
-                    ]}>
-                        <Text style={st.badgeText}>{incident.participantCount}</Text>
-                    </View>
-                )}
-                {!isLive && (
-                    <Feather name="chevron-right" size={16} color={D.timestamp} />
-                )}
+                <View style={[
+                    st.statusPill,
+                    isLive ? st.statusPillActive : st.statusPillResolved,
+                ]}>
+                    <Text style={isLive ? st.statusTextActive : st.statusTextResolved}>
+                        {isLive ? 'ACTIVE' : 'RESOLVED'}
+                    </Text>
+                </View>
             </View>
         </TouchableOpacity>
     );
@@ -317,13 +263,6 @@ export default function ChatHome() {
                             </TouchableOpacity>
                         )}
                     </View>
-                    <TouchableOpacity
-                        style={st.filterBlock}
-                        activeOpacity={0.7}
-                        onPress={() => Haptics.selectionAsync()}
-                    >
-                        <Feather name="sliders" size={16} color={D.subtitle} />
-                    </TouchableOpacity>
                 </View>
 
                 {/* ── Incident List — full height, no navbar ── */}
@@ -400,7 +339,6 @@ const st = StyleSheet.create({
         alignItems: 'center',
         marginHorizontal: 20,
         paddingBottom: S.s4,
-        gap: S.s3,
     },
     searchBlock: {
         flex: 1,
@@ -421,16 +359,6 @@ const st = StyleSheet.create({
         paddingVertical: 0,
         lineHeight: 20,
     },
-    filterBlock: {
-        width: 50,
-        height: 50,
-        borderRadius: D.cardRadius,  // 28 — matches cards
-        backgroundColor: D.cardFill,
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
 
     // ── List — full height, no bottom inset for navbar ──────────────────
     list: {
@@ -442,70 +370,39 @@ const st = StyleSheet.create({
     card: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        borderRadius: D.cardRadius,
-        padding: D.cardPadding,
-        gap: S.s4,
+        borderRadius: R.lg,
+        paddingHorizontal: S.s4,
+        paddingVertical: 16,
+        gap: 14,
         backgroundColor: T.surfaceBulky,
-        borderColor: T.lineMid,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
     },
     cardLive: {
-        backgroundColor: D.cardFillActive,
-        borderColor: T.lineMid,
-        ...Platform.select({
-            ios: {
-                shadowColor: D.neonViolet,
-                shadowOpacity: 0.10,
-                shadowRadius: 20,
-                shadowOffset: { width: 0, height: 6 },
-            },
-            android: { elevation: 4 },
-        }),
+        borderLeftWidth: 4,
+        borderLeftColor: T.violet,
     },
-    cardSOS: {
-        borderColor: D.hairline,  // Same crisp glass edge as all cards
-        ...Platform.select({
-            ios: {
-                shadowColor: D.vividRed,
-                shadowOpacity: 0.12,
-                shadowRadius: 20,
-                shadowOffset: { width: 0, height: 4 },
-            },
-            android: { elevation: 4 },
-        }),
-    },
-    cardResolved: {
-        backgroundColor: T.surfaceBulky, // Updated
-        borderColor: T.lineMid, // Updated
-        opacity: 0.70,  // Interactive, not disabled — lower priority but clearly tappable
-    },
+    cardSOS: {},
+    cardResolved: {},
 
     // ── Avatars ──────────────────────────────────────────────────────────
-    // SOS — Red-tinted glass with 1px red border (Chromatic Monochromatism)
-    avatarSOS: {
-        width: D.avatarSize,
-        height: D.avatarSize,
-        borderRadius: D.avatarSize / 2,
-        backgroundColor: D.sosAvatarBg,
-        borderWidth: 1,
-        borderColor: D.sosAvatarBorder,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-    },
-    // Non-SOS LIVE — solid violet fill
+    // Rounded-rectangle group icon container
     avatar: {
         width: D.avatarSize,
         height: D.avatarSize,
-        borderRadius: D.avatarSize / 2,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
+        borderWidth: 1,
     },
     avatarLive: {
-        backgroundColor: D.neonViolet,
+        backgroundColor: T.violetDim,
+        borderColor: T.violet,
     },
     avatarResolved: {
-        backgroundColor: '#2A2145',
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderColor: 'rgba(255,255,255,0.08)',
     },
 
     // ── Center column ───────────────────────────────────────────────────
@@ -516,11 +413,6 @@ const st = StyleSheet.create({
         color: D.title,
         letterSpacing: 0.1,
     },
-    cardMetaRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: S.s2,
-    },
     cardMeta: {
         flex: 1,
         fontSize: 12,
@@ -528,20 +420,9 @@ const st = StyleSheet.create({
         color: D.subtitle,
         lineHeight: 16,
     },
-
-    // ── Dots ─────────────────────────────────────────────────────────────
-    pulseDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        flexShrink: 0,
-    },
-    resolvedDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: D.timestamp,
-        flexShrink: 0,
+    cardMetaName: {
+        fontWeight: '700',
+        color: D.title,
     },
 
     // ── Right column ────────────────────────────────────────────────────
@@ -556,19 +437,34 @@ const st = StyleSheet.create({
         fontWeight: '500',
         color: D.timestamp,
     },
-    badge: {
-        minWidth: 24,
-        height: 24,
-        borderRadius: 12,
-        backgroundColor: D.neonViolet,
+    statusPill: {
+        minWidth: 70,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: S.s2,
+        borderWidth: 1,
     },
-    badgeText: {
-        fontSize: 12,
+    statusPillActive: {
+        backgroundColor: T.violetDim,
+        borderColor: `${T.violet}55`,
+    },
+    statusPillResolved: {
+        backgroundColor: 'rgba(16,185,129,0.12)',
+        borderColor: 'rgba(16,185,129,0.35)',
+    },
+    statusTextActive: {
+        fontSize: 11,
         fontWeight: '700',
-        color: T.onPrimary,
+        color: T.violet,
+        letterSpacing: 0.6,
+    },
+    statusTextResolved: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.success,
+        letterSpacing: 0.6,
     },
 
     // ── Empty ────────────────────────────────────────────────────────────

@@ -10,10 +10,11 @@ import {
     StatusBar,
     Image,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import { VERIFICATION_KEY } from './volunteer-verification';
 import { T, R, S } from '../../../../src/constants/theme';
@@ -131,18 +132,26 @@ export default function ProfileMenuScreen() {
 
     return (
         <AtmosphericShell>
-        <View style={s.root}>
-            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+            <View style={[s.root, { paddingTop: insets.top }]}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-            <View style={[s.header, { paddingTop: insets.top + 8 }]}>
-                <TouchableOpacity style={s.backBtn} onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="arrow-back" size={20} color={T.ink2} />
-                </TouchableOpacity>
-                <Text style={s.headerTitle}>Profile</Text>
-                <View style={s.headerSpacer} />
-            </View>
+                {/* ── Header — match Medical header style ── */}
+                <View style={s.header}>
+                    <TouchableOpacity
+                        style={s.headerBtn}
+                        onPress={() => { void Haptics.selectionAsync(); router.back(); }}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        activeOpacity={0.7}
+                    >
+                        <Feather name="chevron-left" size={22} color={T.ink} />
+                    </TouchableOpacity>
+                    <View style={s.headerTitleArea}>
+                        <Text style={s.headerTitle}>Profile</Text>
+                    </View>
+                    <View style={s.headerRightSpacer} />
+                </View>
 
-            <ScrollView contentContainerStyle={s.listWrap} showsVerticalScrollIndicator={false}>
+                <ScrollView contentContainerStyle={s.listWrap} showsVerticalScrollIndicator={false}>
 
                 {/* ── Top Profile Info Card ─────────────────────────────────── */}
                 {/* Tap card body → Profile Information; tap edit icon → Edit Profile */}
@@ -223,8 +232,8 @@ export default function ProfileMenuScreen() {
                         <Text style={[s.rowLabel, s.rowLabelDanger]}>Logout</Text>
                     </TouchableOpacity>
                 </View>
-            </ScrollView>
-        </View>
+                </ScrollView>
+            </View>
         </AtmosphericShell>
     );
 }
@@ -236,31 +245,30 @@ const s = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 14,
-        paddingBottom: 12,
+        paddingHorizontal: S.s4,
+        paddingTop: S.s3,
+        paddingBottom: S.s4,
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.1)',
-        backgroundColor: T.surfaceGlass,
     },
-    backBtn: {
+    headerBtn: {
         width: 36,
         height: 36,
         borderRadius: R.hBtn,
-        alignItems: 'center',
-        justifyContent: 'center',
+        backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
-        backgroundColor: T.surfaceBulky,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
+    headerTitleArea: { flex: 1, alignItems: 'center' },
     headerTitle: {
-        flex: 1,
-        textAlign: 'center',
-        fontSize: 16,
+        fontSize: 20,
         fontWeight: '700',
         color: T.ink,
-        marginHorizontal: 10,
+        letterSpacing: -0.3,
     },
-    headerSpacer: {
+    headerRightSpacer: {
         width: 36,
         height: 36,
     },

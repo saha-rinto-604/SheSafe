@@ -388,12 +388,12 @@ export default function Signup() {
 
 const st = StyleSheet.create({
   card: {
-    backgroundColor: T.surface,
+    backgroundColor: T.surfaceBulkyGlass,
     borderRadius: R.xl,
     padding: S.s5,
     paddingBottom: S.s3,
     borderWidth: 1,
-    borderColor: 'rgba(138,56,246,0.15)',
+    borderColor: T.hairlineMicro,
     ...Platform.select({
       ios: { shadowColor: '#8A38F6', shadowOpacity: 0.25, shadowRadius: 28, shadowOffset: { width: 0, height: 8 } },
       android: { elevation: 12 },
@@ -443,7 +443,7 @@ const st = StyleSheet.create({
     borderRadius: R.md,
     borderWidth: 1,
     borderColor: T.lineBold,
-    backgroundColor: T.surfaceCard,
+    backgroundColor: T.surfaceBulkyGlass,
   },
   roleTileActive: {
     borderColor: T.violet,
@@ -460,7 +460,7 @@ const st = StyleSheet.create({
 
   infoBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: S.s2,
-    backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    backgroundColor: T.surfaceBulkyGlass, paddingHorizontal: S.s3, paddingVertical: S.s2,
     borderRadius: R.sm, marginBottom: S.s3,
     borderWidth: 1, borderColor: T.lineMid,
   },
@@ -468,7 +468,7 @@ const st = StyleSheet.create({
 
   roleBadge: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: T.surfaceCard, paddingHorizontal: S.s3, paddingVertical: S.s2,
+    backgroundColor: T.surfaceBulkyGlass, paddingHorizontal: S.s3, paddingVertical: S.s2,
     borderRadius: R.sm, borderWidth: 1, borderColor: T.lineMid, marginBottom: S.s3,
   },
   roleBadgeTxt: { fontSize: 13, fontWeight: '700', color: T.ink2 },

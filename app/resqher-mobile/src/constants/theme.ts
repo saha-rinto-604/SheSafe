@@ -85,6 +85,9 @@ export const T = {
   // Every UI bar, card, and floating element uses this exact material.
   // Color + border are IDENTICAL across all screens for visual consistency.
   surfaceBulky: '#1E153A',               // Solid tinted fill — carved from background
+  // Translucent variant used by floating bars (e.g., PremiumBar in SOS/Explore)
+  // Matches T.surfaceBulky at ~65% opacity.
+  surfaceBulkyGlass: 'rgba(30,21,58,0.65)',
   surfaceBulkyActive: '#251B48',         // Elevated for LIVE/active state
   hairlineMicro: 'rgba(255, 255, 255, 0.1)', // Standardized to 0.1
 
