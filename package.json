@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "postinstall": "cd backend && npm install && cd ../app/resqher-mobile && npm install",
-    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start\""
+    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start --android\"",
+    "dev:ios": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start --ios\"",
+    "dev:tunnel": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start --tunnel\""
   },
   "repository": {
     "type": "git",
