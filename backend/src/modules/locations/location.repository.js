@@ -14,6 +14,31 @@ async function saveLocation({ userId, latitude, longitude, address }) {
   return rows[0];
 }
 
+async function getUserLocations(userId) {
+  return query(
+    `SELECT id, user_id, latitude, longitude, address, recorded_at
+     FROM user_locations
+     WHERE user_id = ?
+     ORDER BY recorded_at ASC`,
+    [userId]
+  );
+}
+
+async function updateLocation(id, { latitude, longitude, address }) {
+  await query(
+    `UPDATE user_locations
+     SET latitude = ?, longitude = ?, address = ?, recorded_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [latitude, longitude, address || null, id]
+  );
+  const rows = await query(
+    `SELECT id, user_id, latitude, longitude, address, recorded_at
+     FROM user_locations WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  return rows[0];
+}
+
 async function getLastLocation(userId) {
   const rows = await query(
     `SELECT id, user_id, latitude, longitude, address, recorded_at
@@ -26,4 +51,4 @@ async function getLastLocation(userId) {
   return rows[0] || null;
 }
 
-module.exports = { saveLocation, getLastLocation };
+module.exports = { saveLocation, getUserLocations, updateLocation, getLastLocation };
