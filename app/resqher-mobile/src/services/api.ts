@@ -127,4 +127,33 @@ export const authService = {
   },
 };
 
+export type SavedLocation = {
+  id: number;
+  user_id: number;
+  latitude: number;
+  longitude: number;
+  address: string | null;
+  recorded_at: string;
+};
+
+export const locationService = {
+  async saveLocation(latitude: number, longitude: number, address?: string) {
+    try {
+      const res = await api.post('/api/locations', { latitude, longitude, address });
+      return res.data?.location as SavedLocation;
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
+  async getLastLocation() {
+    try {
+      const res = await api.get('/api/locations/last');
+      return res.data?.location as SavedLocation | null;
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+};
+
 export default api;
