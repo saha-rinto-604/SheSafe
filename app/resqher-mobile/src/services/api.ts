@@ -2,7 +2,17 @@ import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
 const ACCESS_KEY = 'resqher_access_token';
-const REFRESH_KEY = 'resqher_refresh_token';
+
+export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
+
+export type AuthUser = {
+  id: number;
+  role: UserRole;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  entryTime: string;
+};
 
 function normalizeBaseUrl(url: string) {
   // allow user to pass either with or without trailing slash
@@ -10,7 +20,7 @@ function normalizeBaseUrl(url: string) {
 }
 
 // Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
-const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
+const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:4000');
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -18,22 +28,16 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-export async function setTokens(access: string, refresh: string) {
+export async function setTokens(access: string) {
   await SecureStore.setItemAsync(ACCESS_KEY, access);
-  await SecureStore.setItemAsync(REFRESH_KEY, refresh);
 }
 
 export async function clearTokens() {
   await SecureStore.deleteItemAsync(ACCESS_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_KEY);
 }
 
 export async function getAccessToken() {
   return SecureStore.getItemAsync(ACCESS_KEY);
-}
-
-export async function getRefreshToken() {
-  return SecureStore.getItemAsync(REFRESH_KEY);
 }
 
 // Attach token automatically
@@ -50,6 +54,10 @@ function friendlyError(err: unknown) {
   if (isAxiosError(err)) {
     const ax = err as AxiosError<any>;
     const data = ax.response?.data;
+
+    if (!ax.response) {
+      return new Error(`Cannot reach backend at ${BASE_URL}. Make sure backend server is running.`);
+    }
 
     if (data && typeof data === 'object') {
       // DRF returns errors in an object { fieldName: ["error string"] }
@@ -77,33 +85,38 @@ function friendlyError(err: unknown) {
 }
 
 export const authService = {
-  async register(
-    phone: string,
-    password: string,
-    firstName: string,
-    lastName: string,
-    role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
-  ) {
+  async register(payload: {
+    phoneNumber: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    role: UserRole;
+  }) {
     try {
-      await api.post('/api/v1/auth/register/', {
-        phone,
-        password,
-        first_name: firstName,
-        last_name: lastName,
-        role
+      const res = await api.post('/api/auth/signup', {
+        phoneNumber: payload.phoneNumber,
+        password: payload.password,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        role: payload.role,
       });
+
+      const { accessToken, user } = res.data || {};
+      if (!accessToken || !user) throw new Error('Invalid signup response');
+      await setTokens(accessToken);
+      return user as AuthUser;
     } catch (e) {
       throw friendlyError(e);
     }
   },
 
-  async login(username: string, password: string) {
+  async login(phoneNumber: string, password: string) {
     try {
-      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
-      const { access, refresh } = res.data || {};
-      if (!access || !refresh) throw new Error('Invalid token response');
-      await setTokens(access, refresh);
-      return access as string;
+      const res = await api.post('/api/auth/login', { phoneNumber, password });
+      const { accessToken, user } = res.data || {};
+      if (!accessToken || !user) throw new Error('Invalid login response');
+      await setTokens(accessToken);
+      return user as AuthUser;
     } catch (e) {
       throw friendlyError(e);
     }

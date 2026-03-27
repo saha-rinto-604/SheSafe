@@ -21,7 +21,7 @@ type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth(); // This will still be used to set the local token
+  const { signIn } = useAuth();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -31,19 +31,18 @@ export default function Login() {
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
     try {
-      /* Real auth: await signIn(data.phone.trim(), data.password); */
-      // Mock success
-      console.log("Mock Login Started...");
+      const user = await signIn(data.phone.trim(), data.password);
+      const rolePaths: Record<'standard_user' | 'volunteer' | 'law_enforcement', string> = {
+        standard_user: '/(tabs)/users/standard-user/sos_screen',
+        volunteer: '/(tabs)/users/volunteer/dashboard',
+        law_enforcement: '/(tabs)/users/police/dashboard',
+      };
+
+      router.replace(rolePaths[user.role] as any);
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
       setSubmitting(false);
-
-      // We manually tell the app to navigate to the Map screen after a short delay
-      setTimeout(() => {
-        router.replace('/(tabs)/users/sos_screen' as any);
-        console.log("Mock Login Successful: Redirecting to Map");
-      }, 1000);
     }
   };
 

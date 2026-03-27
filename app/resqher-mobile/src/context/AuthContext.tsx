@@ -1,15 +1,16 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { authService, getAccessToken } from '../services/api';
+import { authService, getAccessToken, AuthUser, UserRole } from '../services/api';
 
 type AuthState = {
   isLoading: boolean;
   isSignedIn: boolean;
   accessToken: string | null;
+  user: AuthUser | null;
 };
 
 type AuthContextValue = AuthState & {
-  signIn: (username: string, password: string) => Promise<void>;
-  signUp: (phone: string, password: string, firstName: string, lastName: string, role?: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN') => Promise<void>;
+  signIn: (phoneNumber: string, password: string) => Promise<AuthUser>;
+  signUp: (phoneNumber: string, password: string, firstName: string, lastName: string, role?: UserRole) => Promise<AuthUser>;
   signOut: () => Promise<void>;
 };
 
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   const isSignedIn = !!accessToken;
 
@@ -37,21 +39,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isSignedIn,
       accessToken,
-      signIn: async (username: string, password: string) => {
+      user,
+      signIn: async (phoneNumber: string, password: string) => {
         setIsLoading(true);
         try {
-          const token = await authService.login(username, password);
+          const signedInUser = await authService.login(phoneNumber, password);
+          const token = await getAccessToken();
           setAccessToken(token);
+          setUser(signedInUser);
+          return signedInUser;
         } finally {
           setIsLoading(false);
         }
       },
-      signUp: async (phone: string, password: string, firstName: string, lastName: string, role = 'USER') => {
+      signUp: async (phoneNumber: string, password: string, firstName: string, lastName: string, role: UserRole = 'standard_user') => {
         setIsLoading(true);
         try {
-          await authService.register(phone, password, firstName, lastName, role);
-          const token = await authService.login(phone, password);
+          const signedUpUser = await authService.register({
+            phoneNumber,
+            password,
+            firstName,
+            lastName,
+            role,
+          });
+          const token = await getAccessToken();
           setAccessToken(token);
+          setUser(signedUpUser);
+          return signedUpUser;
         } finally {
           setIsLoading(false);
         }
@@ -61,12 +75,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           await authService.logout();
           setAccessToken(null);
+          setUser(null);
         } finally {
           setIsLoading(false);
         }
       },
     }),
-    [isLoading, isSignedIn, accessToken]
+    [isLoading, isSignedIn, accessToken, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

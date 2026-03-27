@@ -13,21 +13,22 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
+import { UserRole } from '../../src/services/api';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-type Role = 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN';
+type Role = UserRole;
 type FormData = {
   firstName: string; lastName: string;
   phone: string; password: string; confirmPassword: string;
 };
 
 const ROLE_OPTIONS = [
-  { value: 'USER' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
-  { value: 'VOLUNTEER' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
-  { value: 'POLICE' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
+  { value: 'standard_user' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
+  { value: 'volunteer' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
+  { value: 'law_enforcement' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
 ];
 
 // ─── Minimalist Role Tile ─────────────────────────────────────────────────────
@@ -166,16 +167,26 @@ export default function Signup() {
   const onSubmit = async (data: FormData) => {
     if (!role) { Alert.alert('Required', 'Please select an account type.'); goStep(1); return; }
     setSubmitting(true);
-    setTimeout(() => {
-      setSubmitting(false);
+    try {
+      const user = await signUp(
+        data.phone.trim(),
+        data.password,
+        data.firstName,
+        data.lastName,
+        role
+      );
+
       const rolePaths: Record<Role, string> = {
-        'USER': '/(tabs)/users/standard-user/sos_screen',
-        'VOLUNTEER': '/(tabs)/users/volunteer/dashboard',
-        'POLICE': '/(tabs)/users/police/dashboard',
-        'ADMIN': '/(tabs)/users/admin/dashboard',
+        standard_user: '/(tabs)/users/standard-user/sos_screen',
+        volunteer: '/(tabs)/users/volunteer/dashboard',
+        law_enforcement: '/(tabs)/users/police/dashboard',
       };
-      router.replace(rolePaths[role] as any);
-    }, 1500);
+      router.replace(rolePaths[user.role] as any);
+    } catch (e: any) {
+      Alert.alert('Signup failed', e?.message ?? 'Unable to create account.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   // Reusable inline field
@@ -253,7 +264,7 @@ export default function Signup() {
                 ))}
               </View>
 
-              {!!role && (role === 'VOLUNTEER' || role === 'POLICE') && (
+              {!!role && (role === 'volunteer' || role === 'law_enforcement') && (
                 <View style={st.infoBox}>
                   <Feather name="info" size={14} color={T.violet} />
                   <Text style={st.infoTxt}>Requires admin verification before full access.</Text>

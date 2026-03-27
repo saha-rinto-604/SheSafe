@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+app/resqher-mobile/node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+app/resqher-mobile/.env
+
+# React Native / Expo
+.expo/
+dist/
+build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
