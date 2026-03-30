@@ -16,6 +16,7 @@ import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform,
     Modal, ScrollView, ViewStyle, Image,
+    TextInput, Keyboard, FlatList,
 } from 'react-native';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
@@ -36,6 +37,27 @@ import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
 import AtmosphericShell from '../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../src/services/profile';
+import { locationService } from '../../../src/services/api';
+
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+const AUTOCOMPLETE_DEBOUNCE_MS = 260;
+
+type PlacePrediction = {
+    id: string;
+    name: string;
+    address: string;
+    placeId: string;
+};
+
+const buildAutocompleteUrl = (input: string, sessionToken: string, bias: { latitude: number; longitude: number }) => {
+    const encodedInput = encodeURIComponent(input);
+    const location = `${bias.latitude},${bias.longitude}`;
+    return `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodedInput}&key=${GOOGLE_MAPS_API_KEY}&location=${location}&radius=50000&components=country:bd&language=en&sessiontoken=${sessionToken}`;
+};
+
+const buildPlaceDetailsUrl = (placeId: string, sessionToken: string) =>
+    `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,geometry/location&key=${GOOGLE_MAPS_API_KEY}&language=en&sessiontoken=${sessionToken}`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -544,6 +566,16 @@ export default function SOSScreen() {
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
+
+    // ── Search state ──
+    const [searchActive, setSearchActive] = useState(false);
+    const [searchText, setSearchText] = useState('');
+    const [searchSuggestions, setSearchSuggestions] = useState<PlacePrediction[]>([]);
+    const [searchMarker, setSearchMarker] = useState<{ latitude: number; longitude: number; name: string } | null>(null);
+    const searchInputRef = useRef<TextInput>(null);
+    const searchSessionTokenRef = useRef<string | null>(null);
+    const searchRequestIdRef = useRef(0);
+    const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
 
@@ -600,7 +632,7 @@ export default function SOSScreen() {
         { scale: p2s, op: p2o },
     ];
 
-    // Location
+    // Location + real-time GPS tracking
     useEffect(() => {
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -617,7 +649,26 @@ export default function SOSScreen() {
                     setAddress([g.street, g.district ?? g.subregion, g.city ?? g.region].filter(Boolean).join(', ') || 'Current location');
                 }
             } catch { setAddress('Current location'); }
+
+            // Real-time GPS tracking
+            locationSubRef.current = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: 3000,
+                    distanceInterval: 5,
+                },
+                async (loc) => {
+                    setUserLoc({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                    });
+                }
+            );
         })();
+
+        return () => {
+            if (locationSubRef.current) locationSubRef.current.remove();
+        };
     }, []);
 
     // Pulse rings loop
@@ -666,9 +717,90 @@ export default function SOSScreen() {
         ]);
     }, [cancelSOS]);
 
-    const goToMyLoc = () => {
-        if (userLoc) mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600);
+    // Save location to DB + recenter map
+    const goToMyLoc = async () => {
+        if (!userLoc) return;
+        mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600);
+        setSearchMarker(null);
+        try {
+            const geo = await Location.reverseGeocodeAsync(userLoc);
+            let addr = 'Current location';
+            if (geo.length > 0) {
+                const g = geo[0];
+                addr = [g.street, g.district ?? g.subregion, g.city ?? g.region].filter(Boolean).join(', ') || addr;
+            }
+            await locationService.saveLocation(userLoc.latitude, userLoc.longitude, addr);
+        } catch (e: any) {
+            console.warn('Location save failed:', e?.message);
+        }
     };
+
+    // ── Search Autocomplete Logic ──
+    const createSessionToken = () => Math.random().toString(36).slice(2);
+
+    const fetchAutocomplete = useCallback(async (input: string, sessionToken: string, bias: { latitude: number; longitude: number }) => {
+        if (!GOOGLE_MAPS_API_KEY) return [];
+        try {
+            const res = await fetch(buildAutocompleteUrl(input, sessionToken, bias));
+            const data = await res.json();
+            if (data?.status !== 'OK') return [];
+            return (data.predictions ?? []).map((p: any) => ({
+                id: p.place_id,
+                placeId: p.place_id,
+                name: p.structured_formatting?.main_text ?? p.description,
+                address: p.structured_formatting?.secondary_text ?? p.description,
+            }));
+        } catch {
+            return [];
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!searchActive) return;
+        const query = searchText.trim();
+        if (query.length < 1) {
+            setSearchSuggestions([]);
+            searchSessionTokenRef.current = null;
+            return;
+        }
+        const requestId = ++searchRequestIdRef.current;
+        if (!searchSessionTokenRef.current) searchSessionTokenRef.current = createSessionToken();
+        const token = searchSessionTokenRef.current;
+        const bias = userLoc ?? DEFAULT_REGION;
+        const handle = setTimeout(async () => {
+            const results = await fetchAutocomplete(query, token, bias);
+            if (searchRequestIdRef.current === requestId) setSearchSuggestions(results);
+        }, AUTOCOMPLETE_DEBOUNCE_MS);
+        return () => clearTimeout(handle);
+    }, [searchText, searchActive, fetchAutocomplete, userLoc]);
+
+    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
+        if (!GOOGLE_MAPS_API_KEY) return;
+        Keyboard.dismiss();
+        setSearchActive(false);
+        setSearchText(prediction.name);
+        setSearchSuggestions([]);
+        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
+        searchSessionTokenRef.current = null;
+        try {
+            const res = await fetch(buildPlaceDetailsUrl(prediction.placeId, sessionToken));
+            const data = await res.json();
+            if (data?.status !== 'OK') return;
+            const loc = data.result?.geometry?.location;
+            if (!loc) return;
+            const coord = { latitude: loc.lat, longitude: loc.lng };
+            setSearchMarker({ ...coord, name: data.result?.name ?? prediction.name });
+            mapRef.current?.animateToRegion({ ...coord, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 700);
+        } catch { /* ignore */ }
+    }, []);
+
+    const clearSearch = useCallback(() => {
+        setSearchText('');
+        setSearchSuggestions([]);
+        setSearchMarker(null);
+        setSearchActive(false);
+        Keyboard.dismiss();
+    }, []);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
@@ -709,9 +841,61 @@ export default function SOSScreen() {
                         <LiveBeacon />
                     </Marker>
                 )}
+                {searchMarker && (
+                    <Marker coordinate={searchMarker} tracksViewChanges={false}>
+                        <View style={{ alignItems: 'center' }}>
+                            <Feather name="map-pin" size={28} color={T.violet} />
+                            <Text style={{ fontSize: 10, color: T.ink, fontWeight: '700', marginTop: 2 }}>{searchMarker.name}</Text>
+                        </View>
+                    </Marker>
+                )}
             </MapView>
 
             {locationStatus === 'idle' && <PulseRadar />}
+
+            {/* ── Search Bar ───────────────────────────────────────────── */}
+            <View style={[srch.wrap, { top: insets.top + 74 }]}>
+                <View style={srch.bar}>
+                    <Feather name="search" size={16} color={searchActive ? T.violet : T.ink4} style={{ marginRight: 8 }} />
+                    <TextInput
+                        ref={searchInputRef}
+                        placeholder="Search location…"
+                        placeholderTextColor={T.ink5}
+                        value={searchText}
+                        onChangeText={setSearchText}
+                        onFocus={() => setSearchActive(true)}
+                        style={srch.input}
+                        returnKeyType="search"
+                    />
+                    {searchText.length > 0 && (
+                        <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                            <Feather name="x" size={16} color={T.ink4} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+                {searchActive && searchSuggestions.length > 0 && (
+                    <View style={srch.dropdown}>
+                        <FlatList
+                            data={searchSuggestions}
+                            keyExtractor={(item) => item.id}
+                            keyboardShouldPersistTaps="handled"
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    style={srch.row}
+                                    onPress={() => handlePlaceSelect(item)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Feather name="map-pin" size={14} color={T.violet} style={{ marginRight: 10 }} />
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={srch.name} numberOfLines={1}>{item.name}</Text>
+                                        <Text style={srch.addr} numberOfLines={1}>{item.address}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            )}
+                        />
+                    </View>
+                )}
+            </View>
 
             {/* ── Header ─────────────────────────────────────────────────── */}
             <PremiumBar
@@ -1095,4 +1279,44 @@ const s = StyleSheet.create({
     drawerLabel: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
     drawerLabelDanger: { color: T.danger },
     drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
+});
+
+// ── Search Bar Styles ──
+const srch = StyleSheet.create({
+    wrap: {
+        position: 'absolute', left: 14, right: 14, zIndex: 350,
+    },
+    bar: {
+        flexDirection: 'row', alignItems: 'center',
+        height: 46, borderRadius: 23,
+        backgroundColor: 'rgba(30,21,58,0.85)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+        paddingHorizontal: 16,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 6 },
+        }),
+    },
+    input: {
+        flex: 1, height: '100%',
+        color: T.ink, fontSize: 14,
+    },
+    dropdown: {
+        marginTop: 6, borderRadius: 16,
+        backgroundColor: 'rgba(30,21,58,0.95)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        maxHeight: 240, overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    row: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 16, paddingVertical: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: 'rgba(255,255,255,0.06)',
+    },
+    name: { fontSize: 14, fontWeight: '700', color: T.ink, marginBottom: 1 },
+    addr: { fontSize: 11, color: T.ink4 },
 });
