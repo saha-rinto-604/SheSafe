@@ -145,4 +145,4 @@ if (Wait-ForBackend -HealthUrl $healthUrl) {
 
 Write-Host "Starting Expo (QR in this terminal)..." -ForegroundColor Yellow
 Set-Location $mobileDir
-npx expo start --tunnel --clear
+npx expo start --clear
