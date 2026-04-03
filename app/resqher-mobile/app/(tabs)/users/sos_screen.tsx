@@ -37,7 +37,7 @@ import { T, R, S } from '../../../src/constants/theme';
 import { G } from '../../../src/constants/gradients';
 import AtmosphericShell from '../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../src/services/profile';
-import { locationService } from '../../../src/services/api';
+import { locationService, incidentService } from '../../../src/services/api';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -703,6 +703,15 @@ export default function SOSScreen() {
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sosActive, cancelCountdown === cancelDuration]);
+
+    // Report incident to backend when emergency goes LIVE (countdown hits 0)
+    useEffect(() => {
+        if (sosActive && cancelCountdown === 0 && userLoc) {
+            incidentService.reportIncident(userLoc.latitude, userLoc.longitude, address || undefined)
+                .then(() => console.log('[SOS] Incident reported to backend'))
+                .catch((err) => console.warn('[SOS] Failed to report incident:', err?.message));
+        }
+    }, [sosActive, cancelCountdown, userLoc, address]);
 
     const cancelSOS = useCallback(() => {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');

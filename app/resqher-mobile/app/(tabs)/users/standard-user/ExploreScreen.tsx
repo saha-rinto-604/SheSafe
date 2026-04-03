@@ -24,6 +24,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { incidentService, type IncidentZone } from '../../../../src/services/api';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -37,10 +38,30 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// ── Red Zones (No-Go Areas) ─────────────────────────────────────────────────
-const RED_ZONES: { id: string; name: string; latitude: number; longitude: number; radius: number }[] = [
-    { id: 'rz1', name: 'Pragati Sarani Area', latitude: 23.813546, longitude: 90.421659, radius: 100 },
-    { id: 'rz2', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 100 }
+// ── Incident Zones ──────────────────────────────────────────────────────────
+// Default zones are always visible. API-fetched SOS zones merge on top.
+// 1-4 incidents → Yellow zone, 5+ incidents → Red zone.
+const ZONE_REFRESH_INTERVAL_MS = 30_000; // refresh every 30 seconds
+
+const DEFAULT_INCIDENT_ZONES: IncidentZone[] = [
+    { id: 'z1', name: 'Syednagar', latitude: 23.7981, longitude: 90.4495, radius: 200, incidentCount: 8, incidents: [] },
+    { id: 'z2', name: 'Pragati Sarani', latitude: 23.8135, longitude: 90.4216, radius: 200, incidentCount: 3, incidents: [] },
+    { id: 'z3', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 200, incidentCount: 7, incidents: [] },
+    { id: 'z4', name: 'Mirpur 10 Circle', latitude: 23.8069, longitude: 90.3687, radius: 200, incidentCount: 2, incidents: [] },
+    { id: 'z5', name: 'Dhanmondi Lake', latitude: 23.7465, longitude: 90.3760, radius: 200, incidentCount: 6, incidents: [] },
+    { id: 'z6', name: 'Gulshan 2', latitude: 23.7931, longitude: 90.4148, radius: 200, incidentCount: 1, incidents: [] },
+    { id: 'z7', name: 'Banani', latitude: 23.7940, longitude: 90.4043, radius: 200, incidentCount: 9, incidents: [] },
+    { id: 'z8', name: 'Mohakhali', latitude: 23.7788, longitude: 90.3989, radius: 200, incidentCount: 4, incidents: [] },
+    { id: 'z9', name: 'Farmgate', latitude: 23.7561, longitude: 90.3872, radius: 200, incidentCount: 5, incidents: [] },
+    { id: 'z10', name: 'Mohammadpur', latitude: 23.7658, longitude: 90.3584, radius: 200, incidentCount: 10, incidents: [] },
+    { id: 'z11', name: 'Shyamoli', latitude: 23.7718, longitude: 90.3631, radius: 200, incidentCount: 2, incidents: [] },
+    { id: 'z12', name: 'Banasree', latitude: 23.7634, longitude: 90.4323, radius: 200, incidentCount: 6, incidents: [] },
+    { id: 'z13', name: 'Motijheel', latitude: 23.7286, longitude: 90.4173, radius: 200, incidentCount: 3, incidents: [] },
+    { id: 'z14', name: 'Uttara Sector 11', latitude: 23.8732, longitude: 90.3952, radius: 200, incidentCount: 11, incidents: [] },
+    { id: 'z15', name: 'Khilgaon', latitude: 23.7378, longitude: 90.4251, radius: 200, incidentCount: 4, incidents: [] },
+    { id: 'z16', name: 'Lalbagh', latitude: 23.7176, longitude: 90.3855, radius: 200, incidentCount: 7, incidents: [] },
+    { id: 'z17', name: 'Agargaon', latitude: 23.7784, longitude: 90.3756, radius: 200, incidentCount: 1, incidents: [] },
+    { id: 'z18', name: 'Rampura', latitude: 23.7612, longitude: 90.4208, radius: 200, incidentCount: 3, incidents: [] },
 ];
 
 const EARTH_RADIUS_M = 6_371_000;
@@ -61,12 +82,14 @@ function haversineDistance(a: LatLng, b: LatLng): number {
     return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
 }
 
-/** Returns an object indicating safety and the name of the avoided zone if applicable. */
-function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
+/** Returns an object indicating safety and the name of the avoided zone if applicable.
+ *  Both Yellow (1-4 incidents) and Red (5+ incidents) zones trigger route avoidance. */
+function checkRouteSafety(coordinates: LatLng[], zones: IncidentZone[]): { isSafe: boolean; blockedZoneName?: string } {
     for (let i = 0; i < coordinates.length; i++) {
         const point = coordinates[i];
-        for (const zone of RED_ZONES) {
-            if (haversineDistance(point, zone) <= zone.radius) {
+        for (const zone of zones) {
+            // Both Yellow and Red zones block navigation
+            if (zone.incidentCount >= 1 && haversineDistance(point, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
         }
@@ -388,6 +411,7 @@ export default function ExploreScreen() {
     const startRequestIdRef = useRef(0);
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
+    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>(DEFAULT_INCIDENT_ZONES);
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -397,6 +421,39 @@ export default function ExploreScreen() {
             getUserProfile().then(setProfile);
         }, []),
     );
+
+    // Fetch incident zones from backend on mount + every 30 seconds
+    // API zones merge with defaults: if an API zone is within 500m of a default,
+    // the default's count is increased; otherwise the API zone is added as new.
+    useEffect(() => {
+        const mergeZones = (apiZones: IncidentZone[]): IncidentZone[] => {
+            const merged = DEFAULT_INCIDENT_ZONES.map(d => ({ ...d }));
+            for (const apiZone of apiZones) {
+                let found = false;
+                for (const m of merged) {
+                    if (haversineDistance(apiZone, m) <= 500) {
+                        m.incidentCount += apiZone.incidentCount;
+                        m.incidents = [...(m.incidents || []), ...(apiZone.incidents || [])];
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    merged.push({ ...apiZone });
+                }
+            }
+            return merged;
+        };
+
+        const fetchZones = () => {
+            incidentService.getIncidentZones()
+                .then((apiZones) => setIncidentZones(mergeZones(apiZones)))
+                .catch((err) => console.warn('[Explore] Failed to fetch zones:', err?.message));
+        };
+        fetchZones(); // initial fetch
+        const interval = setInterval(fetchZones, ZONE_REFRESH_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, []);
 
     // Animation values
     const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
@@ -640,7 +697,7 @@ export default function ExploreScreen() {
                 let chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
                 // 2️⃣  Red-Zone safety check with "Memory"
-                let safetyCheck = checkRouteSafety(chosenCoords);
+                let safetyCheck = checkRouteSafety(chosenCoords, incidentZones);
                 let foundSafe = safetyCheck.isSafe;
                 const primaryAvoidedArea = safetyCheck.blockedZoneName;
 
@@ -648,7 +705,7 @@ export default function ExploreScreen() {
                     for (let i = 1; i < data.routes.length; i++) {
                         const route = data.routes[i];
                         const altCoords = decodePolyline(route.overview_polyline?.points ?? '');
-                        const altCheck = checkRouteSafety(altCoords);
+                        const altCheck = checkRouteSafety(altCoords, incidentZones);
                         if (altCheck.isSafe) {
                             chosenRoute = route;
                             chosenCoords = altCoords;
@@ -708,7 +765,7 @@ export default function ExploreScreen() {
         if (directionsMode) {
             buildRoute();
         }
-    }, [directionsMode, endLocation, startLocation, travelMode]);
+    }, [directionsMode, endLocation, startLocation, travelMode, incidentZones]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
@@ -776,6 +833,65 @@ export default function ExploreScreen() {
         placeSheetOpacity.setValue(0);
         placeSheetDragY.setValue(0);
         setPlaceIncidents(DHAKA_INCIDENTS[place.id] ?? []);
+        RNAnimated.parallel([
+            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]).start();
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const openZoneSheet = useCallback((zone: IncidentZone) => {
+        const mockPlace: PlaceSuggestion = {
+            id: zone.id,
+            name: `${zone.name} Area`,
+            address: `${zone.incidentCount >= 5 ? 'High Risk' : 'Caution'} Zone - ${zone.incidentCount} reported incidents.`,
+            latitude: zone.latitude,
+            longitude: zone.longitude
+        };
+        setSelectedPlace(mockPlace);
+        setPlaceSheetOpen(true);
+        placeSheetY.setValue(height);
+        placeSheetOpacity.setValue(0);
+        placeSheetDragY.setValue(0);
+        
+        let incidents: PlaceIncident[] = [];
+        
+        // Add real incidents if available
+        if (zone.incidents && zone.incidents.length > 0) {
+            incidents = zone.incidents.map(i => {
+                let timeStr = 'A while ago';
+                if (i.time) {
+                    const diffMs = Date.now() - new Date(i.time).getTime();
+                    const diffMins = Math.floor(diffMs / 60000);
+                    if (diffMins < 60) timeStr = `${diffMins || 1} min ago`;
+                    else if (diffMins < 1440) timeStr = `${Math.floor(diffMins/60)} hr ago`;
+                    else timeStr = `${Math.floor(diffMins/1440)} days ago`;
+                }
+
+                return {
+                    id: String(i.id || `rnd-${zone.id}-${Math.random()}`),
+                    reporter: i.reporter || 'Anonymous User',
+                    time: timeStr,
+                    status: i.status || 'ACTIVE'
+                };
+            });
+        }
+
+        // Pad with mock data for default zones that don't have real incidents yet
+        const missing = Math.max(0, zone.incidentCount - incidents.length);
+        const statuses: ('ACTIVE' | 'RESOLVED' | 'CANCELLED')[] = ['ACTIVE', 'ACTIVE', 'RESOLVED', 'CANCELLED'];
+        const names = ['Ayesha K.', 'Fatima R.', 'Nadia A.', 'Anonymous User', 'Sadia M.', 'Officer Rahim', 'Rafiq Islam', 'Nabil Hasan'];
+        
+        for (let i = 0; i < Math.min(missing, 15 - incidents.length); i++) {
+            incidents.push({
+                id: `mock-${zone.id}-${i}`,
+                reporter: names[Math.floor(Math.random() * names.length)],
+                time: `${Math.floor(Math.random() * 59) + 1} min ago`,
+                status: statuses[Math.floor(Math.random() * statuses.length)]
+            });
+        }
+        
+        setPlaceIncidents(incidents.sort((a,b) => a.status === 'ACTIVE' ? -1 : 1));
+
         RNAnimated.parallel([
             RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
             RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
@@ -878,6 +994,60 @@ export default function ExploreScreen() {
         })
     ).current;
 
+    // ── Map Long Press → Auto-route from current location ──────────────────────
+    const handleMapLongPress = useCallback(async (event: any) => {
+        if (directionsMode || searchActive || placeSheetOpen || showLocationCard) return;
+        const { latitude, longitude } = event.nativeEvent.coordinate;
+        if (!userLoc) return;
+
+        // Reverse-geocode the tapped location
+        let placeName = 'Selected Location';
+        let placeAddress = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        try {
+            const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
+            if (geo.length > 0) {
+                const g = geo[0];
+                placeName = g.name || g.street || placeName;
+                placeAddress = [g.street, g.district ?? g.subregion, g.city ?? g.region]
+                    .filter(Boolean).join(', ') || placeAddress;
+            }
+        } catch { /* use defaults */ }
+
+        // Create destination place
+        const destination: PlaceSuggestion = {
+            id: `tap-${Date.now()}`,
+            name: placeName,
+            address: placeAddress,
+            latitude,
+            longitude,
+        };
+
+        // Create start from current location
+        const start: PlaceSuggestion = {
+            id: 'current-location',
+            name: 'Your location',
+            address: address || 'Current location',
+            latitude: userLoc.latitude,
+            longitude: userLoc.longitude,
+        };
+
+        // Set selected place marker
+        setSelectedPlace(destination);
+
+        // Enter directions mode with auto-start
+        setStartLocation(start);
+        setEndLocation(destination);
+        setRouteCoords([]);
+        setDirectionsMode(true);
+        RNAnimated.timing(directionsProgress, {
+            toValue: 1,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+    }, [directionsMode, searchActive, placeSheetOpen, showLocationCard, userLoc, address, directionsProgress]);
+
+
     return (
         <AtmosphericShell>
             <View style={s.root}>
@@ -895,17 +1065,39 @@ export default function ExploreScreen() {
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
+                    onLongPress={handleMapLongPress}
                 >
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radius}
-                            fillColor="rgba(255, 60, 60, 0.15)"
-                            strokeColor="rgba(255, 60, 60, 0.5)"
-                            strokeWidth={1}
-                        />
-                    ))}
+                    {incidentZones.map(zone => {
+                        const isRed = zone.incidentCount >= 5;
+                        const isYellow = zone.incidentCount >= 1 && zone.incidentCount < 5;
+                        if (!isRed && !isYellow) return null;
+                        
+                        const fillColor = isRed ? "rgba(255, 60, 60, 0.15)" : "rgba(255, 180, 0, 0.15)";
+                        const strokeColor = isRed ? "rgba(255, 60, 60, 0.5)" : "rgba(255, 180, 0, 0.5)";
+                        const badgeBg = isRed ? T.danger : '#F5A623';
+
+                        return (
+                            <React.Fragment key={zone.id}>
+                                <Circle
+                                    center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    radius={zone.radius}
+                                    fillColor={fillColor}
+                                    strokeColor={strokeColor}
+                                    strokeWidth={1}
+                                />
+                                <Marker
+                                    coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    tracksViewChanges={false}
+                                    onPress={() => openZoneSheet(zone)}
+                                >
+                                    <View style={{ backgroundColor: badgeBg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: '#fff' }}>
+                                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{zone.incidentCount}</Text>
+                                    </View>
+                                </Marker>
+                            </React.Fragment>
+                        );
+                    })}
 
                     {selectedPlace && (
                         <Marker
