@@ -43,26 +43,7 @@ const DEFAULT_REGION = {
 // 1-4 incidents → Yellow zone, 5+ incidents → Red zone.
 const ZONE_REFRESH_INTERVAL_MS = 30_000; // refresh every 30 seconds
 
-const DEFAULT_INCIDENT_ZONES: IncidentZone[] = [
-    { id: 'z1', name: 'Syednagar', latitude: 23.7981, longitude: 90.4495, radius: 200, incidentCount: 8, incidents: [] },
-    { id: 'z2', name: 'Pragati Sarani', latitude: 23.8135, longitude: 90.4216, radius: 200, incidentCount: 3, incidents: [] },
-    { id: 'z3', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 200, incidentCount: 7, incidents: [] },
-    { id: 'z4', name: 'Mirpur 10 Circle', latitude: 23.8069, longitude: 90.3687, radius: 200, incidentCount: 2, incidents: [] },
-    { id: 'z5', name: 'Dhanmondi Lake', latitude: 23.7465, longitude: 90.3760, radius: 200, incidentCount: 6, incidents: [] },
-    { id: 'z6', name: 'Gulshan 2', latitude: 23.7931, longitude: 90.4148, radius: 200, incidentCount: 1, incidents: [] },
-    { id: 'z7', name: 'Banani', latitude: 23.7940, longitude: 90.4043, radius: 200, incidentCount: 9, incidents: [] },
-    { id: 'z8', name: 'Mohakhali', latitude: 23.7788, longitude: 90.3989, radius: 200, incidentCount: 4, incidents: [] },
-    { id: 'z9', name: 'Farmgate', latitude: 23.7561, longitude: 90.3872, radius: 200, incidentCount: 5, incidents: [] },
-    { id: 'z10', name: 'Mohammadpur', latitude: 23.7658, longitude: 90.3584, radius: 200, incidentCount: 10, incidents: [] },
-    { id: 'z11', name: 'Shyamoli', latitude: 23.7718, longitude: 90.3631, radius: 200, incidentCount: 2, incidents: [] },
-    { id: 'z12', name: 'Banasree', latitude: 23.7634, longitude: 90.4323, radius: 200, incidentCount: 6, incidents: [] },
-    { id: 'z13', name: 'Motijheel', latitude: 23.7286, longitude: 90.4173, radius: 200, incidentCount: 3, incidents: [] },
-    { id: 'z14', name: 'Uttara Sector 11', latitude: 23.8732, longitude: 90.3952, radius: 200, incidentCount: 11, incidents: [] },
-    { id: 'z15', name: 'Khilgaon', latitude: 23.7378, longitude: 90.4251, radius: 200, incidentCount: 4, incidents: [] },
-    { id: 'z16', name: 'Lalbagh', latitude: 23.7176, longitude: 90.3855, radius: 200, incidentCount: 7, incidents: [] },
-    { id: 'z17', name: 'Agargaon', latitude: 23.7784, longitude: 90.3756, radius: 200, incidentCount: 1, incidents: [] },
-    { id: 'z18', name: 'Rampura', latitude: 23.7612, longitude: 90.4208, radius: 200, incidentCount: 3, incidents: [] },
-];
+
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -411,7 +392,7 @@ export default function ExploreScreen() {
     const startRequestIdRef = useRef(0);
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
-    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>(DEFAULT_INCIDENT_ZONES);
+    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -423,31 +404,10 @@ export default function ExploreScreen() {
     );
 
     // Fetch incident zones from backend on mount + every 30 seconds
-    // API zones merge with defaults: if an API zone is within 500m of a default,
-    // the default's count is increased; otherwise the API zone is added as new.
     useEffect(() => {
-        const mergeZones = (apiZones: IncidentZone[]): IncidentZone[] => {
-            const merged = DEFAULT_INCIDENT_ZONES.map(d => ({ ...d }));
-            for (const apiZone of apiZones) {
-                let found = false;
-                for (const m of merged) {
-                    if (haversineDistance(apiZone, m) <= 500) {
-                        m.incidentCount += apiZone.incidentCount;
-                        m.incidents = [...(m.incidents || []), ...(apiZone.incidents || [])];
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    merged.push({ ...apiZone });
-                }
-            }
-            return merged;
-        };
-
         const fetchZones = () => {
             incidentService.getIncidentZones()
-                .then((apiZones) => setIncidentZones(mergeZones(apiZones)))
+                .then((apiZones) => setIncidentZones(apiZones))
                 .catch((err) => console.warn('[Explore] Failed to fetch zones:', err?.message));
         };
         fetchZones(); // initial fetch
@@ -767,41 +727,15 @@ export default function ExploreScreen() {
         }
     }, [directionsMode, endLocation, startLocation, travelMode, incidentZones]);
 
-    const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
-        setSelectedPlace(place);
-        setSearchText(place.name);
-        setRecentPlaces(prev => [
-            place,
-            ...prev.filter(item => item.id !== place.id),
-        ].slice(0, 6));
-        deactivateSearch(false);
-        if (showLocationCard) closeLocationCard();
-        const latitudeDelta = 0.012;
-        const longitudeDelta = 0.012;
-        const offsetLat = latitudeDelta * 0.25;
-        mapRef.current?.animateToRegion({
-            latitude: place.latitude - offsetLat,
-            longitude: place.longitude,
-            latitudeDelta,
-            longitudeDelta,
-        }, 700);
-        openPlaceSheet(place);
-    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
 
-    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
-        if (!GOOGLE_MAPS_API_KEY) {
-            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
-            return;
-        }
-        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
-        const place = await resolvePlaceDetails(prediction, sessionToken);
-        searchSessionTokenRef.current = null;
-        if (!place) {
-            Alert.alert('Place not found', 'Unable to fetch location details.');
-            return;
-        }
-        handleResolvedPlaceSelect(place);
-    }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
+
+    const closePlaceSheet = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => setPlaceSheetOpen(false));
+        placeSheetDragY.setValue(0);
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
     // Show location card
     const openLocationCard = useCallback(() => {
@@ -898,13 +832,43 @@ export default function ExploreScreen() {
         ]).start();
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
-    const closePlaceSheet = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-        ]).start(() => setPlaceSheetOpen(false));
-        placeSheetDragY.setValue(0);
-    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+
+    const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
+        setSelectedPlace(place);
+        setSearchText(place.name);
+        setRecentPlaces(prev => [
+            place,
+            ...prev.filter(item => item.id !== place.id),
+        ].slice(0, 6));
+        deactivateSearch(false);
+        if (showLocationCard) closeLocationCard();
+        const latitudeDelta = 0.012;
+        const longitudeDelta = 0.012;
+        const offsetLat = latitudeDelta * 0.25;
+        mapRef.current?.animateToRegion({
+            latitude: place.latitude - offsetLat,
+            longitude: place.longitude,
+            latitudeDelta,
+            longitudeDelta,
+        }, 700);
+        openPlaceSheet(place);
+    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
+
+    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
+            return;
+        }
+        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
+        const place = await resolvePlaceDetails(prediction, sessionToken);
+        searchSessionTokenRef.current = null;
+        if (!place) {
+            Alert.alert('Place not found', 'Unable to fetch location details.');
+            return;
+        }
+        handleResolvedPlaceSelect(place);
+    }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
         setDirectionsMode(true);
@@ -1079,14 +1043,14 @@ export default function ExploreScreen() {
                         return (
                             <React.Fragment key={zone.id}>
                                 <Circle
-                                    center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    center={{ latitude: Number(zone.latitude), longitude: Number(zone.longitude) }}
                                     radius={zone.radius}
                                     fillColor={fillColor}
                                     strokeColor={strokeColor}
                                     strokeWidth={1}
                                 />
                                 <Marker
-                                    coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    coordinate={{ latitude: Number(zone.latitude), longitude: Number(zone.longitude) }}
                                     anchor={{ x: 0.5, y: 0.5 }}
                                     tracksViewChanges={false}
                                     onPress={() => openZoneSheet(zone)}
@@ -1102,7 +1066,7 @@ export default function ExploreScreen() {
                     {selectedPlace && (
                         <Marker
                             key={selectedPlace.id}
-                            coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
+                            coordinate={{ latitude: Number(selectedPlace.latitude), longitude: Number(selectedPlace.longitude) }}
                             anchor={{ x: 0.5, y: 1 }}
                             calloutAnchor={{ x: 0.5, y: 0 }}
                             tracksViewChanges={true}
@@ -1336,15 +1300,15 @@ export default function ExploreScreen() {
                     </PremiumBar>
                 )}
 
-                {/* ── Search Overlay — suggestions + recent (map hidden) ───────── */}
+                {/* ── Search Overlay — suggestions + recent dropdown ───────── */}
                 {searchActive && (
-                    <View style={s.searchOverlay}>
+                    <View style={[s.searchOverlay, { top: insets.top + 64 }]} pointerEvents="box-none">
                         <Pressable
-                            style={s.searchOverlayBackdrop}
+                            style={StyleSheet.absoluteFillObject}
                             onPress={() => deactivateSearch(false)}
                             pointerEvents="box-only"
                         />
-                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 76 }]}>
+                        <View style={s.searchOverlayContent}>
                             {query.length === 0 ? (
                                 <>
                                     <Text style={s.searchSectionTitle}>Recent searches</Text>
@@ -1408,7 +1372,7 @@ export default function ExploreScreen() {
                 {startSearchActive && (
                     <View style={s.searchOverlay}>
                         <Pressable
-                            style={s.searchOverlayBackdrop}
+                            style={StyleSheet.absoluteFillObject}
                             onPress={() => setStartSearchActive(false)}
                             pointerEvents="box-only"
                         />
@@ -1921,16 +1885,23 @@ const s = StyleSheet.create({
     // ── Search Overlay ───────────────────────────────────────────────────
     searchOverlay: {
         position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: '#0B0716',
+        top: 0, left: 14, right: 14, bottom: 0,
         zIndex: 240,
     },
-    searchOverlayBackdrop: {
-        ...StyleSheet.absoluteFillObject,
-    },
     searchOverlayContent: {
+        backgroundColor: 'rgba(30,21,58,0.95)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
         paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 8,
         gap: 12,
+        maxHeight: Dimensions.get('window').height * 0.5,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 10 },
+        }),
     },
     searchSectionTitle: {
         fontSize: 11,
@@ -1982,7 +1953,7 @@ const s = StyleSheet.create({
     },
 
     // ── Map controls ───────────────────────────────────────────────────────
-    mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
+    mapControls: { position: 'absolute', right: 20, top: '48%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: 12,
         backgroundColor: T.surfaceBulky,

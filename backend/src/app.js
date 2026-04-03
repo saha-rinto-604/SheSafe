@@ -3,6 +3,7 @@ const cors = require('cors');
 const authRoutes = require('./modules/auth/auth.routes');
 const locationRoutes = require('./modules/locations/location.routes');
 const incidentRoutes = require('./modules/incidents/incident.routes');
+const medicalRoutes = require('./modules/medical/medical.routes');
 
 const app = express();
 
@@ -16,6 +17,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/incidents', incidentRoutes);
+app.use('/api/medical', medicalRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

@@ -200,4 +200,15 @@ export const incidentService = {
   },
 };
 
+export const medicalService = {
+  async getProviders() {
+    try {
+      const res = await api.get('/api/medical/providers');
+      return (res.data?.providers ?? []);
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  }
+};
+
 export default api;
