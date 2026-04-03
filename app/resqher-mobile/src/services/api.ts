@@ -156,4 +156,59 @@ export const locationService = {
   },
 };
 
+// ── Incident Service ──────────────────────────────────────────────────────────
+
+export type Incident = {
+  id: number;
+  user_id: number;
+  latitude: number;
+  longitude: number;
+  address: string | null;
+  status: 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
+  created_at: string;
+};
+
+export type IncidentZone = {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+  incidentCount: number;
+  incidents?: any[];
+};
+
+export const incidentService = {
+  /** Report a new incident at the given coordinates (called when SOS is triggered). */
+  async reportIncident(latitude: number, longitude: number, address?: string) {
+    try {
+      const res = await api.post('/api/incidents', { latitude, longitude, address });
+      return res.data?.incident as Incident;
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
+  /** Fetch all aggregated incident zones (clustered by 500m proximity). */
+  async getIncidentZones() {
+    try {
+      const res = await api.get('/api/incidents/zones');
+      return (res.data?.zones ?? []) as IncidentZone[];
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+};
+
+export const medicalService = {
+  async getProviders() {
+    try {
+      const res = await api.get('/api/medical/providers');
+      return (res.data?.providers ?? []);
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  }
+};
+
 export default api;

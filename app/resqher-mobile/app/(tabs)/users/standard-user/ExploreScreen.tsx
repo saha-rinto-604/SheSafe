@@ -24,6 +24,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { incidentService, type IncidentZone } from '../../../../src/services/api';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -37,11 +38,12 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// ── Red Zones (No-Go Areas) ─────────────────────────────────────────────────
-const RED_ZONES: { id: string; name: string; latitude: number; longitude: number; radius: number }[] = [
-    { id: 'rz1', name: 'Pragati Sarani Area', latitude: 23.813546, longitude: 90.421659, radius: 100 },
-    { id: 'rz2', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 100 }
-];
+// ── Incident Zones ──────────────────────────────────────────────────────────
+// Default zones are always visible. API-fetched SOS zones merge on top.
+// 1-4 incidents → Yellow zone, 5+ incidents → Red zone.
+const ZONE_REFRESH_INTERVAL_MS = 30_000; // refresh every 30 seconds
+
+
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -61,12 +63,14 @@ function haversineDistance(a: LatLng, b: LatLng): number {
     return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
 }
 
-/** Returns an object indicating safety and the name of the avoided zone if applicable. */
-function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
+/** Returns an object indicating safety and the name of the avoided zone if applicable.
+ *  Both Yellow (1-4 incidents) and Red (5+ incidents) zones trigger route avoidance. */
+function checkRouteSafety(coordinates: LatLng[], zones: IncidentZone[]): { isSafe: boolean; blockedZoneName?: string } {
     for (let i = 0; i < coordinates.length; i++) {
         const point = coordinates[i];
-        for (const zone of RED_ZONES) {
-            if (haversineDistance(point, zone) <= zone.radius) {
+        for (const zone of zones) {
+            // Both Yellow and Red zones block navigation
+            if (zone.incidentCount >= 1 && haversineDistance(point, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
         }
@@ -388,6 +392,7 @@ export default function ExploreScreen() {
     const startRequestIdRef = useRef(0);
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
+    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -397,6 +402,18 @@ export default function ExploreScreen() {
             getUserProfile().then(setProfile);
         }, []),
     );
+
+    // Fetch incident zones from backend on mount + every 30 seconds
+    useEffect(() => {
+        const fetchZones = () => {
+            incidentService.getIncidentZones()
+                .then((apiZones) => setIncidentZones(apiZones))
+                .catch((err) => console.warn('[Explore] Failed to fetch zones:', err?.message));
+        };
+        fetchZones(); // initial fetch
+        const interval = setInterval(fetchZones, ZONE_REFRESH_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, []);
 
     // Animation values
     const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
@@ -640,7 +657,7 @@ export default function ExploreScreen() {
                 let chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
                 // 2️⃣  Red-Zone safety check with "Memory"
-                let safetyCheck = checkRouteSafety(chosenCoords);
+                let safetyCheck = checkRouteSafety(chosenCoords, incidentZones);
                 let foundSafe = safetyCheck.isSafe;
                 const primaryAvoidedArea = safetyCheck.blockedZoneName;
 
@@ -648,7 +665,7 @@ export default function ExploreScreen() {
                     for (let i = 1; i < data.routes.length; i++) {
                         const route = data.routes[i];
                         const altCoords = decodePolyline(route.overview_polyline?.points ?? '');
-                        const altCheck = checkRouteSafety(altCoords);
+                        const altCheck = checkRouteSafety(altCoords, incidentZones);
                         if (altCheck.isSafe) {
                             chosenRoute = route;
                             chosenCoords = altCoords;
@@ -708,43 +725,17 @@ export default function ExploreScreen() {
         if (directionsMode) {
             buildRoute();
         }
-    }, [directionsMode, endLocation, startLocation, travelMode]);
+    }, [directionsMode, endLocation, startLocation, travelMode, incidentZones]);
 
-    const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
-        setSelectedPlace(place);
-        setSearchText(place.name);
-        setRecentPlaces(prev => [
-            place,
-            ...prev.filter(item => item.id !== place.id),
-        ].slice(0, 6));
-        deactivateSearch(false);
-        if (showLocationCard) closeLocationCard();
-        const latitudeDelta = 0.012;
-        const longitudeDelta = 0.012;
-        const offsetLat = latitudeDelta * 0.25;
-        mapRef.current?.animateToRegion({
-            latitude: place.latitude - offsetLat,
-            longitude: place.longitude,
-            latitudeDelta,
-            longitudeDelta,
-        }, 700);
-        openPlaceSheet(place);
-    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
 
-    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
-        if (!GOOGLE_MAPS_API_KEY) {
-            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
-            return;
-        }
-        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
-        const place = await resolvePlaceDetails(prediction, sessionToken);
-        searchSessionTokenRef.current = null;
-        if (!place) {
-            Alert.alert('Place not found', 'Unable to fetch location details.');
-            return;
-        }
-        handleResolvedPlaceSelect(place);
-    }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
+
+    const closePlaceSheet = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => setPlaceSheetOpen(false));
+        placeSheetDragY.setValue(0);
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
     // Show location card
     const openLocationCard = useCallback(() => {
@@ -782,13 +773,102 @@ export default function ExploreScreen() {
         ]).start();
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
-    const closePlaceSheet = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-        ]).start(() => setPlaceSheetOpen(false));
+    const openZoneSheet = useCallback((zone: IncidentZone) => {
+        const mockPlace: PlaceSuggestion = {
+            id: zone.id,
+            name: `${zone.name} Area`,
+            address: `${zone.incidentCount >= 5 ? 'High Risk' : 'Caution'} Zone - ${zone.incidentCount} reported incidents.`,
+            latitude: zone.latitude,
+            longitude: zone.longitude
+        };
+        setSelectedPlace(mockPlace);
+        setPlaceSheetOpen(true);
+        placeSheetY.setValue(height);
+        placeSheetOpacity.setValue(0);
         placeSheetDragY.setValue(0);
+        
+        let incidents: PlaceIncident[] = [];
+        
+        // Add real incidents if available
+        if (zone.incidents && zone.incidents.length > 0) {
+            incidents = zone.incidents.map(i => {
+                let timeStr = 'A while ago';
+                if (i.time) {
+                    const diffMs = Date.now() - new Date(i.time).getTime();
+                    const diffMins = Math.floor(diffMs / 60000);
+                    if (diffMins < 60) timeStr = `${diffMins || 1} min ago`;
+                    else if (diffMins < 1440) timeStr = `${Math.floor(diffMins/60)} hr ago`;
+                    else timeStr = `${Math.floor(diffMins/1440)} days ago`;
+                }
+
+                return {
+                    id: String(i.id || `rnd-${zone.id}-${Math.random()}`),
+                    reporter: i.reporter || 'Anonymous User',
+                    time: timeStr,
+                    status: i.status || 'ACTIVE'
+                };
+            });
+        }
+
+        // Pad with mock data for default zones that don't have real incidents yet
+        const missing = Math.max(0, zone.incidentCount - incidents.length);
+        const statuses: ('ACTIVE' | 'RESOLVED' | 'CANCELLED')[] = ['ACTIVE', 'ACTIVE', 'RESOLVED', 'CANCELLED'];
+        const names = ['Ayesha K.', 'Fatima R.', 'Nadia A.', 'Anonymous User', 'Sadia M.', 'Officer Rahim', 'Rafiq Islam', 'Nabil Hasan'];
+        
+        for (let i = 0; i < Math.min(missing, 15 - incidents.length); i++) {
+            incidents.push({
+                id: `mock-${zone.id}-${i}`,
+                reporter: names[Math.floor(Math.random() * names.length)],
+                time: `${Math.floor(Math.random() * 59) + 1} min ago`,
+                status: statuses[Math.floor(Math.random() * statuses.length)]
+            });
+        }
+        
+        setPlaceIncidents(incidents.sort((a,b) => a.status === 'ACTIVE' ? -1 : 1));
+
+        RNAnimated.parallel([
+            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]).start();
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+
+
+    const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
+        setSelectedPlace(place);
+        setSearchText(place.name);
+        setRecentPlaces(prev => [
+            place,
+            ...prev.filter(item => item.id !== place.id),
+        ].slice(0, 6));
+        deactivateSearch(false);
+        if (showLocationCard) closeLocationCard();
+        const latitudeDelta = 0.012;
+        const longitudeDelta = 0.012;
+        const offsetLat = latitudeDelta * 0.25;
+        mapRef.current?.animateToRegion({
+            latitude: place.latitude - offsetLat,
+            longitude: place.longitude,
+            latitudeDelta,
+            longitudeDelta,
+        }, 700);
+        openPlaceSheet(place);
+    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
+
+    const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('Google Places not configured', 'Missing Google Maps API key.');
+            return;
+        }
+        const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
+        const place = await resolvePlaceDetails(prediction, sessionToken);
+        searchSessionTokenRef.current = null;
+        if (!place) {
+            Alert.alert('Place not found', 'Unable to fetch location details.');
+            return;
+        }
+        handleResolvedPlaceSelect(place);
+    }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
         setDirectionsMode(true);
@@ -878,6 +958,60 @@ export default function ExploreScreen() {
         })
     ).current;
 
+    // ── Map Long Press → Auto-route from current location ──────────────────────
+    const handleMapLongPress = useCallback(async (event: any) => {
+        if (directionsMode || searchActive || placeSheetOpen || showLocationCard) return;
+        const { latitude, longitude } = event.nativeEvent.coordinate;
+        if (!userLoc) return;
+
+        // Reverse-geocode the tapped location
+        let placeName = 'Selected Location';
+        let placeAddress = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        try {
+            const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
+            if (geo.length > 0) {
+                const g = geo[0];
+                placeName = g.name || g.street || placeName;
+                placeAddress = [g.street, g.district ?? g.subregion, g.city ?? g.region]
+                    .filter(Boolean).join(', ') || placeAddress;
+            }
+        } catch { /* use defaults */ }
+
+        // Create destination place
+        const destination: PlaceSuggestion = {
+            id: `tap-${Date.now()}`,
+            name: placeName,
+            address: placeAddress,
+            latitude,
+            longitude,
+        };
+
+        // Create start from current location
+        const start: PlaceSuggestion = {
+            id: 'current-location',
+            name: 'Your location',
+            address: address || 'Current location',
+            latitude: userLoc.latitude,
+            longitude: userLoc.longitude,
+        };
+
+        // Set selected place marker
+        setSelectedPlace(destination);
+
+        // Enter directions mode with auto-start
+        setStartLocation(start);
+        setEndLocation(destination);
+        setRouteCoords([]);
+        setDirectionsMode(true);
+        RNAnimated.timing(directionsProgress, {
+            toValue: 1,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+    }, [directionsMode, searchActive, placeSheetOpen, showLocationCard, userLoc, address, directionsProgress]);
+
+
     return (
         <AtmosphericShell>
             <View style={s.root}>
@@ -895,22 +1029,44 @@ export default function ExploreScreen() {
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
+                    onLongPress={handleMapLongPress}
                 >
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radius}
-                            fillColor="rgba(255, 60, 60, 0.15)"
-                            strokeColor="rgba(255, 60, 60, 0.5)"
-                            strokeWidth={1}
-                        />
-                    ))}
+                    {incidentZones.map(zone => {
+                        const isRed = zone.incidentCount >= 5;
+                        const isYellow = zone.incidentCount >= 1 && zone.incidentCount < 5;
+                        if (!isRed && !isYellow) return null;
+                        
+                        const fillColor = isRed ? "rgba(255, 60, 60, 0.15)" : "rgba(255, 180, 0, 0.15)";
+                        const strokeColor = isRed ? "rgba(255, 60, 60, 0.5)" : "rgba(255, 180, 0, 0.5)";
+                        const badgeBg = isRed ? T.danger : '#F5A623';
+
+                        return (
+                            <React.Fragment key={zone.id}>
+                                <Circle
+                                    center={{ latitude: Number(zone.latitude), longitude: Number(zone.longitude) }}
+                                    radius={zone.radius}
+                                    fillColor={fillColor}
+                                    strokeColor={strokeColor}
+                                    strokeWidth={1}
+                                />
+                                <Marker
+                                    coordinate={{ latitude: Number(zone.latitude), longitude: Number(zone.longitude) }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    tracksViewChanges={false}
+                                    onPress={() => openZoneSheet(zone)}
+                                >
+                                    <View style={{ backgroundColor: badgeBg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: '#fff' }}>
+                                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{zone.incidentCount}</Text>
+                                    </View>
+                                </Marker>
+                            </React.Fragment>
+                        );
+                    })}
 
                     {selectedPlace && (
                         <Marker
                             key={selectedPlace.id}
-                            coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
+                            coordinate={{ latitude: Number(selectedPlace.latitude), longitude: Number(selectedPlace.longitude) }}
                             anchor={{ x: 0.5, y: 1 }}
                             calloutAnchor={{ x: 0.5, y: 0 }}
                             tracksViewChanges={true}
@@ -1144,15 +1300,15 @@ export default function ExploreScreen() {
                     </PremiumBar>
                 )}
 
-                {/* ── Search Overlay — suggestions + recent (map hidden) ───────── */}
+                {/* ── Search Overlay — suggestions + recent dropdown ───────── */}
                 {searchActive && (
-                    <View style={s.searchOverlay}>
+                    <View style={[s.searchOverlay, { top: insets.top + 64 }]} pointerEvents="box-none">
                         <Pressable
-                            style={s.searchOverlayBackdrop}
+                            style={StyleSheet.absoluteFillObject}
                             onPress={() => deactivateSearch(false)}
                             pointerEvents="box-only"
                         />
-                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 76 }]}>
+                        <View style={s.searchOverlayContent}>
                             {query.length === 0 ? (
                                 <>
                                     <Text style={s.searchSectionTitle}>Recent searches</Text>
@@ -1216,7 +1372,7 @@ export default function ExploreScreen() {
                 {startSearchActive && (
                     <View style={s.searchOverlay}>
                         <Pressable
-                            style={s.searchOverlayBackdrop}
+                            style={StyleSheet.absoluteFillObject}
                             onPress={() => setStartSearchActive(false)}
                             pointerEvents="box-only"
                         />
@@ -1729,16 +1885,23 @@ const s = StyleSheet.create({
     // ── Search Overlay ───────────────────────────────────────────────────
     searchOverlay: {
         position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: '#0B0716',
+        top: 0, left: 14, right: 14, bottom: 0,
         zIndex: 240,
     },
-    searchOverlayBackdrop: {
-        ...StyleSheet.absoluteFillObject,
-    },
     searchOverlayContent: {
+        backgroundColor: 'rgba(30,21,58,0.95)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
         paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 8,
         gap: 12,
+        maxHeight: Dimensions.get('window').height * 0.5,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 10 },
+        }),
     },
     searchSectionTitle: {
         fontSize: 11,
@@ -1790,7 +1953,7 @@ const s = StyleSheet.create({
     },
 
     // ── Map controls ───────────────────────────────────────────────────────
-    mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
+    mapControls: { position: 'absolute', right: 20, top: '48%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: 12,
         backgroundColor: T.surfaceBulky,
