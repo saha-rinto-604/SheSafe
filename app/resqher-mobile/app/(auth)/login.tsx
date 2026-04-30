@@ -39,10 +39,10 @@ export default function Login() {
     } finally {
       setSubmitting(false);
 
-      // We manually tell the app to navigate to the Map screen after a short delay
+      // We manually tell the app to navigate to the volunteer home after a short delay
       setTimeout(() => {
-        router.replace('/(tabs)/users/sos_screen' as any);
-        console.log("Mock Login Successful: Redirecting to Map");
+        router.replace('/(tabs)/users/volunteer' as any);
+        console.log("Mock Login Successful: Redirecting to Volunteer Home");
       }, 1000);
     }
   };
