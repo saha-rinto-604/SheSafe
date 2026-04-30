@@ -62,16 +62,84 @@ function haversineDistance(a: LatLng, b: LatLng): number {
 }
 
 /** Returns an object indicating safety and the name of the avoided zone if applicable. */
+/** Returns an object indicating safety and the name of the avoided zone if applicable. */
 function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
-    for (let i = 0; i < coordinates.length; i++) {
-        const point = coordinates[i];
+    if (coordinates.length === 0) return { isSafe: true };
+
+    for (let i = 0; i < coordinates.length - 1; i++) {
+        const p1 = coordinates[i];
+        const p2 = coordinates[i + 1];
+
+        // 1. Check the explicit vertex
         for (const zone of RED_ZONES) {
-            if (haversineDistance(point, zone) <= zone.radius) {
+            if (haversineDistance(p1, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
         }
+
+        /** Returns a risk score based on how many 20m interval points land inside a Red Zone */
+
+        // 2. Interpolate points along the segment to catch straight lines passing through
+        const dist = haversineDistance(p1, p2);
+        const SEGMENT_CHECK_INTERVAL_M = 20; // Sample a point every 20 meters
+
+        if (dist > SEGMENT_CHECK_INTERVAL_M) {
+            const steps = Math.ceil(dist / SEGMENT_CHECK_INTERVAL_M);
+            for (let j = 1; j < steps; j++) {
+                const fraction = j / steps;
+                const interpPoint = {
+                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
+                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
+                };
+
+                for (const zone of RED_ZONES) {
+                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
+                        return { isSafe: false, blockedZoneName: zone.name };
+                    }
+                }
+            }
+        }
     }
+
+    // Check the final destination vertex
+    const lastPoint = coordinates[coordinates.length - 1];
+    for (const zone of RED_ZONES) {
+        if (haversineDistance(lastPoint, zone) <= zone.radius) {
+            return { isSafe: false, blockedZoneName: zone.name };
+        }
+    }
+
     return { isSafe: true };
+}
+
+function getRouteRiskScore(coordinates: LatLng[]): number {
+    let score = 0;
+    if (coordinates.length === 0) return 0;
+
+    for (let i = 0; i < coordinates.length - 1; i++) {
+        const p1 = coordinates[i];
+        const p2 = coordinates[i + 1];
+
+        for (const zone of RED_ZONES) {
+            if (haversineDistance(p1, zone) <= zone.radius) score++;
+        }
+
+        const dist = haversineDistance(p1, p2);
+        if (dist > 20) {
+            const steps = Math.ceil(dist / 20);
+            for (let j = 1; j < steps; j++) {
+                const fraction = j / steps;
+                const interpPoint = {
+                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
+                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
+                };
+                for (const zone of RED_ZONES) {
+                    if (haversineDistance(interpPoint, zone) <= zone.radius) score++;
+                }
+            }
+        }
+    }
+    return score;
 }
 
 /** Strip HTML tags from Google's html_instructions. */
@@ -233,6 +301,50 @@ const rdr = StyleSheet.create({
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
+// ── SafetyScanOverlay — radar + spinning shield during recalculation ────────
+const SafetyScanOverlay = memo(function SafetyScanOverlay({
+    visible,
+    spinAnim,
+    r0, r1, r2,
+    zoneName,
+}: {
+    visible: boolean;
+    spinAnim: RNAnimated.Value;
+    r0: RNAnimated.Value; r1: RNAnimated.Value; r2: RNAnimated.Value;
+    zoneName: string | null;
+}) {
+    if (!visible) return null;
+    return (
+        <View style={scanStyles.wrap} pointerEvents="none">
+            {[r0, r1, r2].map((a, i) => (
+                <RNAnimated.View key={i} style={[scanStyles.ring, {
+                    transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.3, 2.0] }) }],
+                    opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.7, 0.35, 0] }),
+                }]} />
+            ))}
+            <RNAnimated.View style={{
+                transform: [{ rotate: spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }],
+            }}>
+                <Ionicons name="shield-checkmark" size={48} color={T.violet} />
+            </RNAnimated.View>
+            <Text style={scanStyles.label}>Calculating safest route…</Text>
+            {zoneName && <Text style={scanStyles.sub}>Avoiding {zoneName}</Text>}
+        </View>
+    );
+});
+const scanStyles = StyleSheet.create({
+    wrap: {
+        position: 'absolute', alignSelf: 'center',
+        top: height * 0.28, alignItems: 'center', zIndex: 400,
+    },
+    ring: {
+        position: 'absolute', width: 100, height: 100,
+        borderRadius: 50, borderWidth: 1.5, borderColor: T.violet,
+    },
+    label: { marginTop: 20, fontSize: 13, fontWeight: '700', color: T.violet, letterSpacing: 0.3 },
+    sub: { marginTop: 4, fontSize: 11, fontWeight: '500', color: T.ink3 },
+});
+
 // ── Side Drawer ─────────────────────────────────────────────────────────────
 const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
     { icon: 'user', label: 'Edit Profile' },
@@ -388,6 +500,18 @@ export default function ExploreScreen() {
     const startRequestIdRef = useRef(0);
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
+
+    // ── Safety-First Routing State ──────────────────────────────────────
+    const [routeUnsafe, setRouteUnsafe] = useState(false);
+    const [blockedZoneName, setBlockedZoneName] = useState<string | null>(null);
+    const [isScanAnimating, setIsScanAnimating] = useState(false);
+    const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
+    const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
+    const [showSafePath, setShowSafePath] = useState(false);
+    const scanAnim = useRef(new RNAnimated.Value(0)).current;
+    const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
+    const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
+    const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -627,7 +751,6 @@ export default function ExploreScreen() {
             const baseUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${apiMode}&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
 
             try {
-                // 1️⃣  Fetch all routes
                 const res = await fetch(baseUrl);
                 const data = await res.json();
 
@@ -636,32 +759,15 @@ export default function ExploreScreen() {
                     return;
                 }
 
-                let chosenRoute = data.routes[0];
-                let chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
+                // Always take routes[0] as the shortest path
+                const chosenRoute = data.routes[0];
+                const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
-                // 2️⃣  Red-Zone safety check with "Memory"
-                let safetyCheck = checkRouteSafety(chosenCoords);
-                let foundSafe = safetyCheck.isSafe;
-                const primaryAvoidedArea = safetyCheck.blockedZoneName;
-
-                if (!foundSafe && data.routes.length > 1) {
-                    for (let i = 1; i < data.routes.length; i++) {
-                        const route = data.routes[i];
-                        const altCoords = decodePolyline(route.overview_polyline?.points ?? '');
-                        const altCheck = checkRouteSafety(altCoords);
-                        if (altCheck.isSafe) {
-                            chosenRoute = route;
-                            chosenCoords = altCoords;
-                            foundSafe = true;
-                            break;
-                        }
-                    }
-                }
-
-                // 3️⃣  Apply polyline
+                // Display shortest route immediately as violet
                 setRouteCoords(chosenCoords);
+                setUnsafeRouteCoords(chosenCoords);
 
-                // 4️⃣  Extract turn-by-turn instructions
+                // Extract turn-by-turn instructions
                 const steps = chosenRoute?.legs?.[0]?.steps ?? [];
                 const instructions: NavStep[] = steps.map((step: any) => ({
                     instruction: stripHtml(step.html_instructions ?? ''),
@@ -672,29 +778,24 @@ export default function ExploreScreen() {
                 setNavInstructions(instructions);
                 setCurrentStepIdx(0);
 
-                // 5️⃣  Fit map to safe route and trigger Notification
+                // Run safety check on the shortest route
+                const safetyCheck = checkRouteSafety(chosenCoords);
+                if (!safetyCheck.isSafe) {
+                    setRouteUnsafe(true);
+                    setBlockedZoneName(safetyCheck.blockedZoneName ?? null);
+                    setShowSafePath(true);
+                } else {
+                    setRouteUnsafe(false);
+                    setBlockedZoneName(null);
+                    setShowSafePath(false);
+                }
+
+                // Fit map to route
                 if (chosenCoords.length > 1) {
                     mapRef.current?.fitToCoordinates(chosenCoords, {
                         edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
                         animated: true,
                     });
-                }
-
-                if (primaryAvoidedArea) {
-                    setTimeout(() => {
-                        if (foundSafe) {
-                            Alert.alert(
-                                '🛡️ Secure Path Active',
-                                `Safety Optimization: We have bypassed the standard ${primaryAvoidedArea} route due to security cautions and selected the safest alternative for your journey.`
-                            );
-                            Speech.speak("Safety update: Redirecting to avoid high risk areas.");
-                        } else {
-                            Alert.alert(
-                                '⚠️ Security Alert',
-                                'No fully safe route identified. Proceed with extreme caution.'
-                            );
-                        }
-                    }, 800);
                 }
             } catch {
                 setRouteCoords([
@@ -709,6 +810,204 @@ export default function ExploreScreen() {
             buildRoute();
         }
     }, [directionsMode, endLocation, startLocation, travelMode]);
+
+    // ── Scan animation helpers ──────────────────────────────────────────
+    const startScanAnimation = useCallback(() => {
+        const radarAnims = [radarAnim0, radarAnim1, radarAnim2];
+        radarAnims.forEach((a, i) => {
+            const loop = () => {
+                a.setValue(0);
+                RNAnimated.timing(a, {
+                    toValue: 1, duration: 2000,
+                    easing: Easing.out(Easing.ease),
+                    useNativeDriver: true, delay: i * 660,
+                }).start(() => loop());
+            };
+            loop();
+        });
+        const spinLoop = () => {
+            scanAnim.setValue(0);
+            RNAnimated.timing(scanAnim, {
+                toValue: 1, duration: 1500,
+                easing: Easing.linear,
+                useNativeDriver: true,
+            }).start(() => spinLoop());
+        };
+        spinLoop();
+    }, [radarAnim0, radarAnim1, radarAnim2, scanAnim]);
+
+    const stopScanAnimation = useCallback(() => {
+        [radarAnim0, radarAnim1, radarAnim2, scanAnim].forEach(a => a.stopAnimation());
+    }, [radarAnim0, radarAnim1, radarAnim2, scanAnim]);
+
+    // ── Phase 3: Safety Recalculation ───────────────────────────────────
+    const triggerSafetyRecalculation = useCallback(async () => {
+        if (!startLocation || !endLocation || !GOOGLE_MAPS_API_KEY) return;
+
+        // A. Begin scan animation
+        setIsScanAnimating(true);
+        setShowSafePath(false);
+        startScanAnimation();
+
+        // B. Wait 1.8s for animation to feel intentional
+        await new Promise(r => setTimeout(r, 1800));
+
+        // C. Re-fetch all alternative routes
+        const origin = `${startLocation.latitude},${startLocation.longitude}`;
+        const destination = `${endLocation.latitude},${endLocation.longitude}`;
+        const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${apiMode}&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (!data?.routes?.length) {
+                stopScanAnimation();
+                setIsScanAnimating(false);
+                Alert.alert('No safe route found', 'All available routes pass through restricted zones.');
+                return;
+            }
+
+            // D. Score each route by red zone intersection count (UPDATED)
+            let bestRoute: { route: any; coords: LatLng[]; score: number } | null = null;
+            let bestScore = Infinity;
+
+            for (const route of data.routes) {
+                const coords = decodePolyline(route.overview_polyline?.points ?? '');
+                const score = getRouteRiskScore(coords); // Uses interpolation now
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestRoute = { route, coords, score };
+                }
+            }
+
+            // E. Waypoint injection fallback if all routes still intersect
+            if (bestScore > 0) {
+                if (travelMode === 'transit') {
+                    // Google Maps blocks waypoints for transit. Abort and warn the user.
+                    stopScanAnimation();
+                    setIsScanAnimating(false);
+                    Alert.alert(
+                        '🚍 Fixed Transit Lines',
+                        'Public transit follows fixed routes and cannot be detoured around this Red Zone. Please switch to Driving, Walking, or Bike mode to calculate a custom safe path.'
+                    );
+
+                    if (bestRoute) {
+                        setSafeRouteCoords(bestRoute.coords);
+                        setRouteCoords(bestRoute.coords);
+                    }
+                    setRouteUnsafe(true);
+                    return;
+                }
+
+                // TypeScript safety check
+                if (bestRoute) {
+                    const firstBadPoint = bestRoute.coords.find(p =>
+                        RED_ZONES.some(z => haversineDistance(p, z) <= z.radius)
+                    );
+
+                    if (firstBadPoint) {
+                        const matchedZone = RED_ZONES.find(z => haversineDistance(firstBadPoint, z) <= z.radius);
+
+                        if (matchedZone) {
+                            // The Radial Search Strategy: Check N, E, S, W
+                            const directions = [
+                                { lat: 0, lng: 1 },   // East (Best for N/S roads like Pragati Sarani)
+                                { lat: 0, lng: -1 },  // West
+                                { lat: 1, lng: 0 },   // North
+                                { lat: -1, lng: 0 }   // South
+                            ];
+
+                            let foundPerfectDetour = false;
+                            // Push the waypoint 3x the radius away to ensure it grabs a different street
+                            const pushDistanceMeters = matchedZone.radius * 3;
+
+                            for (const dir of directions) {
+                                if (foundPerfectDetour) break; // Stop searching if we found a completely safe route
+
+                                // Calculate the offset coordinate
+                                const wpLat = matchedZone.latitude + (dir.lat * pushDistanceMeters) / 111320;
+                                const wpLng = matchedZone.longitude + (dir.lng * pushDistanceMeters) / (111320 * Math.cos(matchedZone.latitude * (Math.PI / 180)));
+
+                                const wpUrl = `${url}&waypoints=via:${wpLat},${wpLng}`;
+
+                                try {
+                                    const wpRes = await fetch(wpUrl);
+                                    const wpData = await wpRes.json();
+
+                                    if (wpData?.routes?.length) {
+                                        const wpRoute = wpData.routes[0];
+                                        const wpCoords = decodePolyline(wpRoute.overview_polyline?.points ?? '');
+
+                                        const wpScore = getRouteRiskScore(wpCoords);
+
+                                        // If this direction perfectly bypasses the zone
+                                        if (wpScore === 0) {
+                                            bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
+                                            bestScore = wpScore;
+                                            foundPerfectDetour = true;
+                                        } else if (wpScore < bestScore) {
+                                            // If it's not perfect, but it's an improvement, hold onto it
+                                            bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
+                                            bestScore = wpScore;
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.log(`Waypoint fallback failed for direction ${dir.lat},${dir.lng}`, error);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            // --- FINAL TYPESCRIPT SAFETY CHECK ---
+            // Tell TS we are 100% sure bestRoute exists before grabbing finalCoords
+            if (!bestRoute) {
+                stopScanAnimation();
+                setIsScanAnimating(false);
+                return;
+            }
+
+            const finalCoords = bestRoute.coords;
+            const steps = bestRoute.route?.legs?.[0]?.steps ?? [];
+            const instructions: NavStep[] = steps.map((step: any) => ({
+                instruction: stripHtml(step.html_instructions ?? ''),
+                distance: step.distance?.text ?? '',
+                maneuver: step.maneuver,
+                endLocation: step.end_location ? { latitude: step.end_location.lat, longitude: step.end_location.lng } : undefined,
+            }));
+
+            // F. Update state...
+            setSafeRouteCoords(finalCoords);
+            setRouteCoords(finalCoords);
+            setNavInstructions(instructions);
+            setCurrentStepIdx(0);
+            setRouteUnsafe(bestScore > 0);
+            setShowSafePath(false);
+            stopScanAnimation();
+            setIsScanAnimating(false);
+
+            // G. Map + feedback
+            mapRef.current?.fitToCoordinates(finalCoords, {
+                edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
+                animated: true,
+            });
+
+            if (bestScore === 0) {
+                Speech.speak('Safety update: Safest route selected, avoiding high risk areas.');
+            } else {
+                Alert.alert('⚠️ Partial safety', 'No fully safe route found. Showing the least risky option.');
+            }
+        } catch {
+            stopScanAnimation();
+            setIsScanAnimating(false);
+            Alert.alert('Error', 'Failed to calculate safe route.');
+        }
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
@@ -812,6 +1111,13 @@ export default function ExploreScreen() {
         setRouteCoords([]);
         setNavInstructions([]);
         setCurrentStepIdx(0);
+        // Phase 8 — reset safety state on exit
+        setRouteUnsafe(false);
+        setBlockedZoneName(null);
+        setShowSafePath(false);
+        setIsScanAnimating(false);
+        setSafeRouteCoords([]);
+        setUnsafeRouteCoords([]);
         RNAnimated.timing(directionsProgress, {
             toValue: 0,
             duration: 220,
@@ -926,6 +1232,18 @@ export default function ExploreScreen() {
                         </Marker>
                     )}
 
+                    {/* Gray dashed = original unsafe route (shown only after recalculation) */}
+                    {safeRouteCoords.length > 0 && unsafeRouteCoords.length > 0 && (
+                        <Polyline
+                            coordinates={unsafeRouteCoords}
+                            strokeColor="rgba(160,160,175,0.45)"
+                            strokeWidth={3}
+                            lineDashPattern={[8, 6]}
+                            lineCap="round"
+                        />
+                    )}
+
+                    {/* Violet = primary route (shortest initially, safest after recalculation) */}
                     {routeCoords.length > 1 && (
                         <Polyline
                             coordinates={routeCoords}
@@ -1441,6 +1759,13 @@ export default function ExploreScreen() {
                     <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                         <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={ns.cardTint} pointerEvents="none" />
+                        {/* Route warning badge */}
+                        {routeUnsafe && !isScanAnimating && blockedZoneName && (
+                            <View style={ns.warningBadge}>
+                                <Ionicons name="warning" size={12} color="#E25B3A" style={{ marginRight: 4 }} />
+                                <Text style={ns.warningBadgeText}>Route passes through {blockedZoneName}</Text>
+                            </View>
+                        )}
                         <View style={ns.cardBody}>
                             <View style={ns.iconWrap}>
                                 <Ionicons
@@ -1464,6 +1789,16 @@ export default function ExploreScreen() {
                             </Text>
                             {!isLiveNav ? (
                                 <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                    {showSafePath && !isScanAnimating && (
+                                        <TouchableOpacity
+                                            style={ns.safePathBtn}
+                                            onPress={triggerSafetyRecalculation}
+                                            activeOpacity={0.75}
+                                        >
+                                            <Ionicons name="shield-checkmark" size={13} color={T.onPrimary} style={{ marginRight: 4 }} />
+                                            <Text style={ns.safePathBtnText}>SAFE PATH</Text>
+                                        </TouchableOpacity>
+                                    )}
                                     {currentStepIdx > 0 && (
                                         <TouchableOpacity
                                             style={ns.navBtn}
@@ -1503,6 +1838,14 @@ export default function ExploreScreen() {
                         </View>
                     </View>
                 )}
+
+                {/* ── Safety Scan Overlay ─────────────────────────────────────── */}
+                <SafetyScanOverlay
+                    visible={isScanAnimating}
+                    spinAnim={scanAnim}
+                    r0={radarAnim0} r1={radarAnim1} r2={radarAnim2}
+                    zoneName={blockedZoneName}
+                />
 
                 {/* ── Bottom Navbar ─────────────────────────────────────────────── */}
                 <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
@@ -2121,6 +2464,25 @@ const ns = StyleSheet.create({
     endLiveBtnText: {
         fontSize: 11, fontWeight: '700',
         color: T.onPrimary, letterSpacing: 0.2,
+    },
+    safePathBtn: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 12, height: 32,
+        borderRadius: R.pill,
+        backgroundColor: '#E25B3A',
+        borderWidth: 1, borderColor: 'rgba(226,91,58,0.6)',
+    },
+    safePathBtnText: {
+        fontSize: 11, fontWeight: '700',
+        color: T.onPrimary, letterSpacing: 0.3,
+    },
+    warningBadge: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2,
+    },
+    warningBadgeText: {
+        fontSize: 11, fontWeight: '600',
+        color: '#E25B3A', letterSpacing: 0.2,
     },
 });
 
