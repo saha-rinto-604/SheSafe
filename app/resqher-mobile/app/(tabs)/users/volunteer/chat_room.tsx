@@ -7,8 +7,9 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable
+    Modal, Pressable, Alert
 } from 'react-native';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
 const MAP_STRIP_HEIGHT = 180;
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 // ─── Mock Incidents (Volunteer-only participants) ───────────────────────────
 const MOCK_INCIDENTS: Record<string, Incident> = {
@@ -405,6 +407,35 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
     );
 }
 
+const decodePolyline = (t: string, e?: number) => {
+    let n = 0, o = 0, r = 0, l = 0, i = 0, a = null;
+    const d: { latitude: number; longitude: number }[] = [];
+    for (e = e || 5; n < t.length;) {
+        a = null, r = 0, l = 0;
+        do a = t.charCodeAt(n++) - 63, l |= (31 & a) << r, r += 5; while (a >= 32);
+        i = 1 & l ? ~(l >> 1) : l >> 1, r = l = 0, o += i;
+        do a = t.charCodeAt(n++) - 63, l |= (31 & a) << r, r += 5; while (a >= 32);
+        i = 1 & l ? ~(l >> 1) : l >> 1, d.push({ latitude: o / 10 ** e, longitude: (r += i) / 10 ** e });
+    }
+    return d.map(p => ({ latitude: p.latitude, longitude: p.longitude - r / 10 ** e + p.longitude })); // quick fix
+};
+
+// Real polyline decode from google
+function polylineDecode(str: string, precision = 5) {
+    let index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null, latitude_change, longitude_change, factor = Math.pow(10, precision);
+    while (index < str.length) {
+        byte = null; shift = 0; result = 0;
+        do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        shift = result = 0;
+        do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lat += latitude_change; lng += longitude_change;
+        coordinates.push({ latitude: lat / factor, longitude: lng / factor });
+    }
+    return coordinates;
+}
+
 // ─── Main — Chat Room ───────────────────────────────────────────────────────
 export default function ChatRoom() {
     const router = useRouter();
@@ -418,6 +449,55 @@ export default function ChatRoom() {
     const flatRef = useRef<FlatList>(null);
     const isLive = incident.status === 'LIVE';
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
+
+    // Map Overlay State
+    const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
+    const [mapRouteCoords, setMapRouteCoords] = useState<{latitude: number; longitude: number}[]>([]);
+    const [mapDistance, setMapDistance] = useState('');
+    const [mapDuration, setMapDuration] = useState('');
+    const [isLiveNavMode, setIsLiveNavMode] = useState(false);
+    const mapRef = useRef<MapView>(null);
+
+    const openMapOverlay = useCallback(async () => {
+        setIsMapOverlayOpen(true);
+        Haptics.selectionAsync();
+
+        if (mapRouteCoords.length > 0) return;
+
+        const VOLUNTEER_LOC = { latitude: 23.8293, longitude: 90.4182 }; // Khilkhet
+        const origin = `${VOLUNTEER_LOC.latitude},${VOLUNTEER_LOC.longitude}`;
+        const destination = `${incident.location.latitude},${incident.location.longitude}`;
+
+        if (!GOOGLE_MAPS_API_KEY) {
+            setMapRouteCoords([VOLUNTEER_LOC, incident.location]);
+            setMapDistance('3.2 km');
+            setMapDuration('~12 min');
+            return;
+        }
+
+        try {
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data?.routes?.length > 0) {
+                const points = data.routes[0].overview_polyline.points;
+                const coords = polylineDecode(points);
+                const leg = data.routes[0].legs?.[0];
+                setMapRouteCoords(coords);
+                setMapDistance(leg?.distance?.text ?? 'Unknown');
+                setMapDuration(leg?.duration?.text ?? 'Unknown');
+                setTimeout(() => {
+                    mapRef.current?.fitToCoordinates(coords, {
+                        edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
+                        animated: true,
+                    });
+                }, 400);
+            }
+        } catch (e) {
+            console.error(e);
+            Alert.alert('Error', 'Failed to load route');
+        }
+    }, [incident.location, mapRouteCoords.length]);
 
     useEffect(() => {
         if (messages.length > 0) {
@@ -494,7 +574,7 @@ export default function ChatRoom() {
                                 <TouchableOpacity
                                     style={st.liveMapCircularBtn}
                                     activeOpacity={0.7}
-                                    onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                                    onPress={openMapOverlay}
                                 >
                                     <View style={[StyleSheet.absoluteFill, st.liveMapCircularBg]} />
                                     <Feather name="map" size={18} color="#FFFFFF" />
@@ -583,6 +663,131 @@ export default function ChatRoom() {
                         </View>
                     </Pressable>
                 </Modal>
+
+                {/* ── Map Overlay ─────────────────────────────────────────────────── */}
+                {isMapOverlayOpen && (
+                    <View style={StyleSheet.absoluteFill}>
+                        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                        <MapView
+                            ref={mapRef}
+                            style={StyleSheet.absoluteFill}
+                            userInterfaceStyle="dark"
+                            customMapStyle={[
+                                { "elementType": "geometry", "stylers": [{ "color": "#0B071A" }] },
+                                { "elementType": "labels.text.fill", "stylers": [{ "color": "#4A4568" }] },
+                                { "elementType": "labels.text.stroke", "stylers": [{ "visibility": "off" }] },
+                                { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#18142A" }] },
+                                { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#05030A" }] }
+                            ]}
+                            pitchEnabled={true}
+                            initialRegion={{
+                                latitude: 23.8293,
+                                longitude: 90.4182,
+                                latitudeDelta: 0.05,
+                                longitudeDelta: 0.05,
+                            }}
+                        >
+                            {mapRouteCoords.length > 1 && (
+                                <Polyline
+                                    coordinates={mapRouteCoords}
+                                    strokeColor={T.violet}
+                                    strokeWidth={4}
+                                    lineCap="round"
+                                    lineJoin="round"
+                                />
+                            )}
+                            {mapRouteCoords.length > 0 && (
+                                <>
+                                    {/* Volunteer Marker A */}
+                                    <Marker coordinate={mapRouteCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                                        <View style={st.sosMarkerInnerA}>
+                                            <Image source={{ uri: 'https://i.pravatar.cc/150?img=11' }} style={st.sosMarkerAvatar} />
+                                        </View>
+                                    </Marker>
+                                    {/* Victim Marker B */}
+                                    <Marker coordinate={mapRouteCoords[mapRouteCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
+                                        <View style={st.sosMarkerInnerB}>
+                                            <Image source={{ uri: incident.latestMessage?.sender?.id ? `https://i.pravatar.cc/150?u=${incident.latestMessage.sender.id}` : 'https://i.pravatar.cc/150?img=5' }} style={st.sosMarkerAvatar} />
+                                        </View>
+                                    </Marker>
+                                </>
+                            )}
+                        </MapView>
+
+                        {/* Top Header */}
+                        <View style={[st.overlayHeader, { top: insets.top + 8 }]}>
+                            <TouchableOpacity
+                                style={st.headerBtn}
+                                onPress={() => { setIsMapOverlayOpen(false); setIsLiveNavMode(false); }}
+                            >
+                                <Feather name="x" size={22} color={T.ink} />
+                            </TouchableOpacity>
+                            <View style={st.overlayTitleWrap}>
+                                <Text style={st.overlayTitle}>
+                                    {isLiveNavMode ? 'Navigating to Victim' : 'Route Overview'}
+                                </Text>
+                            </View>
+                            <View style={{ width: 36 }} />
+                        </View>
+
+                        {/* Bottom Card */}
+                        <View style={[st.overlayBottomCard, { paddingBottom: Math.max(insets.bottom + 16, 32) }]}>
+                            <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={st.overlayCardTint} pointerEvents="none" />
+                            
+                            {isLiveNavMode ? (
+                                <View style={st.navInstRow}>
+                                    <View style={st.navInstIconWrap}>
+                                        <Feather name="arrow-up-right" size={32} color={T.violet} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={st.navInstPrimary}>Turn right on Pragati Sarani</Text>
+                                        <Text style={st.navInstSecondary}>In 200 meters · {mapDuration}</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={st.exitNavBtn}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setIsLiveNavMode(false);
+                                            mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 });
+                                            mapRef.current?.fitToCoordinates(mapRouteCoords, {
+                                                edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
+                                                animated: true,
+                                            });
+                                        }}
+                                    >
+                                        <Text style={st.exitNavBtnText}>Exit</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <View style={st.overviewRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={st.overviewDist}>{mapDistance}</Text>
+                                        <Text style={st.overviewEta}>{mapDuration} drive</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={st.startNavBtn}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setIsLiveNavMode(true);
+                                            if (mapRouteCoords.length > 0) {
+                                                mapRef.current?.animateCamera({
+                                                    center: mapRouteCoords[0],
+                                                    pitch: 60,
+                                                    heading: 145, // mock heading angle
+                                                    zoom: 18,
+                                                }, { duration: 1000 });
+                                            }
+                                        }}
+                                    >
+                                        <Ionicons name="navigate" size={16} color={T.onPrimary} />
+                                        <Text style={st.startNavBtnText}>Start Live Nav</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                )}
             </View>
         </AtmosphericShell>
     );
@@ -1067,5 +1272,148 @@ const st = StyleSheet.create({
     emptyChatText: {
         ...Ty.bodySm,
         color: T.ink4,
+    },
+    overlayHeader: {
+        position: 'absolute',
+        left: S.s3,
+        right: S.s3,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 10,
+    },
+    overlayTitleWrap: {
+        backgroundColor: 'rgba(30, 21, 58, 0.85)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    overlayTitle: {
+        color: T.ink,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    overlayBottomCard: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        borderTopWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        backgroundColor: 'rgba(10, 5, 20, 0.5)',
+        paddingTop: 20,
+        paddingHorizontal: S.s4,
+        zIndex: 10,
+    },
+    overlayCardTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: `${T.violet}08`,
+    },
+    overviewRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    overviewDist: {
+        color: T.violet,
+        fontSize: 24,
+        fontWeight: '900',
+    },
+    overviewEta: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    startNavBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: T.violet,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 999,
+        gap: 8,
+    },
+    startNavBtnText: {
+        color: T.onPrimary,
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    navInstRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+    },
+    navInstIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(138,56,246,0.15)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.3)',
+    },
+    navInstPrimary: {
+        color: T.ink,
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    navInstSecondary: {
+        color: T.ink3,
+        fontSize: 13,
+        fontWeight: '500',
+        marginTop: 4,
+    },
+    exitNavBtn: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+    },
+    exitNavBtnText: {
+        color: T.ink2,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    sosMarkerInnerA: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 2.5,
+        borderColor: T.violet,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    sosMarkerInnerB: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 2.5,
+        borderColor: T.danger,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    sosMarkerAvatar: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
     },
 });

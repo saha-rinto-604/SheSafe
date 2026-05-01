@@ -639,6 +639,60 @@ export default function ExploreScreen() {
         }).start();
     }, [searchProgress]);
 
+    const resetExploreState = useCallback(() => {
+        deactivateSearch(true);
+        setSearchSuggestions([]);
+        setSearchStatus(null);
+        searchSessionTokenRef.current = null;
+        searchRequestIdRef.current = 0;
+
+        setStartSearchActive(false);
+        setStartSearchText('');
+        setStartSuggestions([]);
+        setStartStatus(null);
+        startSessionTokenRef.current = null;
+        startRequestIdRef.current = 0;
+
+        if (placeSheetOpen) closePlaceSheet();
+        if (showLocationCard) closeLocationCard();
+
+        setSelectedPlace(null);
+        setPlaceIncidents([]);
+        setEndLocation(null);
+
+        if (directionsMode) {
+            exitDirectionsMode();
+        } else {
+            setRouteCoords([]);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
+            setRouteUnsafe(false);
+            setBlockedZoneName(null);
+            setShowSafePath(false);
+            setIsScanAnimating(false);
+            setSafeRouteCoords([]);
+            setUnsafeRouteCoords([]);
+        }
+
+        if (userLoc) {
+            mapRef.current?.animateToRegion(
+                { latitude: userLoc.latitude, longitude: userLoc.longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 },
+                700
+            );
+        } else {
+            mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
+        }
+    }, [
+        closeLocationCard,
+        closePlaceSheet,
+        deactivateSearch,
+        directionsMode,
+        exitDirectionsMode,
+        placeSheetOpen,
+        showLocationCard,
+        userLoc,
+    ]);
+
     const query = searchText.trim();
     const startQuery = startSearchText.trim();
 
@@ -1375,7 +1429,7 @@ export default function ExploreScreen() {
                                         selectionColor={T.violet}
                                     />
                                     {searchText.length > 0 && (
-                                        <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                        <TouchableOpacity onPress={resetExploreState} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                                             <Ionicons name="close-circle" size={16} color={T.ink4} />
                                         </TouchableOpacity>
                                     )}
