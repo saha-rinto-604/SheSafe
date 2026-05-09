@@ -30,3 +30,27 @@ INSERT IGNORE INTO roles (role_name) VALUES
   ('standard_user'),
   ('volunteer'),
   ('law_enforcement');
+
+CREATE TABLE IF NOT EXISTS medical_providers (
+  id VARCHAR(100) NOT NULL,
+  provider_type VARCHAR(50) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  latitude DECIMAL(10,7) NOT NULL,
+  longitude DECIMAL(10,7) NOT NULL,
+  rating DECIMAL(3,1) DEFAULT NULL,
+  affiliation VARCHAR(255) DEFAULT NULL,
+  booking_url VARCHAR(500) DEFAULT NULL,
+  address VARCHAR(500) DEFAULT NULL,
+  contact_number VARCHAR(50) DEFAULT NULL,
+  shift VARCHAR(50) DEFAULT NULL,
+  specialty VARCHAR(100) DEFAULT NULL,
+  ambulance_type VARCHAR(50) DEFAULT NULL,
+  is_delivery_available BOOLEAN DEFAULT NULL,
+  eta VARCHAR(50) DEFAULT NULL,
+  degree VARCHAR(255) DEFAULT NULL,
+  hospital_affiliation VARCHAR(255) DEFAULT NULL,
+  safe_route_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_medical_provider_type (provider_type)
+);

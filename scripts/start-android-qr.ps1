@@ -143,6 +143,9 @@ if (Wait-ForBackend -HealthUrl $healthUrl) {
   Write-Warning "Backend health check did not pass yet. Expo will still start."
 }
 
-Write-Host "Starting Expo (QR in this terminal)..." -ForegroundColor Yellow
+Write-Host "Fixing Expo package versions..." -ForegroundColor Yellow
 Set-Location $mobileDir
+npx expo install --fix
+
+Write-Host "Starting Expo (QR in this terminal)..." -ForegroundColor Yellow
 npx expo start --clear

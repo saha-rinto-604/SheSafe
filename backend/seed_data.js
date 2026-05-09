@@ -36,6 +36,17 @@ const PHARMACIES = [
     { id: 'pharm-003', name: 'Model Pharmacy', address: 'Vatara, Dhaka', isDeliveryAvailable: false, contactNumber: '+880-1711-100003', safeRouteVerified: false, latitude: 23.8090, longitude: 90.4190, rating: 4.2, affiliation: 'Independent' }
 ];
 
+const OTHERS = [
+    { id: 'oth-001', name: 'Quantum Blood Bank', address: 'Bashundhara R/A, Dhaka', contactNumber: '+880-1711-200001', bookingUrl: null, safeRouteVerified: true, latitude: 23.8145, longitude: 90.4265, rating: 4.7, affiliation: 'Quantum Foundation', subCategory: 'Blood Bank' },
+    { id: 'oth-002', name: 'Medinova Diagnostic Centre', address: 'Gulshan 2, Dhaka', contactNumber: '+880-1711-200002', bookingUrl: 'https://www.medinova.com.bd/', safeRouteVerified: true, latitude: 23.7930, longitude: 90.4160, rating: 4.6, affiliation: 'Medinova Group', subCategory: 'Diagnostics' },
+    { id: 'oth-003', name: 'National Mental Health Institute', address: 'Sher-E-Bangla Nagar, Dhaka', contactNumber: '+880-2-9144270', bookingUrl: 'https://www.nmhibd.org/', safeRouteVerified: true, latitude: 23.7775, longitude: 90.3768, rating: 4.4, affiliation: 'Government', subCategory: 'Mental Health' },
+    { id: 'oth-004', name: 'Kaan Pete Roi Helpline', address: 'Online / Dhaka', contactNumber: '+880-1779-554391', bookingUrl: null, safeRouteVerified: false, latitude: 23.7500, longitude: 90.3800, rating: 4.9, affiliation: 'NGO', subCategory: 'Mental Health' },
+    { id: 'oth-005', name: 'PhysioAid Rehabilitation', address: 'Banani, Dhaka', contactNumber: '+880-1711-200005', bookingUrl: 'https://physioaidbd.com/', safeRouteVerified: true, latitude: 23.7960, longitude: 90.4050, rating: 4.5, affiliation: 'PhysioAid Ltd.', subCategory: 'Physiotherapy' },
+    { id: 'oth-006', name: 'Dhaka Blood Donation Society', address: 'Dhanmondi, Dhaka', contactNumber: '+880-1711-200006', bookingUrl: null, safeRouteVerified: false, latitude: 23.7480, longitude: 90.3760, rating: 4.8, affiliation: 'Voluntary', subCategory: 'Blood Bank' },
+    { id: 'oth-007', name: 'Praava Women & Child Clinic', address: 'Baridhara, Dhaka', contactNumber: '+880-1711-200007', bookingUrl: 'https://praavahealth.com/', safeRouteVerified: true, latitude: 23.8010, longitude: 90.4220, rating: 4.7, affiliation: 'Praava Health', subCategory: 'Diagnostics' },
+    { id: 'oth-008', name: 'BIRDEM Physiotherapy Dept.', address: 'Shahbag, Dhaka', contactNumber: '+880-2-8616641', bookingUrl: 'https://www.birdem-general-hospital.com/', safeRouteVerified: true, latitude: 23.7388, longitude: 90.3940, rating: 4.5, affiliation: 'BIRDEM Hospital', subCategory: 'Physiotherapy' }
+];
+
 const DEFAULT_INCIDENT_ZONES = [
     { id: 'z2', name: 'Pragati Sarani', latitude: 23.8135, longitude: 90.4216, incidentCount: 3 },
     { id: 'z3', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, incidentCount: 7 },
@@ -127,6 +138,15 @@ async function run() {
                 `INSERT INTO medical_providers (id, provider_type, name, latitude, longitude, address, contact_number, is_delivery_available, rating, affiliation, safe_route_verified)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [prov.id, 'pharmacy', prov.name, prov.latitude, prov.longitude, prov.address, prov.contactNumber, prov.isDeliveryAvailable, prov.rating, prov.affiliation, prov.safeRouteVerified]
+            );
+        }
+
+        console.log('Inserting others (blood bank / mental health / physio / diagnostics)...');
+        for (const prov of OTHERS) {
+            await query(
+                `INSERT INTO medical_providers (id, provider_type, name, latitude, longitude, address, contact_number, booking_url, rating, affiliation, safe_route_verified)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [prov.id, 'others', prov.name, prov.latitude, prov.longitude, prov.address, prov.contactNumber, prov.bookingUrl, prov.rating, prov.affiliation, prov.safeRouteVerified]
             );
         }
 
