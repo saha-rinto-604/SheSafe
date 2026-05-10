@@ -501,6 +501,12 @@ export default function ExploreScreen() {
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
 
+    const [placeSheetMode, setPlaceSheetMode] = useState<'incidents' | 'safe_place'>('incidents');
+    const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
+    const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
+    const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
+    const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
+
     // ── Safety-First Routing State ──────────────────────────────────────
     const [routeUnsafe, setRouteUnsafe] = useState(false);
     const [blockedZoneName, setBlockedZoneName] = useState<string | null>(null);
@@ -1139,9 +1145,46 @@ export default function ExploreScreen() {
         RNAnimated.parallel([
             RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
             RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-        ]).start(() => setPlaceSheetOpen(false));
+        ]).start(() => {
+            setPlaceSheetOpen(false);
+            setTimeout(() => setPlaceSheetMode('incidents'), 200);
+        });
         placeSheetDragY.setValue(0);
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const openAddSafePlace = useCallback(() => {
+        setPlaceSheetMode('safe_place');
+        setSafePlaceAnswer('');
+        setSafePlaceSubmitState('idle');
+        setSafePlaceError(null);
+        safePlaceSuccessAnim.setValue(0);
+    }, [safePlaceSuccessAnim]);
+
+    const cancelAddSafePlace = useCallback(() => {
+        setPlaceSheetMode('incidents');
+        setSafePlaceAnswer('');
+        setSafePlaceError(null);
+    }, []);
+
+    const submitAddSafePlace = useCallback(() => {
+        if (safePlaceAnswer.trim().length === 0) {
+            setSafePlaceError('Please provide a brief description.');
+            return;
+        }
+        setSafePlaceSubmitState('submitting');
+        setTimeout(() => {
+            setSafePlaceSubmitState('success');
+            RNAnimated.timing(safePlaceSuccessAnim, {
+                toValue: 1,
+                duration: 400,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+            setTimeout(() => {
+                closePlaceSheet();
+            }, 2500);
+        }, 1200);
+    }, [safePlaceAnswer, closePlaceSheet, safePlaceSuccessAnim]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
         setDirectionsMode(true);
@@ -1771,37 +1814,125 @@ export default function ExploreScreen() {
                                     <Text style={s.placeSheetTitle}>{selectedPlace.name}</Text>
                                     <Text style={s.placeSheetSubtitle} numberOfLines={1}>{selectedPlace.address}</Text>
                                 </View>
+                            </View>
+
+                            <View style={s.placeSheetActions}>
                                 <TouchableOpacity
-                                    style={s.placeSheetDirectionBtn}
+                                    style={[s.placeSheetActionBtn, s.placeSheetActionBtnPrimary]}
                                     onPress={() => enterDirectionsMode(selectedPlace)}
                                     activeOpacity={0.75}
                                 >
                                     <Ionicons name="navigate" size={16} color={T.onPrimary} />
-                                    <Text style={s.placeSheetDirectionText}>Directions</Text>
+                                    <Text style={s.placeSheetActionBtnTextPrimary}>Directions</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[s.placeSheetActionBtn, s.placeSheetActionBtnSecondary]}
+                                    onPress={openAddSafePlace}
+                                    activeOpacity={0.75}
+                                >
+                                    <Ionicons name="shield-checkmark-outline" size={16} color={T.violet} />
+                                    <Text style={s.placeSheetActionBtnTextSecondary}>Add Safe Place</Text>
                                 </TouchableOpacity>
                             </View>
 
                             <View style={s.placeSheetSection}>
-                                <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
-                                {placeIncidents.length === 0 ? (
-                                    <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
+                                {placeSheetMode === 'incidents' ? (
+                                    <>
+                                        <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
+                                        {placeIncidents.length === 0 ? (
+                                            <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
+                                        ) : (
+                                            placeIncidents.map(inc => (
+                                                <View key={inc.id} style={s.placeIncidentRow}>
+                                                    <View style={s.placeIncidentInfo}>
+                                                        <Text style={s.placeIncidentName}>{inc.reporter}</Text>
+                                                        <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                                                    </View>
+                                                    <View style={[
+                                                        s.placeIncidentPill,
+                                                        inc.status === 'ACTIVE' && s.placeIncidentPillActive,
+                                                        inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
+                                                        inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
+                                                    ]}>
+                                                        <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                                    </View>
+                                                </View>
+                                            ))
+                                        )}
+                                    </>
                                 ) : (
-                                    placeIncidents.map(inc => (
-                                        <View key={inc.id} style={s.placeIncidentRow}>
-                                            <View style={s.placeIncidentInfo}>
-                                                <Text style={s.placeIncidentName}>{inc.reporter}</Text>
-                                                <Text style={s.placeIncidentTime}>{inc.time}</Text>
-                                            </View>
-                                            <View style={[
-                                                s.placeIncidentPill,
-                                                inc.status === 'ACTIVE' && s.placeIncidentPillActive,
-                                                inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
-                                                inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
-                                            ]}>
-                                                <Text style={s.placeIncidentPillText}>{inc.status}</Text>
-                                            </View>
-                                        </View>
-                                    ))
+                                    <>
+                                        <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
+                                        {safePlaceSubmitState === 'success' ? (
+                                            <RNAnimated.View
+                                                style={[
+                                                    s.safePlaceSuccessWrap,
+                                                    {
+                                                        opacity: safePlaceSuccessAnim,
+                                                        transform: [{
+                                                            translateY: safePlaceSuccessAnim.interpolate({
+                                                                inputRange: [0, 1],
+                                                                outputRange: [10, 0],
+                                                            }),
+                                                        }],
+                                                    },
+                                                ]}
+                                            >
+                                                <View style={s.safePlaceSuccessIcon}>
+                                                    <Ionicons name="checkmark" size={18} color={T.onPrimary} />
+                                                </View>
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={s.safePlaceSuccessTitle}>Sent to admin</Text>
+                                                    <Text style={s.safePlaceSuccessSubtitle}>
+                                                        Your safe place request was sent to admin for confirmation.
+                                                    </Text>
+                                                </View>
+                                            </RNAnimated.View>
+                                        ) : (
+                                            <>
+                                                <Text style={s.safePlaceQuestion}>
+                                                    Why is this place safe? (Describe briefly)
+                                                </Text>
+                                                <TextInput
+                                                    value={safePlaceAnswer}
+                                                    onChangeText={(v) => {
+                                                        setSafePlaceAnswer(v);
+                                                        if (safePlaceError) setSafePlaceError(null);
+                                                    }}
+                                                    placeholder="Type your answer…"
+                                                    placeholderTextColor={T.ink4}
+                                                    multiline
+                                                    textAlignVertical="top"
+                                                    style={s.safePlaceInput}
+                                                    selectionColor={T.violet}
+                                                />
+                                                {!!safePlaceError && (
+                                                    <Text style={s.safePlaceError}>{safePlaceError}</Text>
+                                                )}
+                                                <View style={s.safePlaceActions}>
+                                                    <TouchableOpacity
+                                                        style={[s.safePlaceBtn, s.safePlaceBtnSecondary]}
+                                                        onPress={cancelAddSafePlace}
+                                                        activeOpacity={0.8}
+                                                    >
+                                                        <Text style={s.safePlaceBtnTextSecondary}>Cancel</Text>
+                                                    </TouchableOpacity>
+                                                    <TouchableOpacity
+                                                        style={[
+                                                            s.safePlaceBtn,
+                                                            s.safePlaceBtnPrimary,
+                                                            safePlaceAnswer.trim().length === 0 && s.safePlaceBtnPrimaryDisabled,
+                                                        ]}
+                                                        onPress={safePlaceAnswer.trim().length === 0 ? undefined : submitAddSafePlace}
+                                                        activeOpacity={safePlaceAnswer.trim().length === 0 ? 1 : 0.8}
+                                                    >
+                                                        <Text style={s.safePlaceBtnTextPrimary}>Submit</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            </>
+                                        )}
+                                    </>
                                 )}
                             </View>
                         </RNAnimated.View>
@@ -2276,20 +2407,133 @@ const s = StyleSheet.create({
         color: T.ink3,
         marginTop: 4,
     },
-    placeSheetDirectionBtn: {
+    placeSheetActions: {
+        flexDirection: 'row',
+        gap: 10,
+        paddingHorizontal: 18,
+        paddingBottom: 12,
+    },
+    placeSheetActionBtn: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingVertical: 10,
         borderRadius: 999,
-        backgroundColor: T.violet,
         borderWidth: 1,
+    },
+    placeSheetActionBtnPrimary: {
+        backgroundColor: T.violet,
         borderColor: `${T.violet}70`,
     },
-    placeSheetDirectionText: {
+    placeSheetActionBtnSecondary: {
+        backgroundColor: T.surfaceBulky,
+        borderColor: `${T.violet}45`,
+    },
+    placeSheetActionBtnTextPrimary: {
         fontSize: 12,
-        fontWeight: '700',
+        fontWeight: '800',
+        color: T.onPrimary,
+        letterSpacing: 0.2,
+    },
+    placeSheetActionBtnTextSecondary: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: T.violet,
+        letterSpacing: 0.2,
+    },
+    safePlaceQuestion: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.ink3,
+        lineHeight: 16,
+    },
+    safePlaceInput: {
+        minHeight: 96,
+        borderRadius: 14,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        fontSize: 13,
+        fontWeight: '600',
+        color: T.ink,
+    },
+    safePlaceError: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.danger,
+        marginTop: -4,
+    },
+    safePlaceActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 4,
+    },
+    safePlaceSuccessWrap: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        borderRadius: 16,
+        backgroundColor: `${T.success}14`,
+        borderWidth: 1,
+        borderColor: `${T.success}35`,
+        marginTop: 6,
+    },
+    safePlaceSuccessIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: T.success,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    safePlaceSuccessTitle: {
+        fontSize: 13,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.2,
+    },
+    safePlaceSuccessSubtitle: {
+        marginTop: 2,
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.ink3,
+        lineHeight: 16,
+    },
+    safePlaceBtn: {
+        flex: 1,
+        height: 40,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+    },
+    safePlaceBtnSecondary: {
+        backgroundColor: T.surfaceBulky,
+        borderColor: 'rgba(255,255,255,0.14)',
+    },
+    safePlaceBtnPrimary: {
+        backgroundColor: T.violet,
+        borderColor: `${T.violet}70`,
+    },
+    safePlaceBtnPrimaryDisabled: {
+        backgroundColor: `${T.violet}40`,
+        borderColor: `${T.violet}40`,
+    },
+    safePlaceBtnTextSecondary: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: 0.2,
+    },
+    safePlaceBtnTextPrimary: {
+        fontSize: 12,
+        fontWeight: '800',
         color: T.onPrimary,
         letterSpacing: 0.2,
     },
