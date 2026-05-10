@@ -75,7 +75,7 @@ function Section({
                             style={s.row}
                             onPress={() =>
                                 router.push(
-                                    `/(tabs)/users/standard-user/${item.route}` as Parameters<typeof router.push>[0],
+                                    `/(tabs)/users/volunteer/${item.route}` as Parameters<typeof router.push>[0],
                                 )
                             }
                             activeOpacity={0.75}

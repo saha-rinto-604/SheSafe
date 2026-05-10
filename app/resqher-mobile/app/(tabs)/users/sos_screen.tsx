@@ -728,7 +728,7 @@ export default function SOSScreen() {
                 <View style={s.headerBtns}>
                     <TouchableOpacity
                         style={s.hBtn}
-                        onPress={() => Alert.alert('Notifications', 'No new notifications.')}
+                        onPress={() => router.push('/(tabs)/users/standard-user/notifications')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />

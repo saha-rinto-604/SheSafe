@@ -5,6 +5,7 @@ import {
     StyleSheet,
     StatusBar,
     ScrollView,
+    ScrollView as RNScrollView,
     TouchableOpacity,
     Animated,
     LayoutAnimation,
@@ -13,9 +14,11 @@ import {
     Image,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
 
 type ActivityType = 'RESPONDED' | 'FOLLOW_UP' | 'TRAINING' | 'ALERT';
 type ActivityStatus = 'COMPLETED' | 'ASSIGNED' | 'CANCELLED';
@@ -144,7 +147,22 @@ const statusTone = (status: ActivityStatus) => {
     }
 };
 
+const podiumTone = (rank: number) => {
+    switch (rank) {
+        case 1:
+            return { medal: '🥇', border: '#D9B564' };
+        case 2:
+            return { medal: '🥈', border: '#B9C0C9' };
+        case 3:
+            return { medal: '🥉', border: '#C38C5B' };
+        default:
+            return null;
+    }
+};
+
+
 export default function VolunteerActivity() {
+    const router = useRouter();
     const insets = useSafeAreaInsets();
     const [segment, setSegment] = useState<(typeof SEGMENTS)[number]>('Activity');
     const [selectedMonth, setSelectedMonth] = useState<(typeof MONTHS)[number]>('Apr 2026');
@@ -200,7 +218,18 @@ export default function VolunteerActivity() {
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
                 <View style={[s.header, { paddingTop: insets.top + 12 }]}>
-                    <View>
+                    <TouchableOpacity
+                        style={s.headerBtn}
+                        onPress={() => router.back()}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        activeOpacity={0.75}
+                        accessibilityLabel="Go back to volunteer home"
+                        accessibilityRole="button"
+                    >
+                        <Feather name="chevron-left" size={20} color={T.ink2} />
+                    </TouchableOpacity>
+
+                    <View style={s.headerTextWrap}>
                         <Text style={s.eyebrow}>Volunteer</Text>
                         <Text style={s.title}>Activity Center</Text>
                     </View>
@@ -226,7 +255,7 @@ export default function VolunteerActivity() {
                 </View>
 
                 <ScrollView
-                    contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + 32 }]}
+                    contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + VOLUNTEER_NAV_SCREEN_PADDING }]}
                     showsVerticalScrollIndicator={false}
                 >
                     {segment === 'Activity' ? (
@@ -289,7 +318,11 @@ export default function VolunteerActivity() {
                                 <Text style={s.sectionMeta}>Leaderboard</Text>
                             </View>
 
-                            <View style={s.monthRow}>
+                            <RNScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={s.monthRow}
+                            >
                                 {MONTHS.map(month => {
                                     const isActive = month === selectedMonth;
                                     return (
@@ -303,22 +336,25 @@ export default function VolunteerActivity() {
                                         </TouchableOpacity>
                                     );
                                 })}
-                            </View>
+                            </RNScrollView>
 
                             {currentUser && (
                                 <Animated.View style={[s.currentUserCard, { opacity: pulse.interpolate({
                                     inputRange: [0, 1],
                                     outputRange: [0.88, 1],
                                 }) }]}>
-                                    <View style={{ flex: 1 }}>
-                                        <View style={s.currentUserTitleRow}>
-                                            <Text style={s.currentUserTitle}>Your Rank</Text>
-                                            <Text style={s.currentUserRank}>#{currentUserRank}</Text>
-                                        </View>
-                                        <Text style={s.currentUserName}>{currentUser.name}</Text>
+                                    <View style={s.currentUserAvatarWrap}>
+                                        <Image source={{ uri: DEFAULT_AVATAR }} style={s.currentUserAvatar} />
                                     </View>
-                                    <View style={s.currentUserStats}>
-                                        <Text style={s.currentUserPoints}>{currentUser.points} pts</Text>
+                                    <View style={s.currentUserBody}>
+                                        <Text style={s.currentUserTitle}>Your Rank</Text>
+                                        <View style={s.currentUserNameRow}>
+                                            <Text style={s.currentUserName}>{currentUser.name}</Text>
+                                            <View style={s.currentUserStatsInline}>
+                                                <Text style={s.currentUserRank}>#{currentUserRank}</Text>
+                                                <Text style={s.currentUserPoints}>{currentUser.points} pts</Text>
+                                            </View>
+                                        </View>
                                         <Text style={s.currentUserMeta}>
                                             Overall rating {currentUser.rating.toFixed(1)} · {currentUser.missions} people helped
                                         </Text>
@@ -330,17 +366,26 @@ export default function VolunteerActivity() {
                                 const rank = index + 1;
                                 const isTop3 = rank <= 3;
                                 const isCurrentUser = row.id === CURRENT_USER_ID;
+                                const podium = isTop3 ? podiumTone(rank) : null;
                                 return (
                                     <View
                                         key={row.id}
                                         style={[
                                             s.leaderRow,
                                             isTop3 && s.leaderRowTop,
+                                            isTop3 && podium && { borderLeftColor: podium.border },
                                             isCurrentUser && s.leaderRowCurrent,
                                         ]}
                                     >
                                         <View style={[s.rankBadge, isTop3 && s.rankBadgeTop, isCurrentUser && s.rankBadgeCurrent]}>
-                                            <Text style={[s.rankText, isTop3 && s.rankTextTop]}>{rank}</Text>
+                                            {isTop3 && podium ? (
+                                                <View style={s.rankBadgePodium}>
+                                                    <Text style={s.rankMedal}>{podium.medal}</Text>
+                                                    <Text style={[s.rankText, s.rankTextTop]}>{rank}</Text>
+                                                </View>
+                                            ) : (
+                                                <Text style={s.rankText}>{rank}</Text>
+                                            )}
                                         </View>
                                         <View style={s.leaderMain}>
                                             <Text style={s.leaderName}>{row.name}</Text>
@@ -355,6 +400,9 @@ export default function VolunteerActivity() {
                         </View>
                     )}
                 </ScrollView>
+
+
+                <VolunteerBottomNav activeTab="Activity" />
             </View>
         </AtmosphericShell>
     );
@@ -368,10 +416,23 @@ const s = StyleSheet.create({
         paddingBottom: 18,
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         borderBottomWidth: 1,
         borderBottomColor: MED.stroke,
         backgroundColor: 'transparent',
+    },
+    headerBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: R.hBtn,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: T.lineMid,
+        backgroundColor: T.surfaceCard,
+        marginRight: 12,
+    },
+    headerTextWrap: {
+        flex: 1,
     },
     eyebrow: {
         fontSize: 11,
@@ -437,15 +498,15 @@ const s = StyleSheet.create({
         textTransform: 'uppercase',
     },
     sectionMeta: {
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: '600',
-        color: MED.muted,
+        color: T.ink4,
     },
     monthRow: {
         flexDirection: 'row',
         gap: 10,
         marginBottom: 16,
-        flexWrap: 'wrap',
+        paddingRight: 12,
     },
     monthChip: {
         paddingHorizontal: 12,
@@ -456,15 +517,15 @@ const s = StyleSheet.create({
         backgroundColor: T.surfaceBulky,
     },
     monthChipActive: {
-        backgroundColor: T.surfaceBulkyActive,
-        borderColor: `${T.violet}55`,
+        backgroundColor: T.violet,
+        borderColor: T.violet,
     },
     monthText: {
         fontSize: 12,
         fontWeight: '600',
         color: MED.muted,
     },
-    monthTextActive: { color: T.ink },
+    monthTextActive: { color: T.onPrimary },
 
     activityRow: {
         flexDirection: 'row',
@@ -574,6 +635,7 @@ const s = StyleSheet.create({
     leaderRowTop: {
         backgroundColor: T.surfaceBulkyActive,
         borderColor: `${T.accent}55`,
+        borderLeftWidth: 3,
     },
     leaderRowCurrent: {
         borderColor: `${T.violet}70`,
@@ -586,8 +648,31 @@ const s = StyleSheet.create({
         borderColor: `${T.violet}55`,
         padding: 16,
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
         marginBottom: 16,
+        shadowColor: T.violet,
+        shadowOpacity: 0.25,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 8 },
+        elevation: 10,
+    },
+    currentUserAvatarWrap: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: `${T.violet}55`,
+        backgroundColor: T.violetDim,
+        overflow: 'hidden',
+    },
+    currentUserAvatar: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
+    },
+    currentUserBody: {
+        flex: 1,
     },
     currentUserTitle: {
         fontSize: 11,
@@ -596,23 +681,30 @@ const s = StyleSheet.create({
         textTransform: 'uppercase',
         letterSpacing: 1.2,
     },
-    currentUserTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
     currentUserRank: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: T.ink2,
+        fontSize: 13,
+        fontWeight: '800',
+        color: T.ink,
     },
     currentUserName: {
         fontSize: 16,
         fontWeight: '700',
         color: T.ink,
+        flexShrink: 1,
+        marginRight: 12,
+    },
+    currentUserNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         marginTop: 6,
     },
-    currentUserStats: { alignItems: 'flex-end' },
+    currentUserStatsInline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        justifyContent: 'flex-end',
+    },
     currentUserPoints: {
         fontSize: 16,
         fontWeight: '800',
@@ -621,7 +713,7 @@ const s = StyleSheet.create({
     currentUserMeta: {
         fontSize: 12,
         color: T.ink4,
-        marginTop: 4,
+        marginTop: 8,
     },
     rankBadge: {
         width: 32,
@@ -647,6 +739,14 @@ const s = StyleSheet.create({
         color: T.ink3,
     },
     rankTextTop: { color: T.accent },
+    rankBadgePodium: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rankMedal: {
+        fontSize: 14,
+        marginBottom: 2,
+    },
     leaderMain: { flex: 1 },
     leaderName: {
         fontSize: 14,
@@ -662,5 +762,7 @@ const s = StyleSheet.create({
         fontSize: 13,
         fontWeight: '700',
         color: T.ink2,
+        minWidth: 72,
+        textAlign: 'right',
     },
 });

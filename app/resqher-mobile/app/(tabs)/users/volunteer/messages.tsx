@@ -210,7 +210,7 @@ export default function VolunteerMessages() {
                     <TouchableOpacity
                         style={st.headerBtn}
                         activeOpacity={0.7}
-                        onPress={() => Haptics.selectionAsync()}
+                        onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
                     >
                         <Feather name="bell" size={18} color={D.subtitle} />
                     </TouchableOpacity>

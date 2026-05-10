@@ -317,7 +317,7 @@ export default function VolunteerVerificationScreen() {
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                        <Feather name="chevron-left" size={22} color={T.ink} />
                     </TouchableOpacity>
                     <Text style={s.headerTitle}>Volunteer Verification</Text>
                     <View style={s.headerSpacer} />
@@ -811,3 +811,4 @@ const s = StyleSheet.create({
         color: T.dangerText, lineHeight: 18,
     },
 });
+

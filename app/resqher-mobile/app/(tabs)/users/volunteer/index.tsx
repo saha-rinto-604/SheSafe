@@ -14,7 +14,8 @@ import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
-import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -23,6 +24,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import SafePlaceButton from '../../../../components/SafePlaceButton';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
 
@@ -32,6 +34,13 @@ const { width, height } = Dimensions.get('window');
 
 const NAV_HEIGHT = 58;
 const NAV_BOT_OFFSET = 14;
+
+const SOS_BTN_SIZE = 156;
+const SOS_WRAP_SIZE = 320;
+const ARC_SIZE = SOS_BTN_SIZE + 20;
+const ARC_RADIUS = ARC_SIZE / 2;
+const HOLD_MS = 2000;
+const CANCEL_DURATION_DEFAULT = 10;
 
 const DEFAULT_REGION = {
     latitude: 23.8103, longitude: 90.4125,
@@ -146,6 +155,11 @@ const MOCK_SOS_REQUESTS: SosRequest[] = [
         longitude: 90.3654,
     },
 ];
+
+// Mock safe place (United International University)
+const SAFE_PLACE_LOCATION = { latitude: 23.7924, longitude: 90.4072, name: 'United International University' };
+// Mock volunteer location (Notunbazar) for safe-place route demo
+const NOTUNBAZAR_LOC = { latitude: 23.8067, longitude: 90.4199 };
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -269,11 +283,11 @@ function getManeuverIcon(maneuver?: string): string {
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;
 
-const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string }[] = [
-    { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline' },
-    { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline' },
-    { id: 'Incidents', label: 'Incidents', iconActive: 'alert-circle', iconOutline: 'alert-circle-outline' },
-    { id: 'Activity', label: 'Activity', iconActive: 'list', iconOutline: 'list-outline' },
+const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string; iconFamily?: 'Ionicons' | 'MaterialCommunityIcons' }[] = [
+    { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons' },
+    { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons' },
+    { id: 'Incidents', label: 'Incidents', iconActive: 'clipboard-clock', iconOutline: 'clipboard-clock-outline', iconFamily: 'MaterialCommunityIcons' },
+    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons' },
 ];
 
 // ── PremiumBar — identical to SOS screen ────────────────────────────────────
@@ -500,84 +514,7 @@ const scanStyles = StyleSheet.create({
     },
 });
 
-// ── Side Drawer ─────────────────────────────────────────────────────────────
-const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
-    { icon: 'user', label: 'Edit Profile' },
-    { icon: 'phone-call', label: 'Emergency Contacts' },
-    { icon: 'shield', label: 'Safety Settings' },
-    { icon: 'check-circle', label: 'Volunteer Verification' },
-    { icon: 'clock', label: 'Incident History' },
-    { icon: 'lock', label: 'Privacy & Security' },
-    { icon: 'settings', label: 'Settings' },
-    { icon: 'help-circle', label: 'Help & Support' },
-    { icon: 'log-out', label: 'Logout', danger: true },
-];
 
-const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-    const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
-    useEffect(() => {
-        RNAnimated.spring(slideX, {
-            toValue: visible ? 0 : -width * 0.76,
-            useNativeDriver: true, tension: 62, friction: 13,
-        }).start();
-    }, [visible]);
-
-    return (
-        <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-            <TouchableOpacity style={dr.overlay} activeOpacity={1} onPress={onClose} />
-            <RNAnimated.View style={[dr.drawer, { transform: [{ translateX: slideX }] }]}>
-                <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={dr.hd}>
-                    <View style={dr.avatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
-                    <Text style={dr.appName}>ResQher</Text>
-                    <Text style={dr.sub}>Emergency Assistance Platform</Text>
-                </LinearGradient>
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
-                    {DRAWER_ITEMS.map((item, i) => (
-                        <React.Fragment key={i}>
-                            {item.danger && <View style={dr.divider} />}
-                            <TouchableOpacity style={dr.row} onPress={onClose} activeOpacity={0.65}>
-                                <View style={[dr.iconBox, item.danger && dr.iconBoxDanger]}>
-                                    <Feather name={item.icon} size={18} color={item.danger ? T.danger : T.violet} />
-                                </View>
-                                <Text style={[dr.label, item.danger && dr.labelDanger]}>{item.label}</Text>
-                                {!item.danger && <Feather name="chevron-right" size={14} color={T.ink4} />}
-                            </TouchableOpacity>
-                        </React.Fragment>
-                    ))}
-                </ScrollView>
-            </RNAnimated.View>
-        </Modal>
-    );
-});
-const dr = StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
-    drawer: {
-        position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
-        backgroundColor: T.surface,
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
-            android: { elevation: 20 },
-        }),
-    },
-    hd: { paddingTop: 52, paddingBottom: 26, paddingHorizontal: 20 },
-    avatarRing: {
-        width: 50, height: 50, borderRadius: 25,
-        backgroundColor: `${T.onPrimary}2E`, borderWidth: 2, borderColor: `${T.onPrimary}47`,
-        alignItems: 'center', justifyContent: 'center', marginBottom: 10,
-    },
-    appName: { color: T.onPrimary, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
-    sub: { color: `${T.onPrimary}A6`, fontSize: 12, marginTop: 2, fontWeight: '500' },
-    row: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingVertical: 13, paddingHorizontal: 18,
-        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid,
-    },
-    iconBox: { width: 36, height: 36, borderRadius: 8, backgroundColor: T.violetDim, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
-    iconBoxDanger: { backgroundColor: `${T.danger}18` },
-    label: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
-    labelDanger: { color: T.danger },
-    divider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
-});
 
 // ── NavTab — identical to SOS screen ────────────────────────────────────────
 const NavTab = memo(function NavTab({
@@ -593,6 +530,8 @@ const NavTab = memo(function NavTab({
         onPress();
     }, [onPress]);
 
+    const Icon = tab.iconFamily === 'MaterialCommunityIcons' ? MaterialCommunityIcons : Ionicons;
+
     return (
         <TouchableOpacity
             style={s.navTab}
@@ -604,7 +543,7 @@ const NavTab = memo(function NavTab({
         >
             <RNAnimated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
                 <View style={[s.navIconBox, isActive && s.navIconBoxActive]}>
-                    <Ionicons
+                    <Icon
                         name={(isActive ? tab.iconActive : tab.iconOutline) as any}
                         size={20}
                         color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
@@ -612,6 +551,122 @@ const NavTab = memo(function NavTab({
                 </View>
                 <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
             </RNAnimated.View>
+        </TouchableOpacity>
+    );
+});
+
+// ── HoldSosButton — copied from SOS screen ───────────────────────────────────
+const HoldSosButton = memo(function HoldSosButton({
+    onTrigger,
+    onPhaseChange,
+}: {
+    onTrigger: () => void;
+    onPhaseChange?: (phase: 'idle' | 'holding' | 'armed') => void;
+}) {
+    const progress = useRef(new RNAnimated.Value(0)).current;
+    const scale = useRef(new RNAnimated.Value(1)).current;
+    const holdRef = useRef<RNAnimated.CompositeAnimation | null>(null);
+
+    const phaseRef = useRef<'idle' | 'holding' | 'armed'>('idle');
+    const setPhase = useCallback((next: 'idle' | 'holding' | 'armed') => {
+        phaseRef.current = next;
+        onPhaseChange?.(next);
+    }, [onPhaseChange]);
+
+    const startHold = useCallback(() => {
+        setPhase('holding');
+        Haptics.selectionAsync();
+        RNAnimated.spring(scale, { toValue: 0.94, useNativeDriver: true, tension: 200, friction: 10 }).start();
+        holdRef.current = RNAnimated.timing(progress, {
+            toValue: 1, duration: HOLD_MS, easing: Easing.linear, useNativeDriver: false,
+        });
+        holdRef.current.start(({ finished }) => {
+            if (finished && phaseRef.current === 'holding') {
+                // Armed: user must release to trigger
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                setPhase('armed');
+            }
+        });
+    }, [progress, scale, setPhase]);
+
+    const cancelHold = useCallback(() => {
+        holdRef.current?.stop();
+        setPhase('idle');
+        RNAnimated.parallel([
+            RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 10 }),
+            RNAnimated.timing(progress, { toValue: 0, duration: 240, useNativeDriver: false }),
+        ]).start();
+    }, [progress, scale, setPhase]);
+
+    const endHold = useCallback(() => {
+        if (phaseRef.current === 'armed') {
+            onTrigger();
+            progress.setValue(0);
+            scale.setValue(1);
+            setPhase('idle');
+            return;
+        }
+        cancelHold();
+    }, [cancelHold, onTrigger, progress, scale, setPhase]);
+
+    const rightRot = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['0deg', '180deg', '180deg'], extrapolate: 'clamp' });
+    const leftRot = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['0deg', '0deg', '180deg'], extrapolate: 'clamp' });
+    const arcOp = progress.interpolate({ inputRange: [0, 0.03, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' });
+
+    return (
+        <RNAnimated.View style={{ transform: [{ scale }] }}>
+            {/* Arc progress ring */}
+            <RNAnimated.View style={[StyleSheet.absoluteFillObject, {
+                width: ARC_SIZE, height: ARC_SIZE,
+                left: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
+                top: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
+                opacity: arcOp,
+            }]} pointerEvents="none">
+                <View style={hs.arcTrack} />
+                <View style={[hs.halfClip, hs.rightClip]}>
+                    <RNAnimated.View style={[hs.halfFill, hs.rightFill, { transform: [{ rotate: rightRot }] }]} />
+                </View>
+                <View style={[hs.halfClip, hs.leftClip]}>
+                    <RNAnimated.View style={[hs.halfFill, hs.leftFill, { transform: [{ rotate: leftRot }] }]} />
+                </View>
+            </RNAnimated.View>
+
+            {/* SOS button — Electric Violet gradient with glow */}
+            <TouchableOpacity onPressIn={startHold} onPressOut={endHold} activeOpacity={1}>
+                <LinearGradient
+                    colors={G.sosIdle.colors}
+                    start={G.sosIdle.start}
+                    end={G.sosIdle.end}
+                    style={s.sosBtn}
+                >
+                    <Text style={s.sosTxt}>SOS</Text>
+                </LinearGradient>
+            </TouchableOpacity>
+        </RNAnimated.View>
+    );
+});
+
+const hs = StyleSheet.create({
+    arcTrack: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 3.5, borderColor: `${T.violet}30` },
+    halfClip: { position: 'absolute', width: ARC_SIZE / 2, height: ARC_SIZE, overflow: 'hidden' },
+    rightClip: { left: ARC_SIZE / 2 },
+    leftClip: { left: 0 },
+    halfFill: { position: 'absolute', width: ARC_SIZE, height: ARC_SIZE, borderRadius: ARC_RADIUS, borderWidth: 3.5, borderColor: T.violet, backgroundColor: 'transparent' },
+    rightFill: { left: -ARC_SIZE / 2 },
+    leftFill: { left: 0 },
+});
+
+// ── LiveSOSButton — copied from SOS screen ───────────────────────────────────
+const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => void }) {
+    return (
+        <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
+            <View style={[s.sosBtn, s.sosBtnEmg]}>
+                <View style={s.sosBtnDangerFill}>
+                    <Ionicons name="location-sharp" size={24} color={T.onDanger} />
+                    <Text style={s.sosTxt}>LIVE</Text>
+                    <Text style={s.sosSubTxt}>TAP TO STOP</Text>
+                </View>
+            </View>
         </TouchableOpacity>
     );
 });
@@ -624,7 +679,7 @@ export default function VolunteerHome() {
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
 
-    const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
+    const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('driving');
     const [isLiveNav, setIsLiveNav] = useState(false);
@@ -634,7 +689,6 @@ export default function VolunteerHome() {
     const [searchText, setSearchText] = useState('');
     const [showLocationCard, setShowLocationCard] = useState(false);
     const [sosPanelOpen, setSosPanelOpen] = useState(false);
-    const [drawerOpen, setDrawerOpen] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
     const [recentPlaces, setRecentPlaces] = useState<PlaceSuggestion[]>([]);
@@ -644,6 +698,12 @@ export default function VolunteerHome() {
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'success'>('idle');
+    const [showSOS, setShowSOS] = useState(false);
+    const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
+    const [sosActive, setSosActive] = useState(false);
+    const [cancelCountdown, setCancelCountdown] = useState(CANCEL_DURATION_DEFAULT);
+    const [isEmergencyLive, setIsEmergencyLive] = useState(false);
+    const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
     const safePlaceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [directionsMode, setDirectionsMode] = useState(false);
@@ -668,6 +728,10 @@ export default function VolunteerHome() {
     const [isScanAnimating, setIsScanAnimating] = useState(false);
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
+    const [showSafePlace, setShowSafePlace] = useState(false);
+    const [safePlaceCoords, setSafePlaceCoords] = useState<LatLng[]>([]);
+    const [safePlaceDistance, setSafePlaceDistance] = useState<number | null>(null);
+    const [safePlaceLoading, setSafePlaceLoading] = useState(false);
     const [activeSosView, setActiveSosView] = useState<SosRequest | null>(null);
     const [sosPathCoords, setSosPathCoords] = useState<LatLng[]>([]);
     const [sosRouteDistance, setSosRouteDistance] = useState<string>('');
@@ -694,6 +758,70 @@ export default function VolunteerHome() {
     const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
     const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
     const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim0 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim0Op = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim1 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim1Op = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim2 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim2Op = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnims = [
+        { scale: pulseAnim0, op: pulseAnim0Op },
+        { scale: pulseAnim1, op: pulseAnim1Op },
+        { scale: pulseAnim2, op: pulseAnim2Op },
+    ];
+
+    const triggerSOS = useCallback(() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        setHoldPhase('idle');
+        setSosActive(true);
+        setLocationStatus('sharing');
+        setCancelCountdown(CANCEL_DURATION_DEFAULT);
+    }, []);
+
+    const cancelSOS = useCallback(() => {
+        setSosActive(false);
+        setCancelCountdown(0);
+        setLocationStatus('ready');
+        setHoldPhase('idle');
+        setIsEmergencyLive(false);
+        if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
+    }, []);
+
+    const confirmStop = useCallback(() => {
+        Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [
+            { text: 'Keep Active', style: 'cancel' },
+            { text: 'Stop Alert', style: 'destructive', onPress: cancelSOS },
+        ]);
+    }, [cancelSOS]);
+
+    useEffect(() => {
+        if (!sosActive || cancelCountdown <= 0) return;
+        cancelTimerRef.current = setInterval(() => {
+            setCancelCountdown(prev => {
+                if (prev <= 1) {
+                    clearInterval(cancelTimerRef.current!);
+                    setIsEmergencyLive(true);
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
+    }, [sosActive, cancelCountdown === CANCEL_DURATION_DEFAULT]);
+
+    useEffect(() => {
+        pulseAnims.forEach(({ scale, op }, i) => {
+            const loop = () => {
+                scale.setValue(1);
+                op.setValue(0.55);
+                RNAnimated.parallel([
+                    RNAnimated.timing(scale, { toValue: 1.6, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                    RNAnimated.timing(op, { toValue: 0, duration: 2200, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+                ]).start(() => loop());
+            };
+            setTimeout(loop, i * 700);
+        });
+    }, []);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
@@ -1001,6 +1129,86 @@ export default function VolunteerHome() {
         }
     }, [directionsMode, endLocation, startLocation, travelMode]);
 
+    // Fetch route to mock safe place (UoU) from Notunbazar when toggled
+    useEffect(() => {
+        let aborted = false;
+
+        const fetchSafePlaceRoute = async () => {
+            if (!showSafePlace) {
+                setSafePlaceCoords([]);
+                setSafePlaceDistance(null);
+                setSafePlaceLoading(false);
+                return;
+            }
+
+            setSafePlaceLoading(true);
+
+            try {
+                if (!GOOGLE_MAPS_API_KEY) {
+                    // No API key — fallback to straight line from Notunbazar to UoU
+                    const coords = [
+                        { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
+                        { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
+                    ];
+                    if (!aborted) {
+                        setSafePlaceCoords(coords);
+                        setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
+                        mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
+                    }
+                } else {
+                    const origin = `${NOTUNBAZAR_LOC.latitude},${NOTUNBAZAR_LOC.longitude}`;
+                    const destination = `${SAFE_PLACE_LOCATION.latitude},${SAFE_PLACE_LOCATION.longitude}`;
+                    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=walking&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    if (!data?.routes?.length) {
+                        if (!aborted) {
+                            const coords = [
+                                { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
+                                { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
+                            ];
+                            setSafePlaceCoords(coords);
+                            setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
+                            mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
+                        }
+                    } else {
+                        const chosen = data.routes[0];
+                        const coords = decodePolyline(chosen.overview_polyline?.points ?? '');
+                        if (!aborted) {
+                            setSafePlaceCoords(coords.length ? coords : [
+                                { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
+                                { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
+                            ]);
+                            // distance from API legs if available
+                            const leg = chosen?.legs?.[0];
+                            const distKm = leg?.distance?.value ? leg.distance.value / 1000 : haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000;
+                            setSafePlaceDistance(distKm);
+                            // Fit map to safe route
+                            if (coords.length > 1) {
+                                mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                if (!aborted) {
+                    const coords = [
+                        { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
+                        { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
+                    ];
+                    setSafePlaceCoords(coords);
+                    setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
+                }
+            } finally {
+                if (!aborted) setSafePlaceLoading(false);
+            }
+        };
+
+        fetchSafePlaceRoute();
+
+        return () => { aborted = true; };
+    }, [showSafePlace]);
+
     // ── Scan animation helpers ──────────────────────────────────────────
     const startScanAnimation = useCallback(() => {
         const radarAnims = [radarAnim0, radarAnim1, radarAnim2];
@@ -1187,6 +1395,46 @@ export default function VolunteerHome() {
         }
     }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation]);
 
+    const closeLocationCard = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+        ]).start(() => setShowLocationCard(false));
+    }, []);
+
+    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
+        setPlaceSheetOpen(true);
+        setPlaceSheetMode('incidents');
+        setSafePlaceAnswer('');
+        setSafePlaceError(null);
+        setSafePlaceSubmitState('idle');
+        placeSheetY.setValue(height);
+        placeSheetOpacity.setValue(0);
+        placeSheetDragY.setValue(0);
+        setPlaceIncidents(DHAKA_INCIDENTS[place.id] ?? []);
+        RNAnimated.parallel([
+            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]).start();
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const closePlaceSheet = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => setPlaceSheetOpen(false));
+        placeSheetDragY.setValue(0);
+        setPlaceSheetMode('incidents');
+        setSafePlaceAnswer('');
+        setSafePlaceError(null);
+        setSafePlaceSubmitState('idle');
+
+        if (safePlaceTimeoutRef.current) {
+            clearTimeout(safePlaceTimeoutRef.current);
+            safePlaceTimeoutRef.current = null;
+        }
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
         setSearchText(place.name);
@@ -1223,7 +1471,6 @@ export default function VolunteerHome() {
         handleResolvedPlaceSelect(place);
     }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
 
-    // Show location card
     const openLocationCard = useCallback(() => {
         if (!userLoc) return;
         if (placeSheetOpen) closePlaceSheet();
@@ -1239,23 +1486,29 @@ export default function VolunteerHome() {
         ]).start();
     }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
 
-    // Hide location card
-    const closeLocationCard = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
-        ]).start(() => setShowLocationCard(false));
-    }, []);
-
     const openSosPanel = useCallback(() => {
         if (showLocationCard) closeLocationCard();
         if (placeSheetOpen) closePlaceSheet();
+        setShowSafePlace(false);
         setSosPanelOpen(true);
     }, [closeLocationCard, closePlaceSheet, placeSheetOpen, showLocationCard]);
 
     const closeSosPanel = useCallback(() => {
         setSosPanelOpen(false);
-    }, []);
+        setActiveSosView(null);
+        setSosPathCoords([]);
+        setSosRouteDistance('');
+        setSosRouteDuration('');
+        setSelectedPlace(null);
+        // Animate map back to user location
+        if (userLoc) {
+            setTimeout(() => {
+                mapRef.current?.animateToRegion(
+                    { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
+                );
+            }, 200);
+        }
+    }, [userLoc]);
 
     const exitSosView = useCallback(() => {
         setActiveSosView(null);
@@ -1264,6 +1517,21 @@ export default function VolunteerHome() {
         setSosRouteDuration('');
         setSosPanelOpen(true);
     }, []);
+
+    const handleSafePlaceToggle = useCallback(() => {
+        setShowSafePlace(prev => {
+            const willShow = !prev;
+            // If toggling OFF, reset map to current location
+            if (prev && !willShow && userLoc) {
+                setTimeout(() => {
+                    mapRef.current?.animateToRegion(
+                        { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
+                    );
+                }, 200);
+            }
+            return willShow;
+        });
+    }, [userLoc]);
 
     const handleViewSos = useCallback(async (req: SosRequest) => {
         const VOLUNTEER_LOC = { latitude: 23.8293, longitude: 90.4182 }; // Khilkhet
@@ -1319,39 +1587,6 @@ export default function VolunteerHome() {
             Alert.alert('Network Error', 'Failed to fetch the path visualization.');
         }
     }, [decodePolyline]);
-
-    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
-        setPlaceSheetOpen(true);
-        setPlaceSheetMode('incidents');
-        setSafePlaceAnswer('');
-        setSafePlaceError(null);
-        setSafePlaceSubmitState('idle');
-        placeSheetY.setValue(height);
-        placeSheetOpacity.setValue(0);
-        placeSheetDragY.setValue(0);
-        setPlaceIncidents(DHAKA_INCIDENTS[place.id] ?? []);
-        RNAnimated.parallel([
-            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
-        ]).start();
-    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
-
-    const closePlaceSheet = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-        ]).start(() => setPlaceSheetOpen(false));
-        placeSheetDragY.setValue(0);
-        setPlaceSheetMode('incidents');
-        setSafePlaceAnswer('');
-        setSafePlaceError(null);
-        setSafePlaceSubmitState('idle');
-
-        if (safePlaceTimeoutRef.current) {
-            clearTimeout(safePlaceTimeoutRef.current);
-            safePlaceTimeoutRef.current = null;
-        }
-    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
     const openAddSafePlace = useCallback(() => {
         setPlaceSheetMode('add_safe_place');
@@ -1436,6 +1671,7 @@ export default function VolunteerHome() {
         setStartSearchActive(false);
         setStartSearchText('');
         setStartLocation(null);
+        setEndLocation(null);
         setRouteCoords([]);
         setSafeRouteCoords([]);
         setUnsafeRouteCoords([]);
@@ -1445,13 +1681,25 @@ export default function VolunteerHome() {
         setBlockedZoneName(null);
         setShowSafePath(false);
         setIsScanAnimating(false);
+        setSelectedPlace(null);
+        setSearchText('');
+        setPlaceSheetOpen(false);
+
         RNAnimated.timing(directionsProgress, {
             toValue: 0,
             duration: 220,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: false,
         }).start();
-    }, [directionsProgress]);
+
+        if (userLoc) {
+            setTimeout(() => {
+                mapRef.current?.animateToRegion(
+                    { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
+                );
+            }, 100);
+        }
+    }, [directionsProgress, userLoc]);
 
     const handleStartSelect = useCallback((place: PlaceSuggestion) => {
         setStartLocation(place);
@@ -1515,7 +1763,6 @@ export default function VolunteerHome() {
         <AtmosphericShell>
             <View style={s.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
                 {/* ── Map ─────────────────────────────────────────────────────── */}
                 <MapView
@@ -1559,6 +1806,26 @@ export default function VolunteerHome() {
                         </Marker>
                     )}
 
+                    {showSafePlace && safePlaceCoords.length > 1 && (
+                        <>
+                            <Polyline
+                                coordinates={safePlaceCoords}
+                                strokeColor={T.violet}
+                                strokeWidth={4}
+                                lineCap="round"
+                                lineJoin="round"
+                            />
+                            {/* start marker (user) */}
+                            <Marker coordinate={safePlaceCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                                <View style={s.placeMarkerWrap}><View style={[s.placeMarkerIconWrap, { backgroundColor: T.violet }]}><Ionicons name="person" size={18} color={T.onPrimary} /></View></View>
+                            </Marker>
+                            {/* destination marker (safe place) */}
+                            <Marker coordinate={safePlaceCoords[safePlaceCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
+                                <View style={s.placeMarkerWrap}><View style={[s.placeMarkerIconWrap, { backgroundColor: T.accent }]}><Ionicons name="shield" size={16} color={T.onPrimary} /></View></View>
+                            </Marker>
+                        </>
+                    )}
+
                     {safeRouteCoords.length > 0 && unsafeRouteCoords.length > 0 && (
                         <Polyline
                             coordinates={unsafeRouteCoords}
@@ -1599,7 +1866,8 @@ export default function VolunteerHome() {
                                     <View style={[s.sosMarkerInner, { borderColor: T.violet }]}>
                                         <Image 
                                             source={{ uri: profile?.photoUri || 'https://i.pravatar.cc/150?img=11' }} 
-                                            style={s.sosMarkerAvatar} 
+                                            style={s.sosMarkerAvatar}
+                                            resizeMode="cover"
                                         />
                                     </View>
                                 </View>
@@ -1614,7 +1882,8 @@ export default function VolunteerHome() {
                                     <View style={[s.sosMarkerInner, { borderColor: T.danger }]}>
                                         <Image 
                                             source={{ uri: activeSosView.avatarUri }} 
-                                            style={s.sosMarkerAvatar} 
+                                            style={s.sosMarkerAvatar}
+                                            resizeMode="cover"
                                         />
                                     </View>
                                 </View>
@@ -1772,7 +2041,7 @@ export default function VolunteerHome() {
                                     <View style={s.headerBtns}>
                                         <TouchableOpacity
                                             style={s.hBtn}
-                                            onPress={() => Alert.alert('Notifications', 'No new notifications.')}
+                                            onPress={() => router.push('/(tabs)/users/volunteer/notifications')}
                                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                         >
                                             <Ionicons name="notifications-outline" size={20} color={T.ink2} />
@@ -1780,7 +2049,7 @@ export default function VolunteerHome() {
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={s.profileBtn}
-                                            onPress={() => { }}
+                                            onPress={() => router.push('/(tabs)/users/volunteer/profile-menu')}
                                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                             accessibilityLabel="Open profile menu"
                                             accessibilityRole="button"
@@ -1800,6 +2069,8 @@ export default function VolunteerHome() {
                         )}
                     </PremiumBar>
                 )}
+
+
 
                 {/* ── Top Live Banner ────────────────────────────────────────── */}
                 {isLiveNav && navInstructions.length > 0 && !sosPanelOpen && (
@@ -2012,8 +2283,16 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── Current location button (35% from top) ───────────────────── */}
-                {!directionsMode && !selectedPlace && !sosPanelOpen && (
+                {!directionsMode && !selectedPlace && !sosPanelOpen && !activeSosView && !searchActive && !startSearchActive && (
                     <View style={s.mapControls}>
+                        <TouchableOpacity
+                            style={s.ctrlBtn}
+                            onPress={() => !sosActive && setShowSOS(!showSOS)}
+                            accessibilityLabel="Emergency SOS"
+                            accessibilityRole="button"
+                        >
+                            <Ionicons name="warning-outline" size={20} color={T.danger} />
+                        </TouchableOpacity>
                         <TouchableOpacity
                             style={s.ctrlBtn}
                             onPress={openLocationCard}
@@ -2029,9 +2308,10 @@ export default function VolunteerHome() {
                             accessibilityLabel="View SOS requests"
                             accessibilityRole="button"
                         >
-                            <Ionicons name="alert-circle-outline" size={20} color={T.danger} />
+                            <Ionicons name="alarm-outline" size={20} color={T.danger} />
                             <View style={s.sosReqBadge} />
                         </TouchableOpacity>
+                        <SafePlaceButton onPress={handleSafePlaceToggle} isActive={showSafePlace} distance={safePlaceDistance} />
                     </View>
                 )}
 
@@ -2221,6 +2501,61 @@ export default function VolunteerHome() {
                             </View>
                         </RNAnimated.View>
                     </>
+                )}
+
+                {/* ── SOS Overlay — centered on screen ───────────────────── */}
+                {showSOS && (
+                    <View style={s.sosWrap}>
+                        {sosActive && cancelCountdown > 0 ? (
+                            <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
+                                <View style={s.cancelBtn}>
+                                    <Text style={s.cancelLabel}>CANCEL</Text>
+                                    <Text style={s.cancelCount}>{cancelCountdown}s</Text>
+                                    <Text style={s.cancelSub}>Tap to cancel</Text>
+                                </View>
+                            </TouchableOpacity>
+                        ) : isEmergencyLive ? (
+                            <LiveSOSButton onPress={confirmStop} />
+                        ) : (
+                            <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
+                        )}
+
+                        {sosActive && pulseAnims.map(({ scale, op }, i) => (
+                            <RNAnimated.View
+                                key={i}
+                                pointerEvents="none"
+                                style={[s.pulseRing, {
+                                    transform: [{ scale }],
+                                    opacity: op,
+                                    borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
+                                }]}
+                            />
+                        ))}
+
+                        {sosActive && (
+                            <View style={[s.statusPill, isEmergencyLive && s.statusPillLive]}>
+                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]} numberOfLines={1}>
+                                    {cancelCountdown > 0
+                                        ? `Alert triggered · Cancel in ${cancelCountdown}s`
+                                        : 'Sharing your location'
+                                    }
+                                </Text>
+                            </View>
+                        )}
+                        {!sosActive && (
+                            <View style={s.statusPill}>
+                                <Text style={s.pillTxt} numberOfLines={1}>
+                                    {holdPhase === 'idle'
+                                        ? 'Press and hold for 2 sec'
+                                        : holdPhase === 'holding'
+                                            ? 'Holding...'
+                                            : 'Release'
+                                    }
+                                </Text>
+                            </View>
+                        )}
+                    </View>
                 )}
 
                 {/* ── Place Detail Sheet — half screen ─────────────────────── */}
@@ -2757,6 +3092,127 @@ const s = StyleSheet.create({
             android: { elevation: 4 },
         }),
     },
+    sosBtn: {
+        width: SOS_BTN_SIZE,
+        height: SOS_BTN_SIZE,
+        borderRadius: SOS_BTN_SIZE / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 8, shadowColor: '#8A38F6' },
+        }),
+    },
+    sosTxt: {
+        fontSize: 18,
+        fontWeight: '900',
+        color: T.onPrimary,
+        letterSpacing: 0.5,
+    },
+    sosWrap: {
+        position: 'absolute',
+        alignSelf: 'center',
+        top: height * 0.4,
+        width: SOS_WRAP_SIZE,
+        height: SOS_WRAP_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 300,
+    },
+    pulseRing: {
+        position: 'absolute',
+        width: SOS_BTN_SIZE,
+        height: SOS_BTN_SIZE,
+        borderRadius: SOS_BTN_SIZE / 2,
+        borderWidth: 2.5,
+    },
+    statusPill: {
+        position: 'absolute',
+        bottom: -56,
+        alignSelf: 'center',
+        minWidth: 120,
+        maxWidth: SOS_WRAP_SIZE - 48,
+        borderRadius: 18,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 3 },
+        }),
+    },
+    pillTxt: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: T.ink3,
+        letterSpacing: 0.4,
+    },
+    pillDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: T.violet,
+    },
+    statusPillLive: {
+        backgroundColor: `${T.danger}15`,
+        borderColor: `${T.danger}30`,
+    },
+    pillTxtLive: {
+        color: T.danger,
+    },
+    sosBtnEmg: {
+        backgroundColor: T.danger,
+        borderColor: T.dangerBorder,
+    },
+    sosBtnDangerFill: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+    },
+    sosSubTxt: {
+        fontSize: 8,
+        fontWeight: '900',
+        color: T.onDanger,
+        letterSpacing: 0.5,
+        marginTop: 2,
+    },
+    cancelBtn: {
+        width: SOS_BTN_SIZE,
+        height: SOS_BTN_SIZE,
+        borderRadius: SOS_BTN_SIZE / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    cancelLabel: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: T.ink,
+        letterSpacing: 0.5,
+    },
+    cancelCount: {
+        fontSize: 24,
+        fontWeight: '900',
+        color: T.danger,
+        letterSpacing: -0.5,
+        marginTop: 4,
+    },
+    cancelSub: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.ink3,
+        marginTop: 2,
+    },
     sosReqBtn: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -3284,22 +3740,23 @@ const s = StyleSheet.create({
         gap: 2,
     },
     sosMarkerInner: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        width: 52,
+        height: 52,
+        borderRadius: 26,
         borderWidth: 2.5,
         backgroundColor: '#fff',
         alignItems: 'center',
         justifyContent: 'center',
+        overflow: 'hidden',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 8 },
         }),
     },
     sosMarkerAvatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
     },
     sosMarkerLabel: {
         paddingHorizontal: 6,

@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
 
 const MED = {
     muted: '#A09CB2',
@@ -188,7 +189,7 @@ export default function VolunteerIncidents() {
                 <ScrollView
                     contentContainerStyle={[
                         s.scroll,
-                        { paddingBottom: insets.bottom + 36 },
+                        { paddingBottom: insets.bottom + VOLUNTEER_NAV_SCREEN_PADDING },
                     ]}
                     showsVerticalScrollIndicator={false}
                 >
@@ -208,6 +209,8 @@ export default function VolunteerIncidents() {
                         ))
                     )}
                 </ScrollView>
+
+                <VolunteerBottomNav activeTab="Incidents" />
             </View>
         </AtmosphericShell>
     );
