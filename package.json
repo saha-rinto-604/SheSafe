@@ -1,0 +1,31 @@
+{
+  "name": "resqher__frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "cd backend && npm install && cd ../app/resqher-mobile && npm install",
+    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start\"",
+    "dev:ios": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start --ios\"",
+    "dev:tunnel": "concurrently -n \"BACKEND,FRONTEND\" -c \"magenta,cyan\" \"cd backend && npm run dev\" \"cd app/resqher-mobile && npx expo start --tunnel\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MRH-Romit/ResQher__Frontend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/MRH-Romit/ResQher__Frontend/issues"
+  },
+  "homepage": "https://github.com/MRH-Romit/ResQher__Frontend#readme",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "expo": "^55.0.10-canary-20260327-0789fbc",
+    "react": "19.2.0",
+    "react-native": "0.83.4"
+  }
+}

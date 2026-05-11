@@ -32,10 +32,9 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import {
-    DOCTORS, HOSPITALS, AMBULANCES, DIAGNOSTICS, PHARMACIES,
-    RED_ZONES, DEMO_SAFE_ROUTE,
     SPECIALIST_CHIPS, AMBULANCE_CHIPS, GENERIC_CHIPS,
 } from '../../../../src/data/medicalMockData';
+import { medicalService } from '../../../../src/services/api';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
 
 const { width, height } = Dimensions.get('window');
@@ -215,6 +214,10 @@ function generateSafeRoute(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Helper
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MedicalMapView — Main Screen
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function MedicalMapView() {
@@ -234,6 +237,11 @@ export default function MedicalMapView() {
     const [safeRoute, setSafeRoute] = useState<{ latitude: number; longitude: number }[] | null>(null);
     const [returnFromWebView, setReturnFromWebView] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [backendProviders, setBackendProviders] = useState<any[]>([]);
+
+    useEffect(() => {
+        medicalService.getProviders().then(setBackendProviders).catch(console.error);
+    }, []);
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -257,71 +265,108 @@ export default function MedicalMapView() {
 
     // ── Provider pins data ──────────────────────────────────────────────────
     const providers = useMemo(() => {
+        let baseProviders: any[] = [];
+        let mapped = backendProviders.map(p => ({
+            ...p,
+            latitude: Number(p.latitude) || 0,
+            longitude: Number(p.longitude) || 0
+        }));
+        let filtered = mapped.filter(p => {
+            const pType = p.type || p.provider_type;
+            if (category === 'specialists' && pType !== 'specialists') return false;
+            if (category === 'hospital' && pType !== 'hospital') return false;
+            if (category === 'ambulance' && pType !== 'ambulance') return false;
+            if (category === 'diagnostics' && pType !== 'diagnostics') return false;
+            if (category === 'pharmacy' && pType !== 'pharmacy') return false;
+            return true;
+        });
+
         switch (category) {
             case 'specialists': {
-                let docs = DOCTORS.filter(d => d.shift === shift);
+                let docs = filtered.filter(d => shift === 'now' || d.shift === shift);
                 if (selectedChip !== 'all') {
                     docs = docs.filter(d => d.specialty === selectedChip);
                 }
-                return docs.map(d => ({
-                    id: d.id, name: d.name,
-                    latitude: d.latitude, longitude: d.longitude,
-                    rating: d.rating ?? 0,
-                    affiliation: d.affiliation ?? d.hospital,
-                    bookingUrl: d.bookingUrl,
+                baseProviders = docs.map(d => ({
+                    ...d,
+                    safeRouteVerified: Boolean(d.safeRouteVerified || d.safe_route_verified),
                     icon: 'medkit' as const,
                 }));
+                break;
             }
             case 'hospital':
-                return HOSPITALS.map(h => ({
-                    id: h.id, name: h.name,
-                    latitude: h.latitude, longitude: h.longitude,
-                    rating: h.rating ?? 0,
-                    affiliation: h.affiliation ?? '',
-                    bookingUrl: h.bookingUrl,
+                baseProviders = filtered.map(h => ({
+                    ...h,
+                    safeRouteVerified: Boolean(h.safeRouteVerified || h.safe_route_verified),
                     icon: 'business' as const,
                 }));
+                break;
             case 'ambulance': {
-                let ambs = [...AMBULANCES];
+                let ambs = [...filtered];
                 if (selectedChip !== 'all') {
-                    ambs = ambs.filter(a => a.type === selectedChip);
+                    ambs = ambs.filter(a => (a.ambulanceType || a.ambulance_type) === selectedChip);
                 }
-                return ambs.map(a => ({
-                    id: a.id, name: a.providerName,
-                    latitude: a.latitude, longitude: a.longitude,
-                    rating: a.rating ?? 0,
-                    affiliation: a.affiliation ?? '',
-                    bookingUrl: '',
+                baseProviders = ambs.map(a => ({
+                    ...a,
+                    safeRouteVerified: Boolean(a.safeRouteVerified || a.safe_route_verified),
+                    ambulanceType: a.ambulanceType || a.ambulance_type,
                     icon: 'car' as const,
                 }));
+                break;
             }
             case 'diagnostics':
-                return DIAGNOSTICS.map(d => ({
-                    id: d.id, name: d.name,
-                    latitude: d.latitude, longitude: d.longitude,
-                    rating: d.rating ?? 0,
-                    affiliation: d.affiliation ?? '',
-                    bookingUrl: d.bookingUrl,
+                baseProviders = filtered.map(d => ({
+                    ...d,
+                    safeRouteVerified: Boolean(d.safeRouteVerified || d.safe_route_verified),
                     icon: 'flask' as const,
                 }));
+                break;
             case 'pharmacy':
-                return PHARMACIES.map(p => ({
-                    id: p.id, name: p.name,
-                    latitude: p.latitude, longitude: p.longitude,
-                    rating: p.rating ?? 0,
-                    affiliation: p.affiliation ?? '',
-                    bookingUrl: '',
+                baseProviders = filtered.map(p => ({
+                    ...p,
+                    safeRouteVerified: Boolean(p.safeRouteVerified || p.safe_route_verified),
+                    isDeliveryAvailable: Boolean(p.isDeliveryAvailable || p.is_delivery_available),
                     icon: 'bandage' as const,
                 }));
+                break;
             default:
-                return [];
+                break;
         }
-    }, [category, shift, selectedChip]);
+        
+        // Removed random marker generation so we only show real API data
+        return baseProviders;
+    }, [category, shift, selectedChip, backendProviders]);
+
+    // ── Sort providers by distance to user ──────────────────────────────────
+    const sortedProviders = useMemo(() => {
+        if (!userLoc) return providers.map(p => ({ ...p, distM: 0, distLabel: '' }));
+        const EARTH_RADIUS_M = 6371000;
+        const toRad = (deg: number) => (deg * Math.PI) / 180;
+        
+        const dist = (p: {latitude: number, longitude: number}) => {
+            const dLat = toRad(p.latitude - userLoc.latitude);
+            const dLon = toRad(p.longitude - userLoc.longitude);
+            const lat1 = toRad(userLoc.latitude);
+            const lat2 = toRad(p.latitude);
+            const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+            return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
+        };
+
+        return [...providers].map(p => {
+            const m = dist(p);
+            const km = (m / 1000).toFixed(1);
+            return {
+                ...p,
+                distM: m,
+                distLabel: m < 1000 ? `${Math.round(m)} m away` : `${km} km away`,
+            };
+        }).sort((a, b) => a.distM - b.distM);
+    }, [providers, userLoc]);
 
     // ── Selected provider details ───────────────────────────────────────────
     const selectedProvider = useMemo(() =>
-        providers.find(p => p.id === selectedPin) ?? null,
-        [providers, selectedPin]
+        sortedProviders.find(p => p.id === selectedPin) ?? null,
+        [sortedProviders, selectedPin]
     );
 
     // ── Screen title ────────────────────────────────────────────────────────
@@ -366,19 +411,15 @@ export default function MedicalMapView() {
             RNAnimated.timing(calloutOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
 
-        // Auto-trigger safe route
-        const provider = providers.find(p => p.id === providerId);
+        const provider = sortedProviders.find(p => p.id === providerId);
         if (provider && userLoc) {
-            const route = generateSafeRoute(userLoc, { latitude: provider.latitude, longitude: provider.longitude });
-            setSafeRoute(route);
-
             // Zoom to show both user and provider
             mapRef.current?.fitToCoordinates(
                 [userLoc, { latitude: provider.latitude, longitude: provider.longitude }],
                 { edgePadding: { top: 120, right: 60, bottom: 360, left: 60 }, animated: true }
             );
         }
-    }, [providers, userLoc, calloutY, calloutOpacity]);
+    }, [sortedProviders, userLoc, calloutY, calloutOpacity]);
 
     // ── Close callout ───────────────────────────────────────────────────────
     const closeCallout = useCallback(() => {
@@ -391,6 +432,19 @@ export default function MedicalMapView() {
             setSafeRoute(null);
         });
     }, [calloutY, calloutOpacity]);
+
+    // ── Previous / Next near options ────────────────────────────────────────
+    const handleNextPrev = useCallback((direction: 'next' | 'prev') => {
+        if (!selectedPin || sortedProviders.length < 2) return;
+        const idx = sortedProviders.findIndex(p => p.id === selectedPin);
+        if (idx === -1) return;
+        
+        let newIdx = direction === 'next' ? idx + 1 : idx - 1;
+        if (newIdx < 0) newIdx = sortedProviders.length - 1;
+        if (newIdx >= sortedProviders.length) newIdx = 0;
+        
+        handlePinPress(sortedProviders[newIdx].id);
+    }, [selectedPin, sortedProviders, handlePinPress]);
 
     // ── Book Now → WebView ──────────────────────────────────────────────────
     const handleBookNow = useCallback(() => {
@@ -446,49 +500,26 @@ export default function MedicalMapView() {
                     }}
                 >
                     {/* Provider Pins */}
-                    {providers.map(p => (
+                    {sortedProviders.map(p => (
                         <Marker
                             key={p.id}
                             coordinate={{ latitude: p.latitude, longitude: p.longitude }}
                             onPress={() => handlePinPress(p.id)}
                             tracksViewChanges={false}
+                            anchor={{ x: 0.5, y: 0.5 }}
                         >
                             <View style={[
-                                st.pinContainer,
-                                selectedPin === p.id && st.pinContainerActive,
+                                st.pinBubble,
+                                selectedPin === p.id && st.pinBubbleActive,
                             ]}>
                                 <Ionicons
                                     name={p.icon as any}
-                                    size={18}
+                                    size={16}
                                     color={selectedPin === p.id ? '#FFFFFF' : T.violet}
                                 />
                             </View>
                         </Marker>
                     ))}
-
-                    {/* Red Zone Circles — Always visible */}
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radiusMeters}
-                            fillColor={D.dangerColor}
-                            strokeColor="rgba(255,59,48,0.6)"
-                            strokeWidth={1.5}
-                        />
-                    ))}
-
-                    {/* Safe Route Polyline — Auto-triggered on pin select */}
-                    {safeRoute && (
-                        <Polyline
-                            coordinates={safeRoute}
-                            strokeColor={T.violet}
-                            strokeWidth={5}
-                            lineDashPattern={[0]}
-                            lineJoin="round"
-                            lineCap="round"
-                        />
-                    )}
                 </MapView>
 
                 {/* ── Top Header ── */}
@@ -549,7 +580,7 @@ export default function MedicalMapView() {
                 {/* ── Results Count Badge — 12px below header for breathing room ── */}
                 <View style={[st.resultsBadge, { top: insets.top + 8 + 58 + 12 }]}>
                     <Text style={st.resultsBadgeText}>
-                        {providers.length} {providers.length === 1 ? 'result' : 'results'}
+                        {sortedProviders.length} {sortedProviders.length === 1 ? 'result' : 'results'}
                     </Text>
                 </View>
 
@@ -624,11 +655,25 @@ export default function MedicalMapView() {
                                 </TouchableOpacity>
                             </View>
                         </View>
-                        {/* Safe Route Indicator */}
-                        {safeRoute && (
-                            <View style={st.safeRouteIndicator}>
-                                <Ionicons name="shield-checkmark" size={14} color={D.safeColor} />
-                                <Text style={st.safeRouteText}>Safe route calculated • Avoids red zones</Text>
+                        {/* Distance Indicator */}
+                        {selectedProvider?.distLabel ? (
+                            <View style={st.distanceIndicator}>
+                                <Ionicons name="location" size={14} color={D.subtitle} />
+                                <Text style={st.distanceText}>{selectedProvider.distLabel}</Text>
+                            </View>
+                        ) : null}
+                        {/* Pagination / Nav */}
+                        {sortedProviders.length > 1 && (
+                            <View style={st.calloutNavRow}>
+                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('prev')}>
+                                    <Feather name="chevron-left" size={18} color={D.subtitle} />
+                                    <Text style={st.navArrowText}>Prev options</Text>
+                                </TouchableOpacity>
+                                <View style={st.navDots} />
+                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('next')}>
+                                    <Text style={st.navArrowText}>Next options</Text>
+                                    <Feather name="chevron-right" size={18} color={D.subtitle} />
+                                </TouchableOpacity>
                             </View>
                         )}
                     </RNAnimated.View>
@@ -745,9 +790,9 @@ const st = StyleSheet.create({
         letterSpacing: 0.3,
     },
 
-    // ── Pin ─────────────────────────────────────────────────────────────────
-    pinContainer: {
-        width: 38, height: 38, borderRadius: 19,
+    // ── Simple Pin ────────────────────────────────────────────────────────
+    pinBubble: {
+        width: 40, height: 40, borderRadius: 20,
         backgroundColor: D.cardFill,
         borderWidth: 2, borderColor: T.violet,
         alignItems: 'center', justifyContent: 'center',
@@ -756,9 +801,10 @@ const st = StyleSheet.create({
             android: { elevation: 8 },
         }),
     },
-    pinContainerActive: {
+    pinBubbleActive: {
         backgroundColor: T.violet,
         borderColor: '#FFFFFF',
+        transform: [{ scale: 1.15 }],
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.6, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
             android: { elevation: 12 },
@@ -842,15 +888,30 @@ const st = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
     },
 
-    // ── Safe Route Indicator ────────────────────────────────────────────────
-    safeRouteIndicator: {
+    // ── Distance Indicator ──────────────────────────────────────────────────
+    distanceIndicator: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: S.s4, paddingBottom: 10,
     },
-    safeRouteText: {
-        fontSize: 10, fontWeight: '600', color: D.safeColor,
-        letterSpacing: 0.2,
+    distanceText: {
+        fontSize: 12, fontWeight: '600', color: D.subtitle,
     },
+
+    // ── Callout Nav Row ─────────────────────────────────────────────────────
+    calloutNavRow: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingHorizontal: S.s3, paddingVertical: 10,
+        borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+    },
+    navArrowBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        paddingVertical: 6, paddingHorizontal: 8,
+    },
+    navArrowText: {
+        fontSize: 12, fontWeight: '600', color: D.subtitle,
+    },
+    navDots: { flex: 1 },
 
     // ── Quick Selector Chips ────────────────────────────────────────────────
     chipContainer: {
