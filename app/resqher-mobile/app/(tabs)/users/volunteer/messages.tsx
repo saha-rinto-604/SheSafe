@@ -1,15 +1,6 @@
 /**
- * chat_home.tsx — Incident Hub (SF-04)
- * ─────────────────────────────────────────────────────────────────────────
- * 9.8/10 Premium — 'Bulky One-Unit' Substantial Architecture
- *
- * • Background: Deep Midnight Violet → Dark Indigo (AtmosphericShell)
- * • Cards: Solid #1E153A, radius 28, padding 20, hairline 0.03 border
- * • SOS: Red-tinted avatar (rgba(255,69,58,0.15) + 1px #FF453A border)
- *        with Neon Red pulsing dot — Chromatic Monochromatism
- * • Non-SOS LIVE: Violet avatar, Neon Violet pulse
- * • Resolved: 0.45 opacity solid recede
- * • NO navbar — list occupies full screen height
+ * volunteer/messages.tsx — Incident Hub (Volunteer)
+ * Mirrors standard-user chat list UI for consistency.
  */
 
 import React, { useState, useCallback, memo } from 'react';
@@ -23,14 +14,13 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import { T, R, S, Ty } from '../../../../src/constants/theme';
-import { DEFAULT_GROUP_CHAT_NAME, type Incident } from '../../../../src/types/chat';
+import { T, R, S } from '../../../../src/constants/theme';
+import { type Incident } from '../../../../src/types/chat';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════════════════
 const D = {
-    // Universal Glass Mandate — uses global T tokens for material consistency
     cardFill: T.surfaceBulky,
     cardFillActive: T.surfaceBulkyActive,
 
@@ -38,13 +28,12 @@ const D = {
     hairlineActive: 'rgba(255, 255, 255, 0.1)',
 
     title: '#FFFFFF',
-    subtitle: '#C4C1D4',   // High-contrast silver-lavender — emergency readable
-    timestamp: '#A09CB2',   // Brighter muted — passes squint test
+    subtitle: '#C4C1D4',
+    timestamp: '#A09CB2',
 
     neonViolet: T.violet,
     vividRed: '#FF453A',
 
-    // SOS avatar — tinted, not solid
     sosAvatarBg: T.violetDim,
     sosAvatarBorder: T.violet,
 
@@ -53,15 +42,15 @@ const D = {
     avatarSize: 44,
 } as const;
 
-// ─── Mock Data ──────────────────────────────────────────────────────────────
+// ─── Mock Data (Volunteer-facing, no police participants) ─────────────────
 const MOCK_INCIDENTS: Incident[] = [
     {
-        id: 'inc-001',
+        id: 'inc-204',
         type: 'SOS Alert',
-        status: 'LIVE',
+        status: 'RESOLVED',
         location: { latitude: 23.7956, longitude: 90.3657, updatedAt: new Date().toISOString() },
         latestMessage: {
-            content: 'I need help, someone is following me near Ibrahimpur Bazar',
+            content: 'Thank you for coming quickly. I am safe now.',
             sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
             timestamp: new Date(Date.now() - 60000).toISOString(),
             type: 'TEXT',
@@ -70,12 +59,12 @@ const MOCK_INCIDENTS: Incident[] = [
         createdAt: new Date(Date.now() - 300000).toISOString(),
     },
     {
-        id: 'inc-002',
+        id: 'inc-198',
         type: 'Medical Emergency',
-        status: 'RESOLVED',
+        status: 'CANCELLED',
         location: { latitude: 23.7461, longitude: 90.3742, updatedAt: new Date(Date.now() - 120000).toISOString() },
         latestMessage: {
-            content: 'Patient stabilized. Ambulance arrived.',
+            content: 'Incident cancelled by victim before responder arrival.',
             sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
             timestamp: new Date(Date.now() - 30000).toISOString(),
             type: 'TEXT',
@@ -84,22 +73,22 @@ const MOCK_INCIDENTS: Incident[] = [
         createdAt: new Date(Date.now() - 600000).toISOString(),
     },
     {
-        id: 'inc-003',
+        id: 'inc-175',
         type: 'Harassment Report',
         status: 'RESOLVED',
         location: { latitude: 23.7806, longitude: 90.4194, updatedAt: new Date(Date.now() - 3600000).toISOString() },
         latestMessage: {
-            content: 'Case filed. Reference: BD-2026-03-04-0891',
-            sender: { id: 'p1', name: 'Officer Alam', role: 'POLICE' },
+            content: 'Case resolved. Follow-up notes shared with victim.',
+            sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
             timestamp: new Date(Date.now() - 1800000).toISOString(),
             type: 'TEXT',
         },
-        participantCount: 4,
+        participantCount: 3,
         createdAt: new Date(Date.now() - 7200000).toISOString(),
     },
 ];
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 function caseId(id: string): string {
     return `#${id.replace(/\D/g, '').padStart(3, '0')}`;
 }
@@ -118,25 +107,17 @@ function isSOS(type: string): boolean {
     return type.toLowerCase().includes('sos');
 }
 
-// ─── GroupAvatar — Chromatic monochromatism ─────────────────────────────────
-// SOS: Red-tinted circle + 1px red border + white icon
-// Non-SOS LIVE: Violet gradient + white icon
-// Resolved: Dark muted fill + muted icon
-const GroupAvatar = memo(function GroupAvatar({ isLive, isEmergency }: { isLive: boolean; isEmergency: boolean }) {
+const GroupAvatar = memo(function GroupAvatar({ isLive }: { isLive: boolean }) {
     return (
         <View style={[st.avatar, isLive ? st.avatarLive : st.avatarResolved]}>
-            <Feather
-                name="users"
-                size={18}
-                color={isLive ? T.violet : D.subtitle}
-            />
+            <Feather name="users" size={18} color={isLive ? T.violet : D.subtitle} />
         </View>
     );
 });
 
-// ─── IncidentModule — Substantial extruded card ─────────────────────────────
 function IncidentModule({ incident, onPress }: { incident: Incident; onPress: () => void }) {
     const isLive = incident.status === 'LIVE';
+    const isCancelled = incident.status === 'CANCELLED';
     const isEmergency = isSOS(incident.type);
     const lastMessage = incident.latestMessage?.content ?? 'No messages yet';
     const lastSender = incident.latestMessage?.sender.name ?? 'Unknown';
@@ -151,12 +132,10 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
             onPress={onPress}
             activeOpacity={0.7}
         >
-            {/* LEFT — 48×48 avatar */}
             <View style={{ alignSelf: 'center' }}>
-                <GroupAvatar isLive={isLive} isEmergency={isEmergency} />
+                <GroupAvatar isLive={isLive} />
             </View>
 
-            {/* CENTER — Title + muted case ID */}
             <View style={[st.cardCenter, { alignSelf: 'center' }]}>
                 <Text style={st.cardTitle} numberOfLines={1}>
                     Incident {caseId(incident.id)}
@@ -168,17 +147,16 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
                 </Text>
             </View>
 
-            {/* RIGHT — Timestamp + badge */}
             <View style={st.cardRight}>
                 <Text style={st.cardTime}>
                     {timeAgo(incident.createdAt)}
                 </Text>
                 <View style={[
                     st.statusPill,
-                    isLive ? st.statusPillActive : st.statusPillResolved,
+                    isLive ? st.statusPillActive : isCancelled ? st.statusPillCancelled : st.statusPillResolved,
                 ]}>
-                    <Text style={isLive ? st.statusTextActive : st.statusTextResolved}>
-                        {isLive ? 'ACTIVE' : 'RESOLVED'}
+                    <Text style={isLive ? st.statusTextActive : isCancelled ? st.statusTextCancelled : st.statusTextResolved}>
+                        {isLive ? 'ACTIVE' : isCancelled ? 'CANCELLED' : 'RESOLVED'}
                     </Text>
                 </View>
             </View>
@@ -186,8 +164,7 @@ function IncidentModule({ incident, onPress }: { incident: Incident; onPress: ()
     );
 }
 
-// ─── Main Screen ────────────────────────────────────────────────────────────
-export default function ChatHome() {
+export default function VolunteerMessages() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const [incidents] = useState<Incident[]>(MOCK_INCIDENTS);
@@ -208,7 +185,7 @@ export default function ChatHome() {
         : incidents;
 
     const openChat = (incidentId: string) => {
-        router.push(`/(tabs)/users/standard-user/chat_room?incidentId=${incidentId}` as any);
+        router.push(`/(tabs)/users/volunteer/chat_room?incidentId=${incidentId}` as any);
     };
 
     return (
@@ -216,7 +193,6 @@ export default function ChatHome() {
             <View style={[st.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-                {/* ── Header ── */}
                 <View style={st.header}>
                     <TouchableOpacity
                         onPress={() => { Haptics.selectionAsync(); router.back(); }}
@@ -234,16 +210,14 @@ export default function ChatHome() {
                     <TouchableOpacity
                         style={st.headerBtn}
                         activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/standard-user/notifications'); }}
+                        onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
                     >
                         <Feather name="bell" size={18} color={D.subtitle} />
                     </TouchableOpacity>
                 </View>
 
-                {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
                 <View style={{ marginTop: 12 }} />
 
-                {/* ── Search ── */}
                 <View style={st.searchArea}>
                     <View style={st.searchBlock}>
                         <Feather name="search" size={16} color={D.subtitle} />
@@ -265,7 +239,6 @@ export default function ChatHome() {
                     </View>
                 </View>
 
-                {/* ── Incident List — full height, no navbar ── */}
                 <FlatList
                     style={{ marginHorizontal: 20 }}
                     data={filtered}
@@ -299,13 +272,9 @@ export default function ChatHome() {
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STYLES
-// ═══════════════════════════════════════════════════════════════════════════
 const st = StyleSheet.create({
     root: { flex: 1 },
 
-    // ── Header ──────────────────────────────────────────────────────────
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -333,7 +302,6 @@ const st = StyleSheet.create({
         letterSpacing: -0.3,
     },
 
-    // ── Search ──────────────────────────────────────────────────────────
     searchArea: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -360,13 +328,11 @@ const st = StyleSheet.create({
         lineHeight: 20,
     },
 
-    // ── List — full height, no bottom inset for navbar ──────────────────
     list: {
         paddingTop: S.s1,
         paddingBottom: S.s5,
     },
 
-    // ── Card ─────────────────────────────────────────────────────────────
     card: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -385,8 +351,6 @@ const st = StyleSheet.create({
     cardSOS: {},
     cardResolved: {},
 
-    // ── Avatars ──────────────────────────────────────────────────────────
-    // Rounded-rectangle group icon container
     avatar: {
         width: D.avatarSize,
         height: D.avatarSize,
@@ -405,7 +369,6 @@ const st = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.08)',
     },
 
-    // ── Center column ───────────────────────────────────────────────────
     cardCenter: { flex: 1, minWidth: 0, gap: S.s1 },
     cardTitle: {
         fontSize: 17,
@@ -424,8 +387,6 @@ const st = StyleSheet.create({
         fontWeight: '700',
         color: D.title,
     },
-
-    // ── Right column ────────────────────────────────────────────────────
     cardRight: {
         flexShrink: 0,
         alignItems: 'flex-end',
@@ -434,8 +395,8 @@ const st = StyleSheet.create({
     },
     cardTime: {
         fontSize: 12,
-        fontWeight: '500',
         color: D.timestamp,
+        fontWeight: '500',
     },
     statusPill: {
         minWidth: 70,
@@ -454,6 +415,10 @@ const st = StyleSheet.create({
         backgroundColor: 'rgba(16,185,129,0.12)',
         borderColor: 'rgba(16,185,129,0.35)',
     },
+    statusPillCancelled: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
+    },
     statusTextActive: {
         fontSize: 11,
         fontWeight: '700',
@@ -466,8 +431,13 @@ const st = StyleSheet.create({
         color: T.success,
         letterSpacing: 0.6,
     },
+    statusTextCancelled: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: T.danger,
+        letterSpacing: 0.6,
+    },
 
-    // ── Empty ────────────────────────────────────────────────────────────
     empty: {
         alignItems: 'center',
         justifyContent: 'center',

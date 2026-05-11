@@ -409,7 +409,7 @@ export default function MedicalMapView() {
     // ── Nav press ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
         if (tabId === 'Home') {
-            router.replace('/(tabs)/users/sos_screen' as any);
+            router.replace('/(tabs)/users/standard-user/sos_screen' as any);
         } else if (tabId === 'Chat') {
             router.push('/(tabs)/users/standard-user/chat_home' as any);
         } else if (tabId === 'Explore') {
