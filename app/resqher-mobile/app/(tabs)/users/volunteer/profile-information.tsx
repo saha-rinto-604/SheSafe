@@ -99,7 +99,7 @@ export default function ProfileInformationScreen() {
                     <Text style={s.headerTitle}>Profile Information</Text>
                     <TouchableOpacity
                         style={s.headerBtn}
-                        onPress={() => router.push('/(tabs)/users/standard-user/edit-profile')}
+                        onPress={() => router.push('/(tabs)/users/volunteer/edit-profile')}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel="Edit profile"
                     >

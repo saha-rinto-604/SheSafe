@@ -46,15 +46,6 @@ export default function Login() {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
       setSubmitting(false);
-<<<<<<< Updated upstream
-
-      // We manually tell the app to navigate to the Map screen after a short delay
-      setTimeout(() => {
-        router.replace('/(tabs)/users/sos_screen' as any);
-        console.log("Mock Login Successful: Redirecting to Map");
-      }, 1000);
-=======
->>>>>>> Stashed changes
     }
   };
 

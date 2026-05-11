@@ -33,6 +33,8 @@ export type SafetySettings = {
     pushNotifications: boolean;
     smsBackupAlert: boolean;
     maxResponders: 3 | 5;
+    maxResponseDistance: 3 | 4 | 5;
+    receiveSosAlerts: boolean;
 };
 
 export const DEFAULT_SAFETY_SETTINGS: SafetySettings = {
@@ -41,10 +43,13 @@ export const DEFAULT_SAFETY_SETTINGS: SafetySettings = {
     pushNotifications: true,
     smsBackupAlert: false,
     maxResponders: 5,
+    maxResponseDistance: 3,
+    receiveSosAlerts: true,
 };
 
 const CANCEL_TIMER_OPTIONS: (10 | 15 | 20)[] = [10, 15, 20];
 const RESPONDER_OPTIONS: (3 | 5)[] = [3, 5];
+const MAX_DISTANCE_OPTIONS: (3 | 4 | 5)[] = [3, 4, 5];
 
 // ── Helper — load settings from SecureStore with fallback ─────────────────────
 export async function loadSafetySettings(): Promise<SafetySettings> {
@@ -247,6 +252,21 @@ export default function SafetySettingsScreen() {
                             description="Send an SMS to emergency contacts if push notification fails."
                             value={settings.smsBackupAlert}
                             onValueChange={v => update('smsBackupAlert', v)}
+                        />
+                        <RowDivider />
+                        <View style={s.settingRow}>
+                            <View style={s.settingRowLeft}>
+                                <Text style={s.rowLabel}>Maximum Response Distance</Text>
+                                <Text style={s.rowDescription}>
+                                    Maximum distance (in km) to receive SOS requests.
+                                </Text>
+                            </View>
+                        </View>
+                        <ChipSelector
+                            options={MAX_DISTANCE_OPTIONS}
+                            selected={settings.maxResponseDistance}
+                            onSelect={v => update('maxResponseDistance', v)}
+                            formatLabel={v => `${v} km`}
                         />
                     </SectionCard>
 

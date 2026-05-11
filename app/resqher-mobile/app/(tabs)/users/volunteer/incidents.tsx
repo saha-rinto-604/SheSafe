@@ -1,9 +1,6 @@
 /**
- * incident-history.tsx — Incident History Screen (Standard User)
- * ──────────────────────────────────────────────────────────────
- * Shows a list of past SOS incidents.
- * Currently renders dummy data — wire to the backend /incidents endpoint
- * once the API is ready; only DUMMY_INCIDENTS needs to be replaced.
+ * incidents.tsx — Volunteer Incident History
+ * Mirrors standard-user incident history UI with volunteer-specific fields.
  */
 
 import React from 'react';
@@ -20,40 +17,50 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
+
+const MED = {
+    muted: '#A09CB2',
+    stroke: 'rgba(255,255,255,0.1)',
+} as const;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type IncidentStatus = 'Active' | 'Resolved' | 'Cancelled';
+type IncidentStatus = 'Resolved' | 'Cancelled' | 'Active';
 
-type Incident = {
+type VolunteerIncident = {
     id: string;
     incidentNumber: number;
+    victimName: string;
     location: string;
-    occurredAtLabel: string; // human-readable date label until real timestamps arrive
+    occurredAtLabel: string;
     status: IncidentStatus;
 };
 
 // ── Dummy data (replace with API response later) ───────────────────────────────
-const DUMMY_INCIDENTS: Incident[] = [
+const DUMMY_INCIDENTS: VolunteerIncident[] = [
     {
         id: 'inc-204',
         incidentNumber: 204,
+        victimName: 'Sarah',
         location: 'Dhaka',
-        occurredAtLabel: '12 Feb 2026',
+        occurredAtLabel: '12 Feb 2026 · 8:40 PM',
         status: 'Resolved',
     },
     {
         id: 'inc-198',
         incidentNumber: 198,
+        victimName: 'Nadia',
         location: 'Chattogram',
-        occurredAtLabel: '01 Feb 2026',
+        occurredAtLabel: '01 Feb 2026 · 7:10 PM',
         status: 'Cancelled',
     },
     {
         id: 'inc-175',
         incidentNumber: 175,
+        victimName: 'Ayesha',
         location: 'Sylhet',
-        occurredAtLabel: '14 Jan 2026',
-        status: 'Active',
+        occurredAtLabel: '14 Jan 2026 · 5:05 PM',
+        status: 'Resolved',
     },
 ];
 
@@ -87,10 +94,10 @@ function statusStyle(status: IncidentStatus): StatusStyle {
 }
 
 // ── IncidentCard component ─────────────────────────────────────────────────────
-function IncidentCard({ incident }: { incident: Incident }) {
+function IncidentCard({ incident, onPress }: { incident: VolunteerIncident; onPress: () => void }) {
     const ss = statusStyle(incident.status);
     return (
-        <View style={s.card}>
+        <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={onPress}>
             {/* ── Top row: ID + Status badge ── */}
             <View style={s.cardTopRow}>
                 <View style={s.incidentIdRow}>
@@ -104,6 +111,13 @@ function IncidentCard({ incident }: { incident: Incident }) {
             </View>
 
             <View style={s.divider} />
+
+            {/* ── Victim Assisted ── */}
+            <View style={s.detailRow}>
+                <Feather name="user" size={14} color={T.violet} style={s.detailIcon} />
+                <Text style={s.detailLabel}>Victim</Text>
+                <Text style={s.detailValue}>{incident.victimName}</Text>
+            </View>
 
             {/* ── Location ── */}
             <View style={s.detailRow}>
@@ -127,7 +141,7 @@ function IncidentCard({ incident }: { incident: Incident }) {
                     {incident.status}
                 </Text>
             </View>
-        </View>
+        </TouchableOpacity>
     );
 }
 
@@ -140,18 +154,18 @@ function EmptyState() {
             </View>
             <Text style={s.emptyTitle}>No incidents yet</Text>
             <Text style={s.emptySubtitle}>
-                Your past SOS incidents will appear here once you have triggered an alert.
+                Your volunteer incident history will appear here once you assist someone.
             </Text>
         </View>
     );
 }
 
 // ── Main screen ────────────────────────────────────────────────────────────────
-export default function IncidentHistoryScreen() {
+export default function VolunteerIncidents() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const incidents = DUMMY_INCIDENTS; // swap with API data later
+    const incidents = DUMMY_INCIDENTS;
 
     return (
         <AtmosphericShell>
@@ -165,7 +179,7 @@ export default function IncidentHistoryScreen() {
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Feather name="chevron-left" size={22} color={T.ink} />
+                        <Ionicons name="arrow-back" size={20} color={T.ink2} />
                     </TouchableOpacity>
                     <Text style={s.headerTitle}>Incident History</Text>
                     <View style={s.headerSpacer} />
@@ -175,11 +189,10 @@ export default function IncidentHistoryScreen() {
                 <ScrollView
                     contentContainerStyle={[
                         s.scroll,
-                        { paddingBottom: insets.bottom + 36 },
+                        { paddingBottom: insets.bottom + VOLUNTEER_NAV_SCREEN_PADDING },
                     ]}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Section header */}
                     <Text style={s.sectionLabel}>
                         {incidents.length} {incidents.length === 1 ? 'Incident' : 'Incidents'}
                     </Text>
@@ -188,10 +201,16 @@ export default function IncidentHistoryScreen() {
                         <EmptyState />
                     ) : (
                         incidents.map(incident => (
-                            <IncidentCard key={incident.id} incident={incident} />
+                            <IncidentCard
+                                key={incident.id}
+                                incident={incident}
+                                onPress={() => router.push(`/(tabs)/users/volunteer/chat_room?incidentId=${incident.id}` as any)}
+                            />
                         ))
                     )}
                 </ScrollView>
+
+                <VolunteerBottomNav activeTab="Incidents" />
             </View>
         </AtmosphericShell>
     );
@@ -201,15 +220,14 @@ export default function IncidentHistoryScreen() {
 const s = StyleSheet.create({
     root: { flex: 1 },
 
-    // Header
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 14,
         paddingBottom: 12,
         borderBottomWidth: 1,
-        borderBottomColor: T.lineMid,
-        backgroundColor: T.surfaceGlass,
+        borderBottomColor: MED.stroke,
+        backgroundColor: 'transparent',
     },
     headerBtn: {
         width: 36,
@@ -218,8 +236,8 @@ const s = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
+        borderColor: MED.stroke,
         backgroundColor: T.surfaceBulky,
-        borderColor: 'rgba(255,255,255,0.1)',
     },
     headerTitle: {
         flex: 1,
@@ -231,21 +249,18 @@ const s = StyleSheet.create({
     },
     headerSpacer: { width: 36, height: 36 },
 
-    // Scroll
     scroll: { paddingHorizontal: 14, paddingTop: 20 },
 
-    // Section label
     sectionLabel: {
         fontSize: 11,
         fontWeight: '700',
-        color: T.ink3,
+        color: MED.muted,
         letterSpacing: 1.2,
         textTransform: 'uppercase',
         marginBottom: 14,
         marginLeft: 4,
     },
 
-    // Incident card
     card: {
         backgroundColor: T.surfaceBulky,
         borderRadius: R.lg,
@@ -273,7 +288,6 @@ const s = StyleSheet.create({
         letterSpacing: -0.2,
     },
 
-    // Status badge
     statusBadge: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -294,14 +308,12 @@ const s = StyleSheet.create({
         letterSpacing: 0.2,
     },
 
-    // Divider
     divider: {
         height: StyleSheet.hairlineWidth,
         backgroundColor: T.lineMid,
         marginBottom: 12,
     },
 
-    // Detail rows
     detailRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -322,7 +334,6 @@ const s = StyleSheet.create({
         color: T.ink2,
     },
 
-    // Empty state
     emptyWrap: {
         alignItems: 'center',
         paddingTop: 60,
@@ -353,4 +364,3 @@ const s = StyleSheet.create({
         lineHeight: 20,
     },
 });
-
