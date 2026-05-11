@@ -98,6 +98,16 @@ export const authService = {
   },
 
   async login(username: string, password: string) {
+    // Mock logic for fast testing
+    if (username === '1234' && password === '1234') {
+      await setTokens('mock-access-token-1234', 'mock-refresh-token-1234');
+      return 'mock-access-token-1234';
+    }
+    if (username === '5678' && password === '5678') {
+      await setTokens('mock-access-token-5678', 'mock-refresh-token-5678');
+      return 'mock-access-token-5678';
+    }
+
     try {
       const res = await api.post('/api/v1/auth/login/', { phone: username, password });
       const { access, refresh } = res.data || {};

@@ -16,6 +16,7 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
+import { ROLE_DEFAULT_ROUTE, VOLUNTEER } from '../../src/constants/routes';
 
 type FormData = { phone: string; password: string };
 
@@ -31,19 +32,29 @@ export default function Login() {
   const onSubmit = async (data: FormData) => {
     setSubmitting(true);
     try {
-      /* Real auth: await signIn(data.phone.trim(), data.password); */
-      // Mock success
-      console.log("Mock Login Started...");
+      const phone = data.phone.trim();
+      await signIn(phone, data.password);
+
+      let route = ROLE_DEFAULT_ROUTE.USER;
+      if (['5', '6', '7', '8', '5678'].includes(phone) && ['5', '6', '7', '8', '5678'].includes(data.password)) {
+        route = ROLE_DEFAULT_ROUTE.VOLUNTEER;
+      }
+
+      router.replace(route as any);
+      console.log("Login Successful: Redirecting to", route);
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
       setSubmitting(false);
+<<<<<<< Updated upstream
 
       // We manually tell the app to navigate to the Map screen after a short delay
       setTimeout(() => {
         router.replace('/(tabs)/users/sos_screen' as any);
         console.log("Mock Login Successful: Redirecting to Map");
       }, 1000);
+=======
+>>>>>>> Stashed changes
     }
   };
 
