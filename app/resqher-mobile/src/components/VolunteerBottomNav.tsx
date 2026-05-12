@@ -12,7 +12,7 @@ export const VOLUNTEER_NAV_BAR_HEIGHT = 58;
 export const VOLUNTEER_NAV_BOTTOM_OFFSET = 14;
 export const VOLUNTEER_NAV_SCREEN_PADDING = 112;
 
-export type VolunteerNavTabId = 'Home' | 'Messages' | 'Incidents' | 'Activity';
+export type VolunteerNavTabId = 'Home' | 'Messages' | 'Activity' | 'Medical';
 
 type NavTabConfig = {
     id: VolunteerNavTabId;
@@ -25,8 +25,8 @@ type NavTabConfig = {
 const NAV_TABS: NavTabConfig[] = [
     { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons' },
     { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons' },
-    { id: 'Incidents', label: 'Incidents', iconActive: 'clipboard-clock', iconOutline: 'clipboard-clock-outline', iconFamily: 'MaterialCommunityIcons' },
     { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons' },
+    { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline', iconFamily: 'Ionicons' },
 ];
 
 const ACTIVE_COLOR = T.violet;
@@ -106,10 +106,10 @@ export default function VolunteerBottomNav({ activeTab }: { activeTab: Volunteer
                                 router.push('/(tabs)/users/volunteer');
                             } else if (tab.id === 'Messages') {
                                 router.push('/(tabs)/users/volunteer/messages');
-                            } else if (tab.id === 'Incidents') {
-                                router.push('/(tabs)/users/volunteer/incidents');
                             } else if (tab.id === 'Activity') {
                                 router.push('/(tabs)/users/volunteer/activity');
+                            } else if (tab.id === 'Medical') {
+                                router.push('/(tabs)/users/volunteer/medical');
                             }
                         }}
                     />

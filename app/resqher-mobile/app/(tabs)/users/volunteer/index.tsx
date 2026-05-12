@@ -286,8 +286,8 @@ const INACTIVE_COLOR = T.navIconInactive;
 const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string; iconFamily?: 'Ionicons' | 'MaterialCommunityIcons' }[] = [
     { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons' },
     { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons' },
-    { id: 'Incidents', label: 'Incidents', iconActive: 'clipboard-clock', iconOutline: 'clipboard-clock-outline', iconFamily: 'MaterialCommunityIcons' },
     { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons' },
+    { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline', iconFamily: 'Ionicons' },
 ];
 
 // ── PremiumBar — identical to SOS screen ────────────────────────────────────
@@ -2812,10 +2812,10 @@ export default function VolunteerHome() {
                                 onPress={() => {
                                     if (tab.id === 'Messages') {
                                         router.push('/(tabs)/users/volunteer/messages');
-                                    } else if (tab.id === 'Incidents') {
-                                        router.push('/(tabs)/users/volunteer/incidents');
                                     } else if (tab.id === 'Activity') {
                                         router.push('/(tabs)/users/volunteer/activity');
+                                    } else if (tab.id === 'Medical') {
+                                        router.push('/(tabs)/users/volunteer/medical');
                                     }
                                 }}
                             />

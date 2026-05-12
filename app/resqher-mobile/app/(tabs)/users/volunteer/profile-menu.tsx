@@ -44,6 +44,7 @@ const MENU_SECTIONS: MenuSection[] = [
         items: [
             { icon: 'phone-call', label: 'Emergency Contacts' },
             { icon: 'shield', label: 'Safety Settings' },
+            { icon: 'clipboard', label: 'Incident History' },
             { icon: 'bell', label: 'Receive SOS Alerts', isToggle: true },
         ],
     },
@@ -118,6 +119,11 @@ export default function ProfileMenuScreen() {
 
         if (item.label === 'Privacy & Security') {
             router.push('/(tabs)/users/volunteer/privacy-security');
+            return;
+        }
+
+        if (item.label === 'Incident History') {
+            router.push('/(tabs)/users/volunteer/incidents');
             return;
         }
 

@@ -8,6 +8,13 @@ export type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
 export type IncidentStatus = 'LIVE' | 'RESOLVED' | 'CANCELLED';
 export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM';
 
+/**
+ * Volunteer incident category:
+ * ASSISTED     — volunteer responded to someone else's SOS (previously helped others)
+ * MY_EMERGENCY — volunteer triggered their own SOS (they were the victim)
+ */
+export type IncidentCategory = 'ASSISTED' | 'MY_EMERGENCY';
+
 export interface Participant {
     id: string;
     name: string;

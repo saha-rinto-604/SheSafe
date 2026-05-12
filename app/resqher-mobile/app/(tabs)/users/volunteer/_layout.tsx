@@ -8,6 +8,7 @@ export default function VolunteerLayout() {
             <Stack.Screen name="chat_room" />
             <Stack.Screen name="incidents" />
             <Stack.Screen name="activity" />
+            <Stack.Screen name="medical" />
             <Stack.Screen name="dashboard" />
             <Stack.Screen name="profile-menu" />
             <Stack.Screen name="profile-information" />

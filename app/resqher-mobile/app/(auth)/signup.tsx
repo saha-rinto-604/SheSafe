@@ -170,7 +170,7 @@ export default function Signup() {
       setSubmitting(false);
       const rolePaths: Record<Role, string> = {
         'USER': '/(tabs)/users/standard-user/sos_screen',
-        'VOLUNTEER': '/(tabs)/users/volunteer/dashboard',
+        'VOLUNTEER': '/(tabs)/users/volunteer',
         'POLICE': '/(tabs)/users/police/dashboard',
         'ADMIN': '/(tabs)/users/admin/dashboard',
       };

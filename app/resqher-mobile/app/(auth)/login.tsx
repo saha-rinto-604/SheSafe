@@ -39,10 +39,10 @@ export default function Login() {
     } finally {
       setSubmitting(false);
 
-      // We manually tell the app to navigate to the standard user home after a short delay
+      // We manually tell the app to navigate to the volunteer home after a short delay
       setTimeout(() => {
-        router.replace('/(tabs)/users/standard-user' as any);
-        console.log("Mock Login Successful: Redirecting to Standard User Home");
+        router.replace('/(tabs)/users/volunteer' as any);
+        console.log("Mock Login Successful: Redirecting to Volunteer Home");
       }, 1000);
     }
   };

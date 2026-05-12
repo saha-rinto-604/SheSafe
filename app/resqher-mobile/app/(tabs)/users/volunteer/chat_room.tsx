@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { type IncidentCategory } from '../../../../src/types/chat';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,10 +28,23 @@ const SELF_ID = 'self';
 const MAP_STRIP_HEIGHT = 180;
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-// ─── Mock Incidents (Volunteer-only participants) ───────────────────────────
-const MOCK_INCIDENTS: Record<string, Incident> = {
+// ─── Mock Incidents ─────────────────────────────────────────────────────────
+// ASSISTING = volunteer responded to someone else's SOS
+// MY_EMERGENCY = volunteer triggered their own SOS
+const MOCK_INCIDENTS: Record<string, Incident & { category: IncidentCategory }> = {
+    // ── Assisting ──
+    'inc-312': {
+        id: 'inc-312', type: 'SOS Alert', status: 'LIVE', category: 'ASSISTED',
+        location: { latitude: 23.8103, longitude: 90.4125, updatedAt: new Date().toISOString() },
+        latestMessage: {
+            content: 'I can see her. Moving to intercept from north side.',
+            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
+            timestamp: new Date().toISOString(), type: 'TEXT',
+        },
+        participantCount: 3, createdAt: new Date(Date.now() - 240000).toISOString(),
+    },
     'inc-204': {
-        id: 'inc-204', type: 'SOS Alert', status: 'RESOLVED',
+        id: 'inc-204', type: 'SOS Alert', status: 'RESOLVED', category: 'ASSISTED',
         location: { latitude: 23.7956, longitude: 90.3657, updatedAt: new Date().toISOString() },
         latestMessage: {
             content: 'Thank you for coming quickly. I am safe now.', sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
@@ -39,7 +53,7 @@ const MOCK_INCIDENTS: Record<string, Incident> = {
         participantCount: 3, createdAt: new Date(Date.now() - 300000).toISOString(),
     },
     'inc-198': {
-        id: 'inc-198', type: 'Medical Emergency', status: 'CANCELLED',
+        id: 'inc-198', type: 'Medical Emergency', status: 'CANCELLED', category: 'ASSISTED',
         location: { latitude: 23.7461, longitude: 90.3742, updatedAt: new Date().toISOString() },
         latestMessage: {
             content: 'Incident cancelled by victim before responder arrival.', sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
@@ -48,13 +62,41 @@ const MOCK_INCIDENTS: Record<string, Incident> = {
         participantCount: 2, createdAt: new Date(Date.now() - 600000).toISOString(),
     },
     'inc-175': {
-        id: 'inc-175', type: 'Harassment Report', status: 'RESOLVED',
+        id: 'inc-175', type: 'Harassment Report', status: 'RESOLVED', category: 'ASSISTED',
         location: { latitude: 23.7806, longitude: 90.4194, updatedAt: new Date().toISOString() },
         latestMessage: {
             content: 'Case resolved. Follow-up notes shared.', sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
             timestamp: new Date().toISOString(), type: 'TEXT',
         },
         participantCount: 3, createdAt: new Date(Date.now() - 7200000).toISOString(),
+    },
+    // ── My Emergencies ──
+    'inc-301': {
+        id: 'inc-301', type: 'SOS Alert', status: 'LIVE', category: 'MY_EMERGENCY',
+        location: { latitude: 23.8293, longitude: 90.4182, updatedAt: new Date().toISOString() },
+        latestMessage: {
+            content: "I'm 3 minutes away. Stay in a lit area.", sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
+            timestamp: new Date().toISOString(), type: 'TEXT',
+        },
+        participantCount: 2, createdAt: new Date(Date.now() - 180000).toISOString(),
+    },
+    'inc-289': {
+        id: 'inc-289', type: 'Harassment Report', status: 'RESOLVED', category: 'MY_EMERGENCY',
+        location: { latitude: 23.7806, longitude: 90.4120, updatedAt: new Date().toISOString() },
+        latestMessage: {
+            content: "Glad you're safe. Incident has been logged.", sender: { id: 'v3', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
+            timestamp: new Date().toISOString(), type: 'TEXT',
+        },
+        participantCount: 2, createdAt: new Date(Date.now() - 90000000).toISOString(),
+    },
+    'inc-270': {
+        id: 'inc-270', type: 'Medical Emergency', status: 'CANCELLED', category: 'MY_EMERGENCY',
+        location: { latitude: 23.7461, longitude: 90.3800, updatedAt: new Date().toISOString() },
+        latestMessage: {
+            content: 'You cancelled this request. No further action taken.', sender: { id: 'system', name: 'System', role: 'USER' },
+            timestamp: new Date().toISOString(), type: 'TEXT',
+        },
+        participantCount: 1, createdAt: new Date(Date.now() - 180000000).toISOString(),
     },
 };
 
@@ -131,6 +173,76 @@ const INITIAL_MESSAGES: Record<string, Message[]> = {
             sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
             content: 'Case resolved. Follow-up notes shared.',
             type: 'TEXT', timestamp: new Date(Date.now() - 1800000).toISOString(),
+        },
+    ],
+    // ── My Emergency incidents ──
+    'inc-301': [
+        {
+            id: 'm-sys-301', incidentId: 'inc-301',
+            sender: { id: 'system', name: 'System', role: 'USER' },
+            content: 'Your SOS has been sent. Responders have been notified.',
+            type: 'SYSTEM', timestamp: new Date(Date.now() - 180000).toISOString(),
+        },
+        {
+            id: 'm301-a', incidentId: 'inc-301',
+            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
+            content: 'I need help — someone is following me near Khilkhet Station.',
+            type: 'TEXT', timestamp: new Date(Date.now() - 150000).toISOString(),
+        },
+        {
+            id: 'm301-b', incidentId: 'inc-301',
+            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
+            content: "I'm 3 minutes away. Stay in a lit area and keep moving.",
+            type: 'TEXT', timestamp: new Date(Date.now() - 30000).toISOString(),
+        },
+    ],
+    'inc-289': [
+        {
+            id: 'm-sys-289', incidentId: 'inc-289',
+            sender: { id: 'system', name: 'System', role: 'USER' },
+            content: 'Incident resolved by responders.',
+            type: 'SYSTEM', timestamp: new Date(Date.now() - 90000000).toISOString(),
+        },
+        {
+            id: 'm289-a', incidentId: 'inc-289',
+            sender: { id: 'v3', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
+            content: "Glad you're safe. Incident has been logged.",
+            type: 'TEXT', timestamp: new Date(Date.now() - 86400000).toISOString(),
+        },
+    ],
+    'inc-270': [
+        {
+            id: 'm-sys-270', incidentId: 'inc-270',
+            sender: { id: 'system', name: 'System', role: 'USER' },
+            content: 'You cancelled this SOS request. No further action taken.',
+            type: 'SYSTEM', timestamp: new Date(Date.now() - 172800000).toISOString(),
+        },
+    ],
+    // ── Active Assisting (inc-312) ──
+    'inc-312': [
+        {
+            id: 'm-sys-312', incidentId: 'inc-312',
+            sender: { id: 'system', name: 'System', role: 'USER' },
+            content: 'Emergency incident created. Responders notified.',
+            type: 'SYSTEM', timestamp: new Date(Date.now() - 240000).toISOString(),
+        },
+        {
+            id: 'm312-a', incidentId: 'inc-312',
+            sender: { id: 'u5', name: 'Sumaiya Hossain', role: 'USER' },
+            content: 'Please help me, I am being followed near Gulshan 2 Circle.',
+            type: 'TEXT', timestamp: new Date(Date.now() - 200000).toISOString(),
+        },
+        {
+            id: 'm312-b', incidentId: 'inc-312',
+            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
+            content: 'I am on my way. Stay near the shops and keep this call open.',
+            type: 'TEXT', timestamp: new Date(Date.now() - 60000).toISOString(),
+        },
+        {
+            id: 'm312-c', incidentId: 'inc-312',
+            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
+            content: 'I can see her. Moving to intercept from north side.',
+            type: 'TEXT', timestamp: new Date(Date.now() - 20000).toISOString(),
         },
     ],
 };
@@ -440,9 +552,13 @@ function polylineDecode(str: string, precision = 5) {
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { incidentId } = useLocalSearchParams<{ incidentId: string }>();
+    const { incidentId, category } = useLocalSearchParams<{ incidentId: string; category?: string }>();
 
     const incident = MOCK_INCIDENTS[incidentId || 'inc-204'] ?? MOCK_INCIDENTS['inc-204'];
+    const resolvedCategory: IncidentCategory =
+        (category === 'MY_EMERGENCY' ? 'MY_EMERGENCY' : incident.category ?? 'ASSISTED') as IncidentCategory;
+    const isMyEmergency = resolvedCategory === 'MY_EMERGENCY';
+
     const [messages, setMessages] = useState<Message[]>(
         INITIAL_MESSAGES[incidentId || 'inc-204'] ?? INITIAL_MESSAGES['inc-204']
     );
@@ -563,7 +679,16 @@ export default function ChatRoom() {
                                             isLive ? st.headerStatusPillLive : st.headerStatusPillArchived,
                                         ]}>
                                             <Text style={isLive ? st.headerStatusTextLive : st.headerStatusTextArchived}>
-                                                {isLive ? 'LIVE' : 'ARCHIVED'}
+                                                {isLive ? 'ACTIVE' : 'ARCHIVED'}
+                                            </Text>
+                                        </View>
+                                        {/* Category context pill */}
+                                        <View style={[
+                                            st.headerStatusPill,
+                                            isMyEmergency ? st.headerCategoryPillEmergency : st.headerCategoryPillAssisting,
+                                        ]}>
+                                            <Text style={isMyEmergency ? st.headerCategoryTextEmergency : st.headerCategoryTextAssisting}>
+                                                {isMyEmergency ? 'MY EMERGENCY' : 'ASSISTED'}
                                             </Text>
                                         </View>
                                     </View>
@@ -941,6 +1066,29 @@ const st = StyleSheet.create({
         fontSize: 10,
         fontWeight: '700',
         color: T.ink4,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    // Category context pills
+    headerCategoryPillAssisting: {
+        backgroundColor: T.violetDim,
+        borderColor: `${T.violet}40`,
+    },
+    headerCategoryPillEmergency: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
+    },
+    headerCategoryTextAssisting: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.violet,
+        letterSpacing: 0.8,
+        textTransform: 'uppercase',
+    },
+    headerCategoryTextEmergency: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: T.danger,
         letterSpacing: 0.8,
         textTransform: 'uppercase',
     },
