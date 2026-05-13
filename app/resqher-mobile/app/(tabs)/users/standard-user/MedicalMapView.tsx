@@ -14,7 +14,7 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
-    Dimensions, Platform, ScrollView, ViewStyle, Image, Linking,
+    Dimensions, Platform, ScrollView, ViewStyle, Image,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
@@ -32,8 +32,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import {
-    SPECIALIST_CHIPS, AMBULANCE_CHIPS, GENERIC_CHIPS, OTHERS_CHIPS,
-    MOCK_DOCTORS, MOCK_HOSPITALS, MOCK_AMBULANCES, MOCK_PHARMACIES, MOCK_OTHERS,
+    SPECIALIST_CHIPS, AMBULANCE_CHIPS, GENERIC_CHIPS,
 } from '../../../../src/data/medicalMockData';
 import { medicalService } from '../../../../src/services/api';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
@@ -239,44 +238,10 @@ export default function MedicalMapView() {
     const [returnFromWebView, setReturnFromWebView] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [backendProviders, setBackendProviders] = useState<any[]>([]);
-    const hasAutoFittedRef = useRef(false);
 
-    // Fetch providers for the current category; cancel if category changes before resolve
     useEffect(() => {
-        let cancelled = false;
-        medicalService.getProviders(category)
-            .then(data => { if (!cancelled) setBackendProviders(data); })
-            .catch(() => { if (!cancelled) setBackendProviders([]); });
-        return () => { cancelled = true; };
-    }, [category]);
-
-    // Auto-fit the map to show all providers the first time data loads per category
-    useEffect(() => {
-        if (backendProviders.length === 0 || hasAutoFittedRef.current) return;
-        hasAutoFittedRef.current = true;
-        const coords = backendProviders
-            .map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) }))
-            .filter(c => c.latitude !== 0 && c.longitude !== 0 && !isNaN(c.latitude) && !isNaN(c.longitude));
-        if (userLoc) coords.push(userLoc);
-        if (coords.length > 0) {
-            setTimeout(() => {
-                mapRef.current?.fitToCoordinates(coords, {
-                    edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
-                    animated: true,
-                });
-            }, 400);
-        }
-    }, [backendProviders, userLoc]);
-
-    // ── Reset chip + close callout whenever category changes ────────────────
-    useEffect(() => {
-        setSelectedChip('all');
-        setSelectedPin(null);
-        setShowCallout(false);
-        setSafeRoute(null);
-        setBackendProviders([]);       // clear stale data from previous category
-        hasAutoFittedRef.current = false; // allow auto-fit for new category
-    }, [category]);
+        medicalService.getProviders().then(setBackendProviders).catch(console.error);
+    }, []);
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -294,7 +259,6 @@ export default function MedicalMapView() {
         switch (category) {
             case 'specialists': return SPECIALIST_CHIPS;
             case 'ambulance': return AMBULANCE_CHIPS;
-            case 'others': return OTHERS_CHIPS;
             default: return GENERIC_CHIPS;
         }
     }, [category]);
@@ -314,7 +278,6 @@ export default function MedicalMapView() {
             if (category === 'ambulance' && pType !== 'ambulance') return false;
             if (category === 'diagnostics' && pType !== 'diagnostics') return false;
             if (category === 'pharmacy' && pType !== 'pharmacy') return false;
-            if (category === 'others' && pType !== 'others' && pType !== 'diagnostics') return false;
             return true;
         });
 
@@ -366,45 +329,12 @@ export default function MedicalMapView() {
                     icon: 'bandage' as const,
                 }));
                 break;
-            case 'others':
-                baseProviders = filtered.map(d => ({
-                    ...d,
-                    safeRouteVerified: Boolean(d.safeRouteVerified || d.safe_route_verified),
-                    icon: (d.icon ?? 'flask') as any,
-                }));
-                break;
             default:
                 break;
         }
-
-        // If backend returned data for this category, use it
-        if (baseProviders.length > 0) return baseProviders;
-
-        // ── Fallback to local mock data when backend is unavailable ───────────
-        switch (category) {
-            case 'specialists': {
-                let docs: any[] = MOCK_DOCTORS;
-                if (shift !== 'now') docs = docs.filter(d => d.shift === shift);
-                if (selectedChip !== 'all') docs = docs.filter(d => d.specialty === selectedChip);
-                return docs.map(d => ({ ...d, icon: 'medkit' as const }));
-            }
-            case 'hospital':
-                return MOCK_HOSPITALS.map(h => ({ ...h, icon: 'business' as const }));
-            case 'ambulance': {
-                let ambs: any[] = MOCK_AMBULANCES;
-                if (selectedChip !== 'all') ambs = ambs.filter((a: any) => a.type === selectedChip);
-                return ambs.map((a: any) => ({ ...a, ambulanceType: a.type, icon: 'car' as const }));
-            }
-            case 'pharmacy':
-                return MOCK_PHARMACIES.map(p => ({ ...p, icon: 'bandage' as const }));
-            case 'others': {
-                let others: any[] = MOCK_OTHERS;
-                if (selectedChip !== 'all') others = others.filter((o: any) => o.category === selectedChip);
-                return others.map((o: any) => ({ ...o, icon: o.icon ?? 'flask' as const }));
-            }
-            default:
-                return [];
-        }
+        
+        // Removed random marker generation so we only show real API data
+        return baseProviders;
     }, [category, shift, selectedChip, backendProviders]);
 
     // ── Sort providers by distance to user ──────────────────────────────────
@@ -439,12 +369,6 @@ export default function MedicalMapView() {
         [sortedProviders, selectedPin]
     );
 
-    // ── Index of the selected pin in the sorted list (for Prev/Next label) ──
-    const calloutIdx = useMemo(() =>
-        selectedPin ? sortedProviders.findIndex(p => p.id === selectedPin) : -1,
-        [sortedProviders, selectedPin]
-    );
-
     // ── Screen title ────────────────────────────────────────────────────────
     const screenTitle = useMemo(() => {
         switch (category) {
@@ -453,7 +377,6 @@ export default function MedicalMapView() {
             case 'ambulance': return 'Ambulance';
             case 'diagnostics': return 'Diagnostics';
             case 'pharmacy': return 'Pharmacy';
-            case 'others': return 'Others';
             default: return 'Medical';
         }
     }, [category]);
@@ -467,13 +390,9 @@ export default function MedicalMapView() {
             const loc = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
             setUserLoc(loc);
             setTimeout(() => {
-                // Use a broad zoom so provider pins across the city remain visible;
-                // if backend data has already loaded, fitToCoordinates will handle the viewport.
-                if (!hasAutoFittedRef.current) {
-                    mapRef.current?.animateToRegion(
-                        { ...loc, latitudeDelta: 0.06, longitudeDelta: 0.06 }, 800
-                    );
-                }
+                mapRef.current?.animateToRegion(
+                    { ...loc, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 800
+                );
             }, 600);
         })();
     }, []);
@@ -527,13 +446,6 @@ export default function MedicalMapView() {
         handlePinPress(sortedProviders[newIdx].id);
     }, [selectedPin, sortedProviders, handlePinPress]);
 
-    // ── Call handler ────────────────────────────────────────────────────────
-    const handleCall = useCallback(() => {
-        if (!selectedProvider?.contactNumber) return;
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        Linking.openURL(`tel:${selectedProvider.contactNumber}`).catch(console.error);
-    }, [selectedProvider]);
-
     // ── Book Now → WebView ──────────────────────────────────────────────────
     const handleBookNow = useCallback(() => {
         if (!selectedProvider) return;
@@ -551,7 +463,7 @@ export default function MedicalMapView() {
     // ── Nav press ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
         if (tabId === 'Home') {
-            router.replace('/(tabs)/users/sos_screen' as any);
+            router.replace('/(tabs)/users/standard-user/sos_screen' as any);
         } else if (tabId === 'Chat') {
             router.push('/(tabs)/users/standard-user/chat_home' as any);
         } else if (tabId === 'Explore') {
@@ -593,7 +505,7 @@ export default function MedicalMapView() {
                             key={p.id}
                             coordinate={{ latitude: p.latitude, longitude: p.longitude }}
                             onPress={() => handlePinPress(p.id)}
-                            tracksViewChanges={selectedPin === p.id}
+                            tracksViewChanges={false}
                             anchor={{ x: 0.5, y: 0.5 }}
                         >
                             <View style={[
@@ -602,7 +514,7 @@ export default function MedicalMapView() {
                             ]}>
                                 <Ionicons
                                     name={p.icon as any}
-                                    size={64}
+                                    size={16}
                                     color={selectedPin === p.id ? '#FFFFFF' : T.violet}
                                 />
                             </View>
@@ -673,41 +585,32 @@ export default function MedicalMapView() {
                 </View>
 
                 {/* ── Callout Bottom Sheet ── */}
-                {showCallout && selectedProvider ? (
+                {showCallout && selectedProvider && (
                     <RNAnimated.View style={[
                         st.calloutWrap,
-                            { bottom: navBottom + NAV_HEIGHT + 16 },
-                            { opacity: calloutOpacity, transform: [{ translateY: calloutY }] },
-                        ]}>
-                            <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
-                            <View style={st.calloutTint} pointerEvents="none" />
-
-                            {/* Grabber */}
-                            <View style={st.calloutGrabberWrap}>
-                                <View style={st.calloutGrabber} />
-                            </View>
-
-                            {/* ── Header: icon + name/meta + close ── */}
-                            <View style={st.calloutHeader}>
+                        { bottom: navBottom + NAV_HEIGHT + 80 },
+                        { opacity: calloutOpacity, transform: [{ translateY: calloutY }] },
+                    ]}>
+                        <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={st.calloutTint} pointerEvents="none" />
+                        <View style={st.calloutGrabberWrap}>
+                            <View style={st.calloutGrabber} />
+                        </View>
+                        <View style={st.calloutContent}>
+                            {/* Left — Info */}
+                            <View style={st.calloutInfo}>
                                 <View style={st.calloutIconWrap}>
-                                    <Ionicons name={selectedProvider.icon as any} size={24} color={T.violet} />
+                                    <Ionicons name={selectedProvider.icon as any} size={22} color={T.violet} />
                                 </View>
-                                <View style={st.calloutTitleBlock}>
+                                <View style={st.calloutTextWrap}>
                                     <Text style={st.calloutName} numberOfLines={1}>
                                         {selectedProvider.name}
                                     </Text>
-                                    <View style={st.calloutRatingRow}>
+                                    <View style={st.calloutMetaRow}>
                                         <Ionicons name="star" size={12} color="#F59E0B" />
-                                        <Text style={st.calloutRatingText}>
-                                            {selectedProvider.rating != null ? Number(selectedProvider.rating).toFixed(1) : '—'}
+                                        <Text style={st.calloutRating}>
+                                            {selectedProvider.rating.toFixed(1)}
                                         </Text>
-                                        {selectedProvider.distLabel ? (
-                                            <>
-                                                <Text style={st.calloutDot}>•</Text>
-                                                <Ionicons name="location-outline" size={11} color={D.muted} />
-                                                <Text style={st.calloutDistText}>{selectedProvider.distLabel}</Text>
-                                            </>
-                                        ) : null}
                                     </View>
                                     {selectedProvider.affiliation ? (
                                         <Text style={st.calloutAffiliation} numberOfLines={1}>
@@ -715,102 +618,12 @@ export default function MedicalMapView() {
                                         </Text>
                                     ) : null}
                                 </View>
-                                <TouchableOpacity
-                                    style={st.calloutCloseBtn}
-                                    onPress={closeCallout}
-                                    activeOpacity={0.7}
-                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                                >
-                                    <Ionicons name="close" size={16} color={D.muted} />
-                                </TouchableOpacity>
                             </View>
-
-                            {/* ── Detail Chips ── */}
-                            <View style={st.calloutExtraDetails}>
-                                {/* Hospital / Pharmacy / Others — address */}
-                                {selectedProvider.address ? (
-                                    <View style={[st.detailChip, st.detailChipWide]}>
-                                        <Ionicons name="location-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText} numberOfLines={1}>{selectedProvider.address}</Text>
-                                    </View>
-                                ) : null}
-                                {/* Specialist — specialty + degree + shift */}
-                                {selectedProvider.specialty ? (
-                                    <View style={st.detailChip}>
-                                        <Ionicons name="medical-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText}>{selectedProvider.specialty}</Text>
-                                    </View>
-                                ) : null}
-                                {selectedProvider.degree ? (
-                                    <View style={st.detailChip}>
-                                        <Ionicons name="school-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText}>{selectedProvider.degree}</Text>
-                                    </View>
-                                ) : null}
-                                {selectedProvider.shift ? (
-                                    <View style={st.detailChip}>
-                                        <Ionicons name="time-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText}>
-                                            {selectedProvider.shift === 'morning' ? 'Morning Shift'
-                                                : selectedProvider.shift === 'evening' ? 'Evening Shift'
-                                                : 'Available Now'}
-                                        </Text>
-                                    </View>
-                                ) : null}
-                                {/* Ambulance — ETA + type */}
-                                {selectedProvider.eta ? (
-                                    <View style={[st.detailChip, st.detailChipSuccess]}>
-                                        <Ionicons name="time-outline" size={11} color={T.success} />
-                                        <Text style={[st.detailChipText, { color: T.success }]}>ETA {selectedProvider.eta}</Text>
-                                    </View>
-                                ) : null}
-                                {selectedProvider.ambulanceType ? (
-                                    <View style={st.detailChip}>
-                                        <Ionicons name="car-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText}>
-                                            {selectedProvider.ambulanceType === 'icu_ccu' ? 'ICU / CCU'
-                                                : selectedProvider.ambulanceType === 'ac' ? 'Air Conditioned'
-                                                : 'Standard'}
-                                        </Text>
-                                    </View>
-                                ) : null}
-                                {/* Pharmacy — delivery */}
-                                {selectedProvider.isDeliveryAvailable !== undefined ? (
-                                    <View style={[st.detailChip, selectedProvider.isDeliveryAvailable ? st.detailChipSuccess : {}]}>
-                                        <Ionicons
-                                            name={selectedProvider.isDeliveryAvailable ? 'checkmark-circle-outline' : 'close-circle-outline'}
-                                            size={11}
-                                            color={selectedProvider.isDeliveryAvailable ? T.success : D.muted}
-                                        />
-                                        <Text style={[st.detailChipText, selectedProvider.isDeliveryAvailable ? { color: T.success } : {}]}>
-                                            {selectedProvider.isDeliveryAvailable ? 'Delivery Available' : 'No Delivery'}
-                                        </Text>
-                                    </View>
-                                ) : null}
-                                {/* Others — sub-category */}
-                                {selectedProvider.category ? (
-                                    <View style={st.detailChip}>
-                                        <Ionicons name="layers-outline" size={11} color={D.muted} />
-                                        <Text style={st.detailChipText}>{selectedProvider.category}</Text>
-                                    </View>
-                                ) : null}
-                            </View>
-
-                            {/* ── Action Buttons: Call + More Info ── */}
-                            <View style={st.calloutActionRow}>
-                                {selectedProvider.contactNumber ? (
-                                    <TouchableOpacity
-                                        style={st.actionCallBtn}
-                                        onPress={handleCall}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Ionicons name="call" size={16} color="#fff" />
-                                        <Text style={st.actionCallText}>Call</Text>
-                                    </TouchableOpacity>
-                                ) : null}
+                            {/* Right — Actions */}
+                            <View style={st.calloutActions}>
                                 {selectedProvider.bookingUrl ? (
                                     <TouchableOpacity
-                                        style={st.actionMoreBtn}
+                                        style={st.bookNowBtn}
                                         onPress={handleBookNow}
                                         activeOpacity={0.85}
                                     >
@@ -818,57 +631,53 @@ export default function MedicalMapView() {
                                             colors={G.navActive.colors}
                                             start={G.navActive.start}
                                             end={G.navActive.end}
-                                            style={st.actionMoreGradient}
+                                            style={st.bookNowGradient}
                                         >
-                                            <Ionicons name="information-circle-outline" size={16} color="#fff" />
-                                            <Text style={st.actionMoreText}>More Info</Text>
+                                            <Text style={st.bookNowText}>Book Now</Text>
+                                            <Ionicons name="arrow-forward" size={14} color={T.onPrimary} />
                                         </LinearGradient>
                                     </TouchableOpacity>
-                                ) : null}
-                                {/* If neither contact nor booking, show a disabled placeholder */}
-                                {!selectedProvider.contactNumber && !selectedProvider.bookingUrl ? (
-                                    <View style={[st.actionCallBtn, { backgroundColor: 'rgba(255,255,255,0.06)', flex: 1 }]}>
-                                        <Ionicons name="information-circle-outline" size={16} color={D.muted} />
-                                        <Text style={[st.actionCallText, { color: D.muted }]}>No booking available</Text>
-                                    </View>
-                                ) : null}
+                                ) : (
+                                    <TouchableOpacity
+                                        style={st.callBtn}
+                                        onPress={() => Haptics.selectionAsync()}
+                                        activeOpacity={0.85}
+                                    >
+                                        <Ionicons name="call" size={18} color={T.onPrimary} />
+                                    </TouchableOpacity>
+                                )}
+                                <TouchableOpacity
+                                    style={st.dismissBtn}
+                                    onPress={closeCallout}
+                                    activeOpacity={0.7}
+                                >
+                                    <Ionicons name="close" size={16} color={D.muted} />
+                                </TouchableOpacity>
                             </View>
-
-                            {/* ── Prev / Index / Next row ── */}
-                            {sortedProviders.length > 1 && (
-                                <View style={st.calloutNavRow}>
-                                    <TouchableOpacity
-                                        style={st.navArrowBtn}
-                                        onPress={() => handleNextPrev('prev')}
-                                        activeOpacity={0.75}
-                                    >
-                                        <View style={st.navArrowIcon}>
-                                            <Feather name="chevron-left" size={18} color={T.violet} />
-                                        </View>
-                                        <Text style={st.navArrowText}>Prev</Text>
-                                    </TouchableOpacity>
-                                    <View style={st.navIndexWrap}>
-                                        <Text style={st.navIndexText}>
-                                            {calloutIdx >= 0 ? calloutIdx + 1 : 1}
-                                        </Text>
-                                        <Text style={st.navIndexTotal}>
-                                            {' '}/ {sortedProviders.length}
-                                        </Text>
-                                    </View>
-                                    <TouchableOpacity
-                                        style={[st.navArrowBtn, { flexDirection: 'row-reverse' }]}
-                                        onPress={() => handleNextPrev('next')}
-                                        activeOpacity={0.75}
-                                    >
-                                        <View style={st.navArrowIcon}>
-                                            <Feather name="chevron-right" size={18} color={T.violet} />
-                                        </View>
-                                        <Text style={st.navArrowText}>Next</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
-                        </RNAnimated.View>
-                ) : null}
+                        </View>
+                        {/* Distance Indicator */}
+                        {selectedProvider?.distLabel ? (
+                            <View style={st.distanceIndicator}>
+                                <Ionicons name="location" size={14} color={D.subtitle} />
+                                <Text style={st.distanceText}>{selectedProvider.distLabel}</Text>
+                            </View>
+                        ) : null}
+                        {/* Pagination / Nav */}
+                        {sortedProviders.length > 1 && (
+                            <View style={st.calloutNavRow}>
+                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('prev')}>
+                                    <Feather name="chevron-left" size={18} color={D.subtitle} />
+                                    <Text style={st.navArrowText}>Prev options</Text>
+                                </TouchableOpacity>
+                                <View style={st.navDots} />
+                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('next')}>
+                                    <Text style={st.navArrowText}>Next options</Text>
+                                    <Feather name="chevron-right" size={18} color={D.subtitle} />
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </RNAnimated.View>
+                )}
 
                 {/* ── Quick Selector Chips ── */}
                 <View style={[st.chipContainer, { bottom: navBottom + NAV_HEIGHT + 12 }]}>
@@ -989,7 +798,7 @@ const st = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
-            android: {},
+            android: { elevation: 8 },
         }),
     },
     pinBubbleActive: {
@@ -998,7 +807,7 @@ const st = StyleSheet.create({
         transform: [{ scale: 1.15 }],
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.6, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
-            android: {},
+            android: { elevation: 12 },
         }),
     },
 
@@ -1088,28 +897,6 @@ const st = StyleSheet.create({
         fontSize: 12, fontWeight: '600', color: D.subtitle,
     },
 
-    // ── Extra Detail Chips ────────────────────────────────────────────────────
-    calloutExtraDetails: {
-        flexDirection: 'row', flexWrap: 'wrap', gap: 6,
-        paddingHorizontal: S.s4, paddingBottom: 8,
-    },
-    detailChip: {
-        flexDirection: 'row', alignItems: 'center', gap: 4,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
-        borderWidth: 1, borderColor: D.hairline,
-    },
-    detailChipWide: {
-        flexShrink: 1, maxWidth: '100%',
-    },
-    detailChipText: {
-        fontSize: 11, fontWeight: '600', color: D.muted,
-    },
-    detailChipSuccess: {
-        borderColor: 'rgba(16, 185, 129, 0.3)',
-        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    },
-
     // ── Callout Nav Row ─────────────────────────────────────────────────────
     calloutNavRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -1125,69 +912,6 @@ const st = StyleSheet.create({
         fontSize: 12, fontWeight: '600', color: D.subtitle,
     },
     navDots: { flex: 1 },
-
-    // ── Callout Header (new unified layout) ────────────────────────────────
-    calloutHeader: {
-        flexDirection: 'row', alignItems: 'flex-start',
-        paddingHorizontal: S.s4, paddingTop: 12, paddingBottom: 10,
-        gap: S.s3,
-    },
-    calloutTitleBlock: { flex: 1, gap: 2 },
-    calloutRatingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    calloutRatingText: { fontSize: 12, fontWeight: '700', color: '#F59E0B' },
-    calloutDot: { fontSize: 11, color: D.muted, marginHorizontal: 2 },
-    calloutDistText: { fontSize: 11, fontWeight: '500', color: D.muted },
-    calloutCloseBtn: {
-        width: 28, height: 28, borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderWidth: 1, borderColor: D.hairline,
-        alignItems: 'center', justifyContent: 'center',
-        marginTop: 2,
-    },
-
-    // ── Action Buttons ──────────────────────────────────────────────────────
-    calloutActionRow: {
-        flexDirection: 'row', gap: S.s3,
-        paddingHorizontal: S.s4, paddingBottom: 12,
-    },
-    actionCallBtn: {
-        flex: 1, flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'center', gap: 6,
-        paddingVertical: 11, borderRadius: 12,
-        backgroundColor: T.success,
-        ...Platform.select({
-            ios: { shadowColor: '#10B981', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 4 },
-        }),
-    },
-    actionCallText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-    actionMoreBtn: {
-        flex: 1, borderRadius: 12, overflow: 'hidden',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
-        }),
-    },
-    actionMoreGradient: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'center', gap: 6,
-        paddingVertical: 11, borderRadius: 12,
-    },
-    actionMoreText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-
-    // ── Nav arrow icon bubble ────────────────────────────────────────────────
-    navArrowIcon: {
-        width: 32, height: 32, borderRadius: 16,
-        backgroundColor: `${T.violet}18`,
-        borderWidth: 1, borderColor: `${T.violet}30`,
-        alignItems: 'center', justifyContent: 'center',
-    },
-    navIndexWrap: {
-        flex: 1, alignItems: 'center', justifyContent: 'center',
-        flexDirection: 'row',
-    },
-    navIndexText: { fontSize: 15, fontWeight: '800', color: D.title },
-    navIndexTotal: { fontSize: 13, fontWeight: '500', color: D.muted },
 
     // ── Quick Selector Chips ────────────────────────────────────────────────
     chipContainer: {

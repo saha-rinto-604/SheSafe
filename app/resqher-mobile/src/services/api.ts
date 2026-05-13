@@ -2,17 +2,7 @@ import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
 const ACCESS_KEY = 'resqher_access_token';
-
-export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
-
-export type AuthUser = {
-  id: number;
-  role: UserRole;
-  firstName: string;
-  lastName: string;
-  phoneNumber: string;
-  entryTime: string;
-};
+const REFRESH_KEY = 'resqher_refresh_token';
 
 function normalizeBaseUrl(url: string) {
   // allow user to pass either with or without trailing slash
@@ -20,7 +10,7 @@ function normalizeBaseUrl(url: string) {
 }
 
 // Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
-const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:4000');
+const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -28,16 +18,22 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-export async function setTokens(access: string) {
+export async function setTokens(access: string, refresh: string) {
   await SecureStore.setItemAsync(ACCESS_KEY, access);
+  await SecureStore.setItemAsync(REFRESH_KEY, refresh);
 }
 
 export async function clearTokens() {
   await SecureStore.deleteItemAsync(ACCESS_KEY);
+  await SecureStore.deleteItemAsync(REFRESH_KEY);
 }
 
 export async function getAccessToken() {
   return SecureStore.getItemAsync(ACCESS_KEY);
+}
+
+export async function getRefreshToken() {
+  return SecureStore.getItemAsync(REFRESH_KEY);
 }
 
 // Attach token automatically
@@ -54,10 +50,6 @@ function friendlyError(err: unknown) {
   if (isAxiosError(err)) {
     const ax = err as AxiosError<any>;
     const data = ax.response?.data;
-
-    if (!ax.response) {
-      return new Error(`Cannot reach backend at ${BASE_URL}. Make sure backend server is running.`);
-    }
 
     if (data && typeof data === 'object') {
       // DRF returns errors in an object { fieldName: ["error string"] }
@@ -85,38 +77,43 @@ function friendlyError(err: unknown) {
 }
 
 export const authService = {
-  async register(payload: {
-    phoneNumber: string;
-    password: string;
-    firstName: string;
-    lastName: string;
-    role: UserRole;
-  }) {
+  async register(
+    phone: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+    role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
+  ) {
     try {
-      const res = await api.post('/api/auth/signup', {
-        phoneNumber: payload.phoneNumber,
-        password: payload.password,
-        firstName: payload.firstName,
-        lastName: payload.lastName,
-        role: payload.role,
+      await api.post('/api/v1/auth/register/', {
+        phone,
+        password,
+        first_name: firstName,
+        last_name: lastName,
+        role
       });
-
-      const { accessToken, user } = res.data || {};
-      if (!accessToken || !user) throw new Error('Invalid signup response');
-      await setTokens(accessToken);
-      return user as AuthUser;
     } catch (e) {
       throw friendlyError(e);
     }
   },
 
-  async login(phoneNumber: string, password: string) {
+  async login(username: string, password: string) {
+    // Mock logic for fast testing
+    if (username === '1234' && password === '1234') {
+      await setTokens('mock-access-token-1234', 'mock-refresh-token-1234');
+      return 'mock-access-token-1234';
+    }
+    if (username === '5678' && password === '5678') {
+      await setTokens('mock-access-token-5678', 'mock-refresh-token-5678');
+      return 'mock-access-token-5678';
+    }
+
     try {
-      const res = await api.post('/api/auth/login', { phoneNumber, password });
-      const { accessToken, user } = res.data || {};
-      if (!accessToken || !user) throw new Error('Invalid login response');
-      await setTokens(accessToken);
-      return user as AuthUser;
+      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
+      const { access, refresh } = res.data || {};
+      if (!access || !refresh) throw new Error('Invalid token response');
+      await setTokens(access, refresh);
+      return access as string;
     } catch (e) {
       throw friendlyError(e);
     }
@@ -125,91 +122,6 @@ export const authService = {
   async logout() {
     await clearTokens();
   },
-};
-
-export type SavedLocation = {
-  id: number;
-  user_id: number;
-  latitude: number;
-  longitude: number;
-  address: string | null;
-  recorded_at: string;
-};
-
-export const locationService = {
-  async saveLocation(latitude: number, longitude: number, address?: string) {
-    try {
-      const res = await api.post('/api/locations', { latitude, longitude, address });
-      return res.data?.location as SavedLocation;
-    } catch (e) {
-      throw friendlyError(e);
-    }
-  },
-
-  async getLastLocation() {
-    try {
-      const res = await api.get('/api/locations/last');
-      return res.data?.location as SavedLocation | null;
-    } catch (e) {
-      throw friendlyError(e);
-    }
-  },
-};
-
-// ── Incident Service ──────────────────────────────────────────────────────────
-
-export type Incident = {
-  id: number;
-  user_id: number;
-  latitude: number;
-  longitude: number;
-  address: string | null;
-  status: 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
-  created_at: string;
-};
-
-export type IncidentZone = {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-  radius: number;
-  incidentCount: number;
-  incidents?: any[];
-};
-
-export const incidentService = {
-  /** Report a new incident at the given coordinates (called when SOS is triggered). */
-  async reportIncident(latitude: number, longitude: number, address?: string) {
-    try {
-      const res = await api.post('/api/incidents', { latitude, longitude, address });
-      return res.data?.incident as Incident;
-    } catch (e) {
-      throw friendlyError(e);
-    }
-  },
-
-  /** Fetch all aggregated incident zones (clustered by 500m proximity). */
-  async getIncidentZones() {
-    try {
-      const res = await api.get('/api/incidents/zones');
-      return (res.data?.zones ?? []) as IncidentZone[];
-    } catch (e) {
-      throw friendlyError(e);
-    }
-  },
-};
-
-export const medicalService = {
-  async getProviders(category?: string) {
-    try {
-      const params = category ? { category } : {};
-      const res = await api.get('/api/medical/providers', { params });
-      return (res.data?.providers ?? []);
-    } catch (e) {
-      throw friendlyError(e);
-    }
-  }
 };
 
 export default api;

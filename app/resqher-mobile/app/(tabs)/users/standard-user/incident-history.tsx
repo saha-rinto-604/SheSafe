@@ -165,7 +165,7 @@ export default function IncidentHistoryScreen() {
                         onPress={() => router.back()}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                        <Ionicons name="arrow-back" size={20} color={T.ink2} />
+                        <Feather name="chevron-left" size={22} color={T.ink} />
                     </TouchableOpacity>
                     <Text style={s.headerTitle}>Incident History</Text>
                     <View style={s.headerSpacer} />
@@ -218,8 +218,8 @@ const s = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: T.lineMid,
-        backgroundColor: T.surfaceCard,
+        backgroundColor: T.surfaceBulky,
+        borderColor: 'rgba(255,255,255,0.1)',
     },
     headerTitle: {
         flex: 1,
@@ -353,3 +353,4 @@ const s = StyleSheet.create({
         lineHeight: 20,
     },
 });
+

@@ -26,7 +26,7 @@ export default function VolunteerDashboard() {
 
                 <TouchableOpacity
                     style={st.sosBtn}
-                    onPress={() => router.push('/(tabs)/users/sos_screen')}
+                    onPress={() => router.push('/(tabs)/users/standard-user/sos_screen')}
                 >
                     <Feather name="alert-triangle" size={24} color={T.onPrimary} />
                     <Text style={st.sosBtnText}>Emergency SOS</Text>

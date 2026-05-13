@@ -5,7 +5,7 @@
 export const DEFAULT_GROUP_CHAT_NAME = 'ResQher Emergency Chat' as const;
 
 export type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
-export type IncidentStatus = 'LIVE' | 'RESOLVED';
+export type IncidentStatus = 'LIVE' | 'RESOLVED' | 'CANCELLED';
 export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM';
 
 export interface Participant {

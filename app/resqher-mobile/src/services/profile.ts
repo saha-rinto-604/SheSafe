@@ -8,6 +8,7 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import type { Identity, Role } from '../identity/identity.types';
 // import api from './api'; // uncomment when backend is ready
 
 // ── Storage key ──────────────────────────────────────────────────────────────
@@ -84,4 +85,15 @@ export function formatDob(isoDate: string): string {
     } catch {
         return isoDate;
     }
+}
+
+// ── Identity-layer bridge ────────────────────────────────────────────────────
+// Converts a local UserProfile into the Identity shape consumed by AuthContext.
+// The "id" and "role" come from the auth layer, not from SecureStore.
+export function toIdentity(
+    profile: UserProfile,
+    id: string | null,
+    role: Role,
+): Identity {
+    return { ...profile, id, role };
 }
