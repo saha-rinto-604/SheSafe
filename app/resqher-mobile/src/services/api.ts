@@ -201,9 +201,10 @@ export const incidentService = {
 };
 
 export const medicalService = {
-  async getProviders() {
+  async getProviders(category?: string) {
     try {
-      const res = await api.get('/api/medical/providers');
+      const params = category ? { category } : {};
+      const res = await api.get('/api/medical/providers', { params });
       return (res.data?.providers ?? []);
     } catch (e) {
       throw friendlyError(e);

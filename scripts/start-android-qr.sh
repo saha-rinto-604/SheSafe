@@ -42,19 +42,27 @@ LAN_IP=$(get_lan_ip)
 LAN_IP="${LAN_IP:-127.0.0.1}"
 API_URL="http://${LAN_IP}:${BACKEND_PORT}"
 
-# Write EXPO_PUBLIC_API_URL to .env
+# Write EXPO_PUBLIC_API_URL to .env (handles BOM, deduplicates)
 update_env() {
   local line="EXPO_PUBLIC_API_URL=$API_URL"
-  if [ ! -f "$MOBILE_ENV_PATH" ]; then
-    echo "$line" > "$MOBILE_ENV_PATH"
-    echo "Created .env with API URL: $API_URL"
-  elif grep -q '^EXPO_PUBLIC_API_URL=' "$MOBILE_ENV_PATH"; then
-    sed -i "s|^EXPO_PUBLIC_API_URL=.*|$line|" "$MOBILE_ENV_PATH"
-    echo "Updated EXPO_PUBLIC_API_URL to $API_URL"
-  else
-    echo "$line" >> "$MOBILE_ENV_PATH"
-    echo "Appended EXPO_PUBLIC_API_URL to .env: $API_URL"
-  fi
+  python3 - <<PYEOF
+import os, sys
+path = "$MOBILE_ENV_PATH"
+new_line = "$line"
+if not os.path.exists(path):
+    with open(path, 'w') as f:
+        f.write(new_line + '\n')
+    print("Created .env with API URL: $API_URL")
+    sys.exit(0)
+with open(path, 'rb') as f:
+    raw = f.read().lstrip(b'\xef\xbb\xbf')
+lines = raw.decode('utf-8').splitlines()
+lines = [l for l in lines if l.strip() and not l.startswith('EXPO_PUBLIC_API_URL=')]
+lines.append(new_line)
+with open(path, 'w', newline='\n') as f:
+    f.write('\n'.join(lines) + '\n')
+print("Updated EXPO_PUBLIC_API_URL to $API_URL")
+PYEOF
 }
 update_env
 

@@ -239,10 +239,34 @@ export default function MedicalMapView() {
     const [returnFromWebView, setReturnFromWebView] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [backendProviders, setBackendProviders] = useState<any[]>([]);
+    const hasAutoFittedRef = useRef(false);
 
+    // Fetch providers for the current category; cancel if category changes before resolve
     useEffect(() => {
-        medicalService.getProviders().then(setBackendProviders).catch(console.error);
-    }, []);
+        let cancelled = false;
+        medicalService.getProviders(category)
+            .then(data => { if (!cancelled) setBackendProviders(data); })
+            .catch(() => { if (!cancelled) setBackendProviders([]); });
+        return () => { cancelled = true; };
+    }, [category]);
+
+    // Auto-fit the map to show all providers the first time data loads per category
+    useEffect(() => {
+        if (backendProviders.length === 0 || hasAutoFittedRef.current) return;
+        hasAutoFittedRef.current = true;
+        const coords = backendProviders
+            .map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) }))
+            .filter(c => c.latitude !== 0 && c.longitude !== 0 && !isNaN(c.latitude) && !isNaN(c.longitude));
+        if (userLoc) coords.push(userLoc);
+        if (coords.length > 0) {
+            setTimeout(() => {
+                mapRef.current?.fitToCoordinates(coords, {
+                    edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
+                    animated: true,
+                });
+            }, 400);
+        }
+    }, [backendProviders, userLoc]);
 
     // ── Reset chip + close callout whenever category changes ────────────────
     useEffect(() => {
@@ -250,6 +274,8 @@ export default function MedicalMapView() {
         setSelectedPin(null);
         setShowCallout(false);
         setSafeRoute(null);
+        setBackendProviders([]);       // clear stale data from previous category
+        hasAutoFittedRef.current = false; // allow auto-fit for new category
     }, [category]);
 
     // Load profile picture on screen focus
@@ -441,9 +467,13 @@ export default function MedicalMapView() {
             const loc = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
             setUserLoc(loc);
             setTimeout(() => {
-                mapRef.current?.animateToRegion(
-                    { ...loc, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 800
-                );
+                // Use a broad zoom so provider pins across the city remain visible;
+                // if backend data has already loaded, fitToCoordinates will handle the viewport.
+                if (!hasAutoFittedRef.current) {
+                    mapRef.current?.animateToRegion(
+                        { ...loc, latitudeDelta: 0.06, longitudeDelta: 0.06 }, 800
+                    );
+                }
             }, 600);
         })();
     }, []);
@@ -572,7 +602,7 @@ export default function MedicalMapView() {
                             ]}>
                                 <Ionicons
                                     name={p.icon as any}
-                                    size={16}
+                                    size={64}
                                     color={selectedPin === p.id ? '#FFFFFF' : T.violet}
                                 />
                             </View>
