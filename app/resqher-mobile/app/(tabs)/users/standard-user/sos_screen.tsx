@@ -36,6 +36,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
+import { incidentService } from '../../../../src/services/incidentService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -544,6 +545,7 @@ export default function SOSScreen() {
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
+    const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
 
@@ -553,6 +555,17 @@ export default function SOSScreen() {
             getUserProfile().then(setProfile);
         }, []),
     );
+
+    // Navigate to chat room once emergency is live (countdown reached 0)
+    useEffect(() => {
+        if (isEmergencyLive && activeIncidentId) {
+            router.push({
+                pathname: '/(tabs)/users/standard-user/chat_room',
+                params: { incidentId: activeIncidentId },
+            } as any);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isEmergencyLive]);
 
     // Load persisted SOS cancel timer setting on mount
     useEffect(() => {
@@ -639,7 +652,23 @@ export default function SOSScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-    }, [cancelDuration]);
+        // Create incident in DB immediately so zone appears on the map
+        if (userLoc) {
+            incidentService.createIncident({
+                latitude: userLoc.latitude,
+                longitude: userLoc.longitude,
+                address: address || undefined,
+            })
+                .then((incident) => {
+                    setActiveIncidentId(String(incident.id));
+                    // Refresh zones so the new incident zone appears
+                    incidentService.getZones().then(setZones).catch(() => {});
+                })
+                .catch(() => {
+                    // Incident creation failed — SOS still active locally
+                });
+        }
+    }, [cancelDuration, userLoc, address]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -657,7 +686,13 @@ export default function SOSScreen() {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-    }, []);
+        if (activeIncidentId) {
+            incidentService.cancelIncident(activeIncidentId)
+                .then(() => incidentService.getZones().then(setZones).catch(() => {}))
+                .catch(() => {});
+            setActiveIncidentId(null);
+        }
+    }, [activeIncidentId]);
 
     const confirmStop = useCallback(() => {
         Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [

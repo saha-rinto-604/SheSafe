@@ -3,7 +3,7 @@
  * Mirrors standard-user incident history UI with volunteer-specific fields.
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -18,6 +18,7 @@ import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
+import { chatService } from '../../../../src/services/chatService';
 
 const MED = {
     muted: '#A09CB2',
@@ -161,11 +162,41 @@ function EmptyState() {
 }
 
 // ── Main screen ────────────────────────────────────────────────────────────────
+function toVolunteerIncident(raw: any): VolunteerIncident {
+    const d = new Date(raw.createdAt ?? raw.created_at);
+    const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+        + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    let status: IncidentStatus = 'Active';
+    if (raw.status === 'RESOLVED') status = 'Resolved';
+    else if (raw.status === 'CANCELLED') status = 'Cancelled';
+    return {
+        id: String(raw.id),
+        incidentNumber: Number(String(raw.id).replace(/\D/g, '') || 0),
+        victimName: raw.reporter ?? 'Unknown',
+        location: raw.address ?? `${Number(raw.location?.latitude ?? 0).toFixed(4)}, ${Number(raw.location?.longitude ?? 0).toFixed(4)}`,
+        occurredAtLabel: label,
+        status,
+    };
+}
+
 export default function VolunteerIncidents() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const incidents = DUMMY_INCIDENTS;
+    const [incidents, setIncidents] = useState<VolunteerIncident[]>(DUMMY_INCIDENTS);
+
+    useEffect(() => {
+        const load = () => {
+            chatService.getActiveIncidents()
+                .then((list) => {
+                    if (list.length > 0) setIncidents(list.map(toVolunteerIncident));
+                })
+                .catch(() => { /* keep dummy data on error */ });
+        };
+        load();
+        const interval = setInterval(load, 30_000);
+        return () => clearInterval(interval);
+    }, []);
 
     return (
         <AtmosphericShell>

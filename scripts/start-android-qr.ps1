@@ -1,31 +1,28 @@
 param(
   [int]$BackendPort = 4000,
-  [int]$MetroPort = 8081
+  [int]$MetroPort   = 8081,
+  [switch]$SkipMigrations
 )
 
 $ErrorActionPreference = 'Stop'
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Resolve-Path (Join-Path $scriptDir "..")
-$mobileDir = Join-Path $repoRoot "app/resqher-mobile"
-$backendDir = Join-Path $repoRoot "backend"
+$scriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot      = Resolve-Path (Join-Path $scriptDir "..")
+$mobileDir     = Join-Path $repoRoot "app/resqher-mobile"
+$backendDir    = Join-Path $repoRoot "backend"
 $mobileEnvPath = Join-Path $mobileDir ".env"
 
+# ---------------------------------------------------------------------------
 function Stop-PortProcess {
   param([int]$Port)
-
   try {
-    $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if (-not $connections) {
-      Write-Host "Port $Port is free."
-      return
-    }
-
-    $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($procId in $processIds) {
-      if ($procId -and $procId -ne $PID) {
-        Write-Host "Stopping process $procId on port $Port..."
-        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $conns) { Write-Host "  Port $Port is free."; return }
+    foreach ($c in $conns) {
+      $pid_ = $c.OwningProcess
+      if ($pid_ -and $pid_ -ne $PID) {
+        Write-Host "  Stopping PID $pid_ on port $Port..."
+        Stop-Process -Id $pid_ -Force -ErrorAction SilentlyContinue
       }
     }
   } catch {
@@ -38,114 +35,135 @@ function Get-LanIp {
     $cfg = Get-NetIPConfiguration |
       Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway -ne $null } |
       Select-Object -First 1
-
     if ($cfg -and $cfg.IPv4Address -and $cfg.IPv4Address.IPAddress) {
       return $cfg.IPv4Address.IPAddress
     }
-  } catch {
-  }
-
+  } catch {}
   return '127.0.0.1'
 }
 
 function Clear-MobileCache {
   param([string]$MobilePath)
-
   $targets = @(
     (Join-Path $MobilePath '.expo'),
     (Join-Path $MobilePath 'node_modules/.cache')
   )
-
-  foreach ($target in $targets) {
-    if (Test-Path $target) {
-      Write-Host "Removing $target"
-      Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
+  foreach ($t in $targets) {
+    if (Test-Path $t) {
+      Write-Host "  Removing $t"
+      Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue
     }
   }
-
   if ($env:TEMP) {
-    $patterns = @('metro-*', 'haste-map-*', 'react-native-packager-cache-*')
-    foreach ($pattern in $patterns) {
-      Get-ChildItem -Path $env:TEMP -Filter $pattern -ErrorAction SilentlyContinue |
+    foreach ($pat in @('metro-*','haste-map-*','react-native-packager-cache-*')) {
+      Get-ChildItem -Path $env:TEMP -Filter $pat -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
   }
 }
 
 function Update-ExpoApiEnv {
-  param(
-    [string]$EnvPath,
-    [string]$ApiUrl
-  )
-
+  param([string]$EnvPath, [string]$ApiUrl)
   $line = "EXPO_PUBLIC_API_URL=$ApiUrl"
-
   if (-not (Test-Path $EnvPath)) {
     Set-Content -Path $EnvPath -Value $line -Encoding UTF8
-    Write-Host "Created .env with API URL: $ApiUrl"
+    Write-Host "  Created .env: $line"
     return
   }
-
   $raw = Get-Content -Path $EnvPath -Raw
   if ($raw -match '(?m)^EXPO_PUBLIC_API_URL=.*$') {
     $updated = [regex]::Replace($raw, '(?m)^EXPO_PUBLIC_API_URL=.*$', $line)
   } else {
-    $updated = ($raw.TrimEnd() + "`r`n" + $line + "`r`n")
+    $updated = $raw.TrimEnd() + "`r`n" + $line + "`r`n"
   }
-
   Set-Content -Path $EnvPath -Value $updated -Encoding UTF8
-  Write-Host "Updated EXPO_PUBLIC_API_URL to $ApiUrl"
+  Write-Host "  $line"
 }
 
 function Wait-ForBackend {
-  param(
-    [string]$HealthUrl,
-    [int]$TimeoutSeconds = 25
-  )
-
-  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  param([string]$Url, [int]$Timeout = 30)
+  $deadline = (Get-Date).AddSeconds($Timeout)
   while ((Get-Date) -lt $deadline) {
     try {
-      $res = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 2
-      if ($res.StatusCode -ge 200 -and $res.StatusCode -lt 300) {
-        return $true
-      }
-    } catch {
-      Start-Sleep -Milliseconds 700
-    }
+      $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2
+      if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) { return $true }
+    } catch {}
+    Start-Sleep -Milliseconds 700
   }
-
   return $false
 }
 
-Write-Host "=== ResQher Android QR Launcher ===" -ForegroundColor Cyan
-Write-Host "Repository: $repoRoot"
+# ===========================================================================
+# MAIN
+# ===========================================================================
 
+Write-Host ""
+Write-Host "=== ResQher Android QR Launcher ===" -ForegroundColor Cyan
+Write-Host "Repo: $repoRoot"
+Write-Host ""
+
+# 1. Free ports
+Write-Host "[1/7] Freeing ports $BackendPort and $MetroPort..." -ForegroundColor Yellow
 Stop-PortProcess -Port $BackendPort
 Stop-PortProcess -Port $MetroPort
+
+# 2. Clear Expo cache
+Write-Host ""
+Write-Host "[2/7] Clearing Expo/Metro cache..." -ForegroundColor Yellow
 Clear-MobileCache -MobilePath $mobileDir
 
-$lanIp = Get-LanIp
-$apiUrl = "http://${lanIp}:$BackendPort"
+# 3. Detect LAN IP and update .env
+Write-Host ""
+Write-Host "[3/7] Detecting LAN IP..." -ForegroundColor Yellow
+$lanIp  = Get-LanIp
+$apiUrl = "http://" + $lanIp + ":" + $BackendPort
+Write-Host "  LAN IP : $lanIp"
 Update-ExpoApiEnv -EnvPath $mobileEnvPath -ApiUrl $apiUrl
 
-Write-Host "Starting backend in a new terminal..."
-Start-Process powershell -ArgumentList @(
-  '-NoExit',
-  '-ExecutionPolicy', 'Bypass',
-  '-Command', "Set-Location '$backendDir'; npm run dev"
-) | Out-Null
-
-$healthUrl = "$apiUrl/api/health"
-if (Wait-ForBackend -HealthUrl $healthUrl) {
-  Write-Host "Backend is reachable at $healthUrl" -ForegroundColor Green
+# 4. Run database migrations
+Write-Host ""
+if ($SkipMigrations) {
+  Write-Host "[4/7] Skipping migrations (-SkipMigrations set)." -ForegroundColor DarkGray
 } else {
-  Write-Warning "Backend health check did not pass yet. Expo will still start."
+  Write-Host "[4/7] Running database migrations..." -ForegroundColor Yellow
+  $migrateScript = Join-Path $backendDir "scripts\migrate.js"
+  try {
+    $out = & node $migrateScript 2>&1
+    $out | ForEach-Object { Write-Host "  $_" }
+    if ($LASTEXITCODE -eq 0) {
+      Write-Host "  Migrations OK." -ForegroundColor Green
+    } else {
+      Write-Warning "  Migrations exited with code $LASTEXITCODE - check MySQL and backend/.env"
+    }
+  } catch {
+    Write-Warning "  Could not run migrations: $($_.Exception.Message)"
+    Write-Warning "  Make sure MySQL is running and credentials in backend/.env are correct."
+  }
 }
 
-Write-Host "Fixing Expo package versions..." -ForegroundColor Yellow
+# 5. Start backend in a new terminal
+Write-Host ""
+Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
+$backendCmd = "Write-Host 'ResQher Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
+
+# 6. Wait for backend health
+$healthUrl = $apiUrl + "/api/health"
+Write-Host "  Waiting for $healthUrl ..."
+if (Wait-ForBackend -Url $healthUrl -Timeout 30) {
+  Write-Host "  Backend is up." -ForegroundColor Green
+} else {
+  Write-Warning "  Backend did not respond in 30s - check the backend terminal for errors."
+}
+
+# 7. Fix Expo packages then start
+Write-Host ""
+Write-Host "[6/7] Fixing Expo package versions..." -ForegroundColor Yellow
 Set-Location $mobileDir
 npx expo install --fix
 
-Write-Host "Starting Expo (QR in this terminal)..." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "[7/7] Starting Expo - scan the QR code on your Android device." -ForegroundColor Cyan
+Write-Host "  Backend API : $apiUrl" -ForegroundColor DarkGray
+Write-Host ""
 npx expo start --clear

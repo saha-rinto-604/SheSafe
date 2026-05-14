@@ -25,6 +25,9 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { useAuth } from '../../../../src/context/AuthContext';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { incidentService, type IncidentZone } from '../../../../src/services/incidentService';
+import api from '../../../../src/services/api';
+import * as SecureStore from 'expo-secure-store';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -38,11 +41,6 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// ── Red Zones (No-Go Areas) ─────────────────────────────────────────────────
-const RED_ZONES: { id: string; name: string; latitude: number; longitude: number; radius: number }[] = [
-    { id: 'rz1', name: 'Pragati Sarani Area', latitude: 23.813546, longitude: 90.421659, radius: 100 },
-    { id: 'rz2', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 100 }
-];
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -58,8 +56,10 @@ function haversineDistance(a: LatLng, b: LatLng): number {
     return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
 }
 
-function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
-    if (coordinates.length === 0) return { isSafe: true };
+type DangerZone = { name: string; latitude: number; longitude: number; radius: number };
+
+function checkRouteSafety(coordinates: LatLng[], dangerZones: DangerZone[]): { isSafe: boolean; blockedZoneName?: string } {
+    if (coordinates.length === 0 || dangerZones.length === 0) return { isSafe: true };
 
     const SEGMENT_CHECK_INTERVAL_M = 5;
 
@@ -67,7 +67,7 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
         const p1 = coordinates[i];
         const p2 = coordinates[i + 1];
 
-        for (const zone of RED_ZONES) {
+        for (const zone of dangerZones) {
             if (haversineDistance(p1, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
@@ -82,8 +82,7 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
                     latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
-
-                for (const zone of RED_ZONES) {
+                for (const zone of dangerZones) {
                     if (haversineDistance(interpPoint, zone) <= zone.radius) {
                         return { isSafe: false, blockedZoneName: zone.name };
                     }
@@ -93,7 +92,7 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
     }
 
     const lastPoint = coordinates[coordinates.length - 1];
-    for (const zone of RED_ZONES) {
+    for (const zone of dangerZones) {
         if (haversineDistance(lastPoint, zone) <= zone.radius) {
             return { isSafe: false, blockedZoneName: zone.name };
         }
@@ -102,9 +101,9 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
     return { isSafe: true };
 }
 
-function getRouteRiskScore(coordinates: LatLng[]): number {
+function getRouteRiskScore(coordinates: LatLng[], dangerZones: DangerZone[]): number {
     let score = 0;
-    if (coordinates.length === 0) return 0;
+    if (coordinates.length === 0 || dangerZones.length === 0) return 0;
 
     const SEGMENT_CHECK_INTERVAL_M = 5;
 
@@ -112,7 +111,7 @@ function getRouteRiskScore(coordinates: LatLng[]): number {
         const p1 = coordinates[i];
         const p2 = coordinates[i + 1];
 
-        for (const zone of RED_ZONES) {
+        for (const zone of dangerZones) {
             if (haversineDistance(p1, zone) <= zone.radius) score++;
         }
 
@@ -125,7 +124,7 @@ function getRouteRiskScore(coordinates: LatLng[]): number {
                     latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
-                for (const zone of RED_ZONES) {
+                for (const zone of dangerZones) {
                     if (haversineDistance(interpPoint, zone) <= zone.radius) score++;
                 }
             }
@@ -382,6 +381,22 @@ const NavTab = memo(function NavTab({ tab, isActive, onPress }: { tab: typeof NA
     );
 });
 
+// ── ZoneBadge — tappable marker shown at zone centre ────────────────────────
+const ZoneBadge = memo(function ZoneBadge({ count, isRed, isSafe }: { count: number; isRed: boolean; isSafe?: boolean }) {
+    const bg = isSafe
+        ? 'rgba(52,199,89,0.90)'
+        : isRed ? 'rgba(255,59,48,0.90)' : 'rgba(255,204,0,0.90)';
+    return (
+        <View style={[zb.wrap, { backgroundColor: bg }]}>
+            <Text style={zb.txt}>{isSafe ? '✓' : count}</Text>
+        </View>
+    );
+});
+const zb = StyleSheet.create({
+    wrap: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#fff' },
+    txt: { color: '#fff', fontSize: 10, fontWeight: '800' },
+});
+
 // ── ExploreScreen ────────────────────────────────────────────────────────────
 export default function ExploreScreen() {
     const insets = useSafeAreaInsets();
@@ -461,6 +476,21 @@ export default function ExploreScreen() {
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
     const [showSafePath, setShowSafePath] = useState(false);
+
+    // Live data from backend
+    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
+    const [safePlaceZones, setSafePlaceZones] = useState<{ id: string; name: string; latitude: number; longitude: number; radius: number }[]>([]);
+    const [altRouteCoords, setAltRouteCoords] = useState<LatLng[]>([]);
+
+    // Zone info sheet
+    const [selectedZone, setSelectedZone] = useState<IncidentZone | null>(null);
+    const [zoneSheetOpen, setZoneSheetOpen] = useState(false);
+
+    // Route path selector: 'primary' = shortest (default), 'alt' = safe alternative
+    const [selectedRoutePath, setSelectedRoutePath] = useState<'primary' | 'alt'>('primary');
+
+    // Double-tap routing
+    const lastMapPressRef = useRef<{ time: number; coord: LatLng } | null>(null);
     const scanAnim = useRef(new RNAnimated.Value(0)).current;
     const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
     const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
@@ -468,8 +498,36 @@ export default function ExploreScreen() {
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const userLocRef = useRef(userLoc);
+    const incidentZonesRef = useRef(incidentZones);
 
     useFocusEffect(useCallback(() => { getUserProfile().then(setProfile); }, []));
+
+    // Persist travel mode across sessions
+    useEffect(() => {
+        SecureStore.getItemAsync('explore_travel_mode').then(v => {
+            if (v && ['driving','walking','motorcycle','transit'].includes(v)) {
+                setTravelMode(v as typeof travelMode);
+            }
+        }).catch(() => {});
+    }, []);
+    useEffect(() => {
+        SecureStore.setItemAsync('explore_travel_mode', travelMode).catch(() => {});
+    }, [travelMode]);
+
+    // Fetch live incident zones (yellow/red) and safe-place zones (green) every 30s
+    useEffect(() => {
+        const fetchZones = () => {
+            incidentService.getZones()
+                .then(setIncidentZones)
+                .catch(() => {});
+            api.get('/api/safe-places')
+                .then((res) => setSafePlaceZones(res.data?.zones ?? []))
+                .catch(() => {});
+        };
+        fetchZones();
+        const interval = setInterval(fetchZones, 30_000);
+        return () => clearInterval(interval);
+    }, []);
 
     const searchProgress = useRef(new RNAnimated.Value(0)).current;
     const locationCardY = useRef(new RNAnimated.Value(300)).current;
@@ -481,9 +539,8 @@ export default function ExploreScreen() {
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
-    useEffect(() => {
-        userLocRef.current = userLoc;
-    }, [userLoc]);
+    useEffect(() => { userLocRef.current = userLoc; }, [userLoc]);
+    useEffect(() => { incidentZonesRef.current = incidentZones; }, [incidentZones]);
 
     useEffect(() => {
         (async () => {
@@ -554,7 +611,7 @@ export default function ExploreScreen() {
         setSelectedPlace(null); setPlaceIncidents([]); setEndLocation(null);
 
         if (directionsMode) { exitDirectionsMode(); } else {
-            setRouteCoords([]); setNavInstructions([]); setCurrentStepIdx(0); setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
+            setRouteCoords([]); setAltRouteCoords([]); setSelectedRoutePath('primary'); setNavInstructions([]); setCurrentStepIdx(0); setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
         }
 
         if (userLocRef.current) mapRef.current?.animateToRegion({ latitude: userLocRef.current.latitude, longitude: userLocRef.current.longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 700);
@@ -624,6 +681,7 @@ export default function ExploreScreen() {
             const fetchId = ++routeRequestId.current;
 
             setRouteCoords([]);
+            setAltRouteCoords([]);
             setRouteUnsafe(false);
             setBlockedZoneName(null);
             setShowSafePath(false);
@@ -652,6 +710,13 @@ export default function ExploreScreen() {
                 const chosenRoute = data.routes[0];
                 const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
+                // Alternative route (routes[1]) shown as a secondary green path
+                if (data.routes[1]) {
+                    setAltRouteCoords(decodePolyline(data.routes[1].overview_polyline?.points ?? ''));
+                } else {
+                    setAltRouteCoords([]);
+                }
+
                 setRouteCoords(chosenCoords);
                 setUnsafeRouteCoords(chosenCoords);
 
@@ -663,7 +728,11 @@ export default function ExploreScreen() {
                 setNavInstructions(instructions);
                 setCurrentStepIdx(0);
 
-                const safetyCheck = checkRouteSafety(chosenCoords);
+                // Any incident zone (yellow or red) can trigger alternative path suggestion
+                const dangerZones: DangerZone[] = incidentZonesRef.current
+                    .filter(z => z.incidentCount >= 1)
+                    .map(z => ({ name: z.name, latitude: z.latitude, longitude: z.longitude, radius: z.radius }));
+                const safetyCheck = checkRouteSafety(chosenCoords, dangerZones);
                 if (!safetyCheck.isSafe) {
                     setRouteUnsafe(true); setBlockedZoneName(safetyCheck.blockedZoneName ?? null); setShowSafePath(true);
                 } else {
@@ -733,12 +802,16 @@ export default function ExploreScreen() {
                 return;
             }
 
+            const liveDangerZones: DangerZone[] = incidentZonesRef.current
+                .filter(z => z.incidentCount >= 1)
+                .map(z => ({ name: z.name, latitude: z.latitude, longitude: z.longitude, radius: z.radius }));
+
             let bestRoute: { route: any; coords: LatLng[]; score: number } | null = null;
             let bestScore = Infinity;
 
             for (const route of data.routes) {
                 const coords = decodePolyline(route.overview_polyline?.points ?? '');
-                const score = getRouteRiskScore(coords);
+                const score = getRouteRiskScore(coords, liveDangerZones);
 
                 if (score < bestScore) {
                     bestScore = score; bestRoute = { route, coords, score };
@@ -748,16 +821,16 @@ export default function ExploreScreen() {
             if (bestScore > 0) {
                 if (travelMode === 'transit') {
                     stopScanAnimation(); setIsScanAnimating(false);
-                    Alert.alert('🚍 Fixed Transit Lines', 'Public transit follows fixed routes and cannot be detoured around this Red Zone. Please switch to Driving, Walking, or Bike mode to calculate a custom safe path.');
+                    Alert.alert('Fixed Transit Lines', 'Public transit follows fixed routes and cannot be detoured around this Red Zone. Please switch to Driving, Walking, or Bike mode to calculate a custom safe path.');
                     if (bestRoute) { setSafeRouteCoords(bestRoute.coords); setRouteCoords(bestRoute.coords); }
                     setRouteUnsafe(true);
                     return;
                 }
 
                 if (bestRoute) {
-                    const firstBadPoint = bestRoute.coords.find(p => RED_ZONES.some(z => haversineDistance(p, z) <= z.radius));
+                    const firstBadPoint = bestRoute.coords.find(p => liveDangerZones.some(z => haversineDistance(p, z) <= z.radius));
                     if (firstBadPoint) {
-                        const matchedZone = RED_ZONES.find(z => haversineDistance(firstBadPoint, z) <= z.radius);
+                        const matchedZone = liveDangerZones.find(z => haversineDistance(firstBadPoint, z) <= z.radius);
                         if (matchedZone) {
                             const directions = [{ lat: 0, lng: 1 }, { lat: 0, lng: -1 }, { lat: 1, lng: 0 }, { lat: -1, lng: 0 }];
                             let foundPerfectDetour = false;
@@ -777,7 +850,7 @@ export default function ExploreScreen() {
                                     if (wpData?.routes?.length) {
                                         const wpRoute = wpData.routes[0];
                                         const wpCoords = decodePolyline(wpRoute.overview_polyline?.points ?? '');
-                                        const wpScore = getRouteRiskScore(wpCoords);
+                                        const wpScore = getRouteRiskScore(wpCoords, liveDangerZones);
 
                                         if (wpScore === 0) {
                                             bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore }; bestScore = wpScore; foundPerfectDetour = true;
@@ -860,21 +933,79 @@ export default function ExploreScreen() {
         RNAnimated.parallel([RNAnimated.spring(locationCardY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }), RNAnimated.timing(locationCardOpacity, { toValue: 1, duration: 250, useNativeDriver: true })]).start();
     }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
 
+    // Double-tap on map → auto-route from current location to tapped point
+    const handleDoubleTap = useCallback((coord: LatLng) => {
+        if (!userLocRef.current) {
+            Alert.alert('Location needed', 'Waiting for your GPS location...');
+            return;
+        }
+        if (directionsMode) return;
+        const destination: PlaceSuggestion = {
+            id: `pin-${Date.now()}`,
+            name: 'Pinned location',
+            address: `${coord.latitude.toFixed(5)}, ${coord.longitude.toFixed(5)}`,
+            latitude: coord.latitude,
+            longitude: coord.longitude,
+        };
+        const start: PlaceSuggestion = {
+            id: 'current-location',
+            name: 'Your location',
+            address: address || 'Current location',
+            latitude: userLocRef.current.latitude,
+            longitude: userLocRef.current.longitude,
+        };
+        if (placeSheetOpen) closePlaceSheet();
+        if (showLocationCard) closeLocationCard();
+        setStartLocation(start);
+        setStartSearchText('Your location');
+        setDirectionsMode(true);
+        setEndLocation(destination);
+        setRouteCoords([]);
+        setAltRouteCoords([]);
+        setSelectedRoutePath('primary');
+        RNAnimated.timing(directionsProgress, {
+            toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+        }).start();
+    }, [address, directionsMode, directionsProgress, placeSheetOpen, showLocationCard, closePlaceSheet, closeLocationCard]);
+
+    const handleMapPress = useCallback((e: any) => {
+        if (searchActive || startSearchActive || zoneSheetOpen) return;
+        const coord: LatLng = e.nativeEvent.coordinate;
+        const now = Date.now();
+        if (lastMapPressRef.current && now - lastMapPressRef.current.time < 350) {
+            lastMapPressRef.current = null;
+            handleDoubleTap(coord);
+        } else {
+            lastMapPressRef.current = { time: now, coord };
+        }
+    }, [searchActive, startSearchActive, zoneSheetOpen, handleDoubleTap]);
+
     const openAddSafePlace = useCallback(() => {
         setPlaceSheetMode('safe_place'); setSafePlaceAnswer(''); setSafePlaceSubmitState('idle'); setSafePlaceError(null); safePlaceSuccessAnim.setValue(0);
     }, [safePlaceSuccessAnim]);
 
     const cancelAddSafePlace = useCallback(() => { setPlaceSheetMode('incidents'); setSafePlaceAnswer(''); setSafePlaceError(null); }, []);
 
-    const submitAddSafePlace = useCallback(() => {
+    const submitAddSafePlace = useCallback(async () => {
         if (safePlaceAnswer.trim().length === 0) { setSafePlaceError('Please provide a brief description.'); return; }
+        if (!selectedPlace) { setSafePlaceError('No place selected.'); return; }
         setSafePlaceSubmitState('submitting');
-        setTimeout(() => {
+        try {
+            await api.post('/api/safe-places', {
+                latitude: selectedPlace.latitude,
+                longitude: selectedPlace.longitude,
+                name: selectedPlace.name,
+                address: selectedPlace.address,
+                description: safePlaceAnswer.trim(),
+            });
             setSafePlaceSubmitState('success');
             RNAnimated.timing(safePlaceSuccessAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
             setTimeout(() => { closePlaceSheet(); }, 2500);
-        }, 1200);
-    }, [safePlaceAnswer, closePlaceSheet, safePlaceSuccessAnim]);
+        } catch {
+            setSafePlaceSubmitState('idle');
+            setSafePlaceError('Failed to submit. Please try again.');
+        }
+    }, [safePlaceAnswer, selectedPlace, closePlaceSheet, safePlaceSuccessAnim]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
         setDirectionsMode(true); setEndLocation(destination); setRouteCoords([]);
@@ -883,7 +1014,7 @@ export default function ExploreScreen() {
     }, [closePlaceSheet, directionsProgress]);
 
     const exitDirectionsMode = useCallback(() => {
-        setDirectionsMode(false); setIsLiveNav(false); setStartSearchActive(false); setStartSearchText(''); setStartLocation(null); setRouteCoords([]); setNavInstructions([]); setCurrentStepIdx(0);
+        setDirectionsMode(false); setIsLiveNav(false); setStartSearchActive(false); setStartSearchText(''); setStartLocation(null); setRouteCoords([]); setAltRouteCoords([]); setSelectedRoutePath('primary'); setNavInstructions([]); setCurrentStepIdx(0);
         setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
         RNAnimated.timing(directionsProgress, { toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
     }, [directionsProgress]);
@@ -934,16 +1065,54 @@ export default function ExploreScreen() {
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
+                    onPress={handleMapPress}
                 >
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radius}
-                            fillColor="rgba(255, 60, 60, 0.15)"
-                            strokeColor="rgba(255, 60, 60, 0.5)"
-                            strokeWidth={1}
-                        />
+                    {/* Incident zones: yellow (<5 reports) or red (>=5) — Circle + tappable Marker */}
+                    {incidentZones.map(zone => {
+                        const isRed = zone.incidentCount >= 5;
+                        return (
+                            <React.Fragment key={zone.id}>
+                                <Circle
+                                    center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    radius={zone.radius}
+                                    fillColor={isRed ? 'rgba(255,59,48,0.22)' : 'rgba(255,204,0,0.22)'}
+                                    strokeColor={isRed ? 'rgba(255,59,48,0.65)' : 'rgba(255,204,0,0.65)'}
+                                    strokeWidth={1.5}
+                                    zIndex={5}
+                                />
+                                <Marker
+                                    coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    tracksViewChanges={false}
+                                    zIndex={10}
+                                    onPress={() => { setSelectedZone(zone); setZoneSheetOpen(true); }}
+                                >
+                                    <ZoneBadge count={zone.incidentCount} isRed={isRed} />
+                                </Marker>
+                            </React.Fragment>
+                        );
+                    })}
+
+                    {/* Safe-place zones: green Circle + tappable badge */}
+                    {safePlaceZones.map(zone => (
+                        <React.Fragment key={zone.id}>
+                            <Circle
+                                center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                radius={zone.radius}
+                                fillColor="rgba(52,199,89,0.20)"
+                                strokeColor="rgba(52,199,89,0.65)"
+                                strokeWidth={1.5}
+                                zIndex={5}
+                            />
+                            <Marker
+                                coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                tracksViewChanges={false}
+                                zIndex={10}
+                            >
+                                <ZoneBadge count={0} isRed={false} isSafe />
+                            </Marker>
+                        </React.Fragment>
                     ))}
 
                     {selectedPlace && (
@@ -964,25 +1133,51 @@ export default function ExploreScreen() {
                         </Marker>
                     )}
 
-                    {/* ── Gray dashed Comparison Line ── */}
+                    {/* ── Gray dashed Comparison Line (after safe recalculation) ── */}
                     {safeRouteCoords.length > 0 && !routeUnsafe && !isScanAnimating && (
                         <Polyline
                             coordinates={unsafeRouteCoords}
-                            strokeColor="rgba(160,160,175,0.45)"
-                            strokeWidth={3}
-                            lineDashPattern={[8, 6]}
+                            strokeColor="rgba(160,160,175,0.30)"
+                            strokeWidth={2}
+                            lineDashPattern={[4, 6]}
                             lineCap="round"
                         />
                     )}
 
-                    {/* ── Active Route Line ── */}
-                    {routeCoords.length > 1 && (
+                    {/* ── Alternative / Safe route ── */}
+                    {altRouteCoords.length > 1 && (
+                        selectedRoutePath === 'alt' ? (
+                            /* Selected: bold purple (same style as primary) */
+                            <Polyline
+                                coordinates={altRouteCoords}
+                                strokeColor={T.violet}
+                                strokeWidth={5}
+                                lineCap="round"
+                                lineJoin="round"
+                                onPress={() => {}}
+                            />
+                        ) : (
+                            /* Default: small green dots — tap to activate */
+                            <Polyline
+                                coordinates={altRouteCoords}
+                                strokeColor="rgba(52,199,89,0.80)"
+                                strokeWidth={2.5}
+                                lineDashPattern={[2, 6]}
+                                lineCap="round"
+                                onPress={() => setSelectedRoutePath('alt')}
+                            />
+                        )
+                    )}
+
+                    {/* ── Primary / Shortest route ── */}
+                    {routeCoords.length > 1 && selectedRoutePath === 'primary' && (
                         <Polyline
                             coordinates={routeCoords}
                             strokeColor={T.violet}
-                            strokeWidth={4}
+                            strokeWidth={5}
                             lineCap="round"
                             lineJoin="round"
+                            onPress={() => {}}
                         />
                     )}
                 </MapView>
@@ -1224,6 +1419,28 @@ export default function ExploreScreen() {
                                 <Text style={ns.distText}>{navInstructions[currentStepIdx]?.distance}</Text>
                             </View>
                         </View>
+                        {/* Route selector pill — shown when an alternative route is available */}
+                        {altRouteCoords.length > 1 && (
+                            <View style={ns.routePillRow}>
+                                <TouchableOpacity
+                                    style={[ns.routePill, selectedRoutePath === 'primary' && ns.routePillActive]}
+                                    onPress={() => setSelectedRoutePath('primary')}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="flash" size={11} color={selectedRoutePath === 'primary' ? T.onPrimary : T.ink3} style={{ marginRight: 3 }} />
+                                    <Text style={[ns.routePillText, selectedRoutePath === 'primary' && ns.routePillTextActive]}>Shortest</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[ns.routePill, selectedRoutePath === 'alt' && ns.routePillAlt]}
+                                    onPress={() => setSelectedRoutePath('alt')}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="shield-checkmark" size={11} color={selectedRoutePath === 'alt' ? '#fff' : T.ink3} style={{ marginRight: 3 }} />
+                                    <Text style={[ns.routePillText, selectedRoutePath === 'alt' && ns.routePillTextActive]}>Safest</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
                         <View style={ns.cardFooter}>
                             <Text style={ns.stepCounter}>Step {currentStepIdx + 1} of {navInstructions.length}</Text>
                             {!isLiveNav ? (
@@ -1243,6 +1460,75 @@ export default function ExploreScreen() {
                             )}
                         </View>
                     </View>
+                )}
+
+                {/* ── Zone Info Sheet ─────────────────────────────────────── */}
+                {zoneSheetOpen && selectedZone && (
+                    <Modal transparent animationType="slide" onRequestClose={() => setZoneSheetOpen(false)}>
+                        <Pressable style={zi.backdrop} onPress={() => setZoneSheetOpen(false)} />
+                        <View style={zi.sheet}>
+                            <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={zi.sheetTint} pointerEvents="none" />
+
+                            {/* Handle */}
+                            <View style={zi.handleWrap}><View style={zi.handle} /></View>
+
+                            {/* Header */}
+                            <View style={zi.header}>
+                                <View style={[zi.badge, selectedZone.incidentCount >= 5 ? zi.badgeRed : zi.badgeYellow]}>
+                                    <Text style={zi.badgeCount}>{selectedZone.incidentCount}</Text>
+                                    <Text style={zi.badgeLabel}>{selectedZone.incidentCount >= 5 ? 'RED ZONE' : 'YELLOW ZONE'}</Text>
+                                </View>
+                                <View style={{ flex: 1, marginLeft: 12 }}>
+                                    <Text style={zi.title} numberOfLines={1}>{selectedZone.name}</Text>
+                                    <Text style={zi.subtitle}>{selectedZone.incidentCount} reported incident{selectedZone.incidentCount !== 1 ? 's' : ''}</Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setZoneSheetOpen(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                                    <Ionicons name="close" size={20} color={T.ink3} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Incident list */}
+                            <ScrollView style={zi.list} showsVerticalScrollIndicator={false}>
+                                {selectedZone.incidents.length === 0
+                                    ? <Text style={zi.empty}>No incident details available.</Text>
+                                    : selectedZone.incidents.map((inc, i) => (
+                                        <View key={inc.id ?? i} style={zi.row}>
+                                            <View style={zi.rowLeft}>
+                                                <Text style={zi.reporter}>{inc.reporter || 'Anonymous'}</Text>
+                                                <Text style={zi.time}>{inc.time ? new Date(inc.time).toLocaleString() : ''}</Text>
+                                            </View>
+                                            <View style={[
+                                                zi.pill,
+                                                inc.status === 'ACTIVE' && zi.pillActive,
+                                                inc.status === 'RESOLVED' && zi.pillResolved,
+                                                inc.status === 'CANCELLED' && zi.pillCancelled,
+                                            ]}>
+                                                <Text style={zi.pillTxt}>{inc.status}</Text>
+                                            </View>
+                                        </View>
+                                    ))
+                                }
+                            </ScrollView>
+
+                            {/* Navigate away button */}
+                            <TouchableOpacity
+                                style={zi.avoidBtn}
+                                activeOpacity={0.82}
+                                onPress={() => {
+                                    setZoneSheetOpen(false);
+                                    Alert.alert(
+                                        'Avoid this zone',
+                                        'Double-tap on your destination on the map and the route will automatically avoid this area.',
+                                        [{ text: 'Got it' }]
+                                    );
+                                }}
+                            >
+                                <Ionicons name="shield-checkmark" size={15} color={T.onPrimary} style={{ marginRight: 6 }} />
+                                <Text style={zi.avoidBtnTxt}>How to avoid this zone</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Modal>
                 )}
 
                 <SafetyScanOverlay visible={isScanAnimating} spinAnim={scanAnim} r0={radarAnim0} r1={radarAnim1} r2={radarAnim2} zoneName={blockedZoneName} />
@@ -1411,6 +1697,47 @@ const ns = StyleSheet.create({
     safePathBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.3 },
     warningBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
     warningBadgeText: { fontSize: 11, fontWeight: '600', color: '#E25B3A', letterSpacing: 0.2 },
+    routePillRow: { flexDirection: 'row', gap: 6, paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
+    routePill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+    routePillActive: { backgroundColor: T.violet, borderColor: `${T.violet}80` },
+    routePillAlt: { backgroundColor: '#10B981', borderColor: 'rgba(16,185,129,0.6)' },
+    routePillText: { fontSize: 11, fontWeight: '700', color: T.ink3 },
+    routePillTextActive: { color: '#fff' },
+});
+
+// ── Zone Info Sheet styles ───────────────────────────────────────────────────
+const zi = StyleSheet.create({
+    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    sheet: {
+        position: 'absolute', left: 0, right: 0, bottom: 0,
+        maxHeight: height * 0.62, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        ...Platform.select({ ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 18, shadowOffset: { width: 0, height: -4 } }, android: { elevation: 14 } }),
+    },
+    sheetTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,5,18,0.94)' },
+    handleWrap: { alignItems: 'center', paddingTop: 10 },
+    handle: { width: 44, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: 12, paddingBottom: 14 },
+    badge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, gap: 6 },
+    badgeRed: { backgroundColor: 'rgba(255,59,48,0.18)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' },
+    badgeYellow: { backgroundColor: 'rgba(255,204,0,0.15)', borderWidth: 1, borderColor: 'rgba(255,204,0,0.4)' },
+    badgeCount: { fontSize: 16, fontWeight: '800', color: T.ink },
+    badgeLabel: { fontSize: 10, fontWeight: '700', color: T.ink3, letterSpacing: 0.8 },
+    title: { fontSize: 16, fontWeight: '800', color: T.ink, letterSpacing: -0.3 },
+    subtitle: { fontSize: 12, fontWeight: '500', color: T.ink3, marginTop: 2 },
+    list: { paddingHorizontal: 18, maxHeight: height * 0.3 },
+    empty: { fontSize: 13, color: T.ink4, paddingBottom: 16 },
+    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', marginBottom: 8 },
+    rowLeft: { flex: 1 },
+    reporter: { fontSize: 13, fontWeight: '700', color: T.ink },
+    time: { fontSize: 11, fontWeight: '500', color: T.ink3, marginTop: 2 },
+    pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
+    pillActive: { backgroundColor: 'rgba(255,59,48,0.15)', borderColor: 'rgba(255,59,48,0.4)' },
+    pillResolved: { backgroundColor: 'rgba(52,199,89,0.12)', borderColor: 'rgba(52,199,89,0.35)' },
+    pillCancelled: { backgroundColor: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' },
+    pillTxt: { fontSize: 10, fontWeight: '700', color: T.ink, letterSpacing: 0.6 },
+    avoidBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 18, marginTop: 12, marginBottom: 24, paddingVertical: 12, borderRadius: R.pill, backgroundColor: T.violet },
+    avoidBtnTxt: { fontSize: 13, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
 });
 
 const lb = StyleSheet.create({
