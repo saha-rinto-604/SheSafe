@@ -76,6 +76,13 @@ function friendlyError(err: unknown) {
   return new Error('Request failed');
 }
 
+const ROLE_MAP: Record<string, string> = {
+  USER: 'standard_user',
+  VOLUNTEER: 'volunteer',
+  POLICE: 'law_enforcement',
+  ADMIN: 'standard_user',
+};
+
 export const authService = {
   async register(
     phone: string,
@@ -85,12 +92,12 @@ export const authService = {
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
     try {
-      await api.post('/api/v1/auth/register/', {
-        phone,
+      await api.post('/api/auth/signup', {
+        phoneNumber: phone,
         password,
-        first_name: firstName,
-        last_name: lastName,
-        role
+        firstName,
+        lastName,
+        role: ROLE_MAP[role] ?? 'standard_user',
       });
     } catch (e) {
       throw friendlyError(e);
@@ -109,11 +116,11 @@ export const authService = {
     }
 
     try {
-      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
-      const { access, refresh } = res.data || {};
-      if (!access || !refresh) throw new Error('Invalid token response');
-      await setTokens(access, refresh);
-      return access as string;
+      const res = await api.post('/api/auth/login', { phoneNumber: username, password });
+      const { accessToken } = res.data || {};
+      if (!accessToken) throw new Error('Invalid token response');
+      await setTokens(accessToken, accessToken);
+      return accessToken as string;
     } catch (e) {
       throw friendlyError(e);
     }
