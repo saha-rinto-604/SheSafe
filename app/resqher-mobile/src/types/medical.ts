@@ -6,7 +6,8 @@ export type MedicalCategory =
     | 'hospital'
     | 'ambulance'
     | 'diagnostics'
-    | 'pharmacy';
+    | 'pharmacy'
+    | 'others';
 
 export type ShiftFilter = 'morning' | 'evening' | 'now';
 

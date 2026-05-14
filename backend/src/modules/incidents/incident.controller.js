@@ -18,4 +18,31 @@ async function getZones(req, res, next) {
   }
 }
 
-module.exports = { report, getZones };
+async function getOne(req, res, next) {
+  try {
+    const incident = await incidentService.getOne(req.params.id);
+    res.status(200).json({ incident });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function cancel(req, res, next) {
+  try {
+    const incident = await incidentService.cancelIncident(req.user.id, req.params.id);
+    res.status(200).json({ incident });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function clearMyHistory(req, res, next) {
+  try {
+    const result = await incidentService.clearMyHistory(req.user.id);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { report, getZones, getOne, cancel, clearMyHistory };

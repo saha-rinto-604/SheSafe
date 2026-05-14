@@ -73,6 +73,15 @@ const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: st
     { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline' },
 ];
 
+// ── Provider pin config per icon key ─────────────────────────────────────────
+const PROVIDER_PIN = {
+    medkit:  { icon: 'medkit',        color: '#8A38F6' }, // specialists — violet
+    business:{ icon: 'business',      color: '#2563EB' }, // hospitals   — blue
+    car:     { icon: 'car-sport',     color: '#F97316' }, // ambulances  — orange
+    bandage: { icon: 'bandage',       color: '#10B981' }, // pharmacies  — green
+    flask:   { icon: 'flask',         color: '#0891B2' }, // diagnostics — teal
+} as const;
+
 // ── Tactical Map Style ────────────────────────────────────────────────────
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
@@ -269,18 +278,17 @@ export default function MedicalMapView() {
     const [safeRoute, setSafeRoute] = useState<{ latitude: number; longitude: number }[] | null>(null);
     const [returnFromWebView, setReturnFromWebView] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
-    const [backendProviders, setBackendProviders] = useState<any[]>([]);
+    // Start with MOCK_PROVIDERS so pins are visible immediately.
+    // Backend data replaces mock data if the server has seeded records.
+    const [backendProviders, setBackendProviders] = useState<any[]>(MOCK_PROVIDERS);
 
     useEffect(() => {
         medicalService.getProviders().then((data: any[]) => {
             if (data && data.length > 0) {
                 setBackendProviders(data);
-            } else {
-                setBackendProviders(MOCK_PROVIDERS);
             }
-        }).catch(() => {
-            setBackendProviders(MOCK_PROVIDERS);
-        });
+            // If backend returns empty, keep showing MOCK_PROVIDERS
+        }).catch(() => { /* keep MOCK_PROVIDERS on error */ });
     }, []);
 
     // Load profile picture on screen focus
@@ -312,13 +320,14 @@ export default function MedicalMapView() {
             longitude: Number(p.longitude) || 0
         }));
         let filtered = mapped.filter(p => {
-            const pType = p.type || p.provider_type;
-            if (category === 'specialists' && pType !== 'specialists') return false;
-            if (category === 'hospital' && pType !== 'hospital') return false;
-            if (category === 'ambulance' && pType !== 'ambulance') return false;
-            if (category === 'diagnostics' && pType !== 'diagnostics') return false;
-            if (category === 'pharmacy' && pType !== 'pharmacy') return false;
-            return true;
+            const pType = (p.type || p.provider_type || '').toLowerCase();
+            if (category === 'specialists') return pType === 'specialists';
+            if (category === 'hospital')    return pType === 'hospital';
+            if (category === 'ambulance')   return pType === 'ambulance';
+            if (category === 'diagnostics') return pType === 'diagnostics';
+            if (category === 'pharmacy')    return pType === 'pharmacy';
+            if (category === 'others')      return pType === 'others' || pType === 'diagnostics';
+            return true; // unknown category: show all
         });
 
         switch (category) {
@@ -369,7 +378,14 @@ export default function MedicalMapView() {
                     icon: 'bandage' as const,
                 }));
                 break;
+            case 'others':
             default:
+                // 'others' covers diagnostics + misc — show everything that passed the type filter
+                baseProviders = filtered.map(p => ({
+                    ...p,
+                    safeRouteVerified: Boolean(p.safeRouteVerified || p.safe_route_verified),
+                    icon: 'flask' as const,
+                }));
                 break;
         }
         
@@ -539,27 +555,32 @@ export default function MedicalMapView() {
                         if (showCallout) closeCallout();
                     }}
                 >
-                    {/* Provider Green Circles */}
-                    {sortedProviders.map(p => (
-                        <Marker
-                            key={p.id}
-                            coordinate={{ latitude: p.latitude, longitude: p.longitude }}
-                            onPress={() => handlePinPress(p.id)}
-                            tracksViewChanges={false}
-                            anchor={{ x: 0.5, y: 0.5 }}
-                        >
-                            <View style={[
-                                st.greenCircle,
-                                selectedPin === p.id && st.greenCircleActive,
-                            ]}>
-                                <Ionicons
-                                    name="add"
-                                    size={18}
-                                    color={selectedPin === p.id ? '#FFFFFF' : '#E0FFF0'}
-                                />
-                            </View>
-                        </Marker>
-                    ))}
+                    {/* Provider pins — icon and colour per category */}
+                    {sortedProviders.map(p => {
+                        const isSelected = selectedPin === p.id;
+                        const cfg = PROVIDER_PIN[p.icon as keyof typeof PROVIDER_PIN] ?? PROVIDER_PIN.medkit;
+                        return (
+                            <Marker
+                                key={p.id}
+                                coordinate={{ latitude: p.latitude, longitude: p.longitude }}
+                                onPress={() => handlePinPress(p.id)}
+                                tracksViewChanges={false}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                            >
+                                <View style={[
+                                    st.providerPin,
+                                    { backgroundColor: isSelected ? cfg.color : `${cfg.color}CC`, borderColor: isSelected ? '#fff' : cfg.color },
+                                    isSelected && st.providerPinSelected,
+                                ]}>
+                                    <Ionicons
+                                        name={cfg.icon as any}
+                                        size={isSelected ? 17 : 14}
+                                        color="#FFFFFF"
+                                    />
+                                </View>
+                            </Marker>
+                        );
+                    })}
                 </MapView>
 
                 {/* ── Top Header ── */}
@@ -887,26 +908,27 @@ const st = StyleSheet.create({
         letterSpacing: 0.3,
     },
 
-    // ── Green Circle Marker ────────────────────────────────────────────────
-    greenCircle: {
-        width: 40, height: 40, borderRadius: 20,
-        backgroundColor: 'rgba(16,185,129,0.85)',
-        borderWidth: 2, borderColor: 'rgba(16,185,129,0.5)',
+    // ── Provider pin marker ───────────────────────────────────────────────
+    providerPin: {
+        width: 36, height: 36, borderRadius: 18,
+        borderWidth: 2,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#10B981', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            ios: { shadowOpacity: 0.45, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 8 },
         }),
     },
-    greenCircleActive: {
-        backgroundColor: '#10B981',
-        borderColor: '#FFFFFF',
-        transform: [{ scale: 1.2 }],
+    providerPinSelected: {
+        width: 44, height: 44, borderRadius: 22,
+        borderWidth: 2.5,
         ...Platform.select({
-            ios: { shadowColor: '#10B981', shadowOpacity: 0.7, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
-            android: { elevation: 12 },
+            ios: { shadowOpacity: 0.65, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 14 },
         }),
     },
+    // kept for reference — not used in renders any more
+    greenCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#10B981', alignItems: 'center', justifyContent: 'center' },
+    greenCircleActive: { transform: [{ scale: 1.2 }] },
 
     // ── Callout Info Card ────────────────────────────────────────────────────
     calloutWrap: {

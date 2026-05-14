@@ -1,7 +1,7 @@
 const { getMedicalProviders } = require('./medical.repository');
 
-async function getAllProviders() {
-    return getMedicalProviders();
+async function getAllProviders(category) {
+    return getMedicalProviders(category);
 }
 
 module.exports = {

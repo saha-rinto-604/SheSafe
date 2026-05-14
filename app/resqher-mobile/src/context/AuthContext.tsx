@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { authService, getAccessToken } from '../services/api';
+import { authService, getAccessToken, getStoredIdentity } from '../services/api';
 import { getUserProfile, toIdentity } from '../services/profile';
 import type { Role, Identity } from '../identity/identity.types';
 
@@ -42,7 +42,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const token = await getAccessToken();
-        setAccessToken(token);
+        if (token) {
+          setAccessToken(token);
+          const identity = await getStoredIdentity();
+          if (identity) {
+            setRole(identity.role as Role);
+            setUserId(identity.userId);
+          }
+        }
       } finally {
         setIsLoading(false);
       }
@@ -65,16 +72,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const token = await authService.login(username, password);
           setAccessToken(token);
-          // Role is not returned by login — will be set by profile hydration
-          // or by the screen that knows the role. For now, default to USER.
-          let inferredRole: Role = 'USER';
-          if (username === '5678' && password === '5678') {
-            inferredRole = 'VOLUNTEER';
-          } else if (username === '1234' && password === '1234') {
-            inferredRole = 'USER';
-          }
-          setRole(inferredRole);
-          await hydrateIdentity(inferredRole);
+          // Role and userId are decoded from the JWT and stored by setTokens()
+          const identity = await getStoredIdentity();
+          const resolvedRole: Role = (identity?.role as Role) ?? 'USER';
+          setRole(resolvedRole);
+          setUserId(identity?.userId ?? null);
+          await hydrateIdentity(resolvedRole);
         } finally {
           setIsLoading(false);
         }
@@ -85,8 +88,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await authService.register(phone, password, firstName, lastName, signUpRole);
           const token = await authService.login(phone, password);
           setAccessToken(token);
-          setRole(signUpRole);
-          await hydrateIdentity(signUpRole);
+          const identity = await getStoredIdentity();
+          const resolvedRole: Role = (identity?.role as Role) ?? signUpRole;
+          setRole(resolvedRole);
+          setUserId(identity?.userId ?? null);
+          await hydrateIdentity(resolvedRole);
         } finally {
           setIsLoading(false);
         }

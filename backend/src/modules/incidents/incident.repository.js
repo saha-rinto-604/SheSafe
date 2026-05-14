@@ -114,4 +114,32 @@ async function getIncidentZones() {
   }));
 }
 
-module.exports = { createIncident, getActiveIncidents, getIncidentZones };
+async function findIncidentById(id) {
+  const rows = await query(
+    `SELECT i.id, i.user_id, i.latitude, i.longitude, i.address, i.status, i.created_at,
+            u.first_name, u.last_name
+     FROM incidents i
+     JOIN users u ON i.user_id = u.id
+     WHERE i.id = ? LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function updateIncidentStatus(id, status) {
+  await query(
+    `UPDATE incidents SET status = ? WHERE id = ?`,
+    [status, id]
+  );
+  return findIncidentById(id);
+}
+
+async function cancelAllByUser(userId) {
+  const result = await query(
+    `UPDATE incidents SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'`,
+    [userId]
+  );
+  return { cancelled: result.affectedRows };
+}
+
+module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser };

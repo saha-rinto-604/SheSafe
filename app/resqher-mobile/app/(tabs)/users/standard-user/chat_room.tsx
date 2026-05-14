@@ -26,6 +26,8 @@ import * as Haptics from 'expo-haptics';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
+import { useChatSocket } from '../../../../src/hooks/useChatSocket';
+import { incidentService } from '../../../../src/services/incidentService';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
@@ -439,15 +441,39 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { incidentId } = useLocalSearchParams<{ incidentId: string }>();
+    const { incidentId: rawIncidentId } = useLocalSearchParams<{ incidentId: string }>();
+    const incidentId = rawIncidentId || 'inc-001';
 
-    const incident = MOCK_INCIDENTS[incidentId || 'inc-001'] ?? MOCK_INCIDENTS['inc-001'];
-    const [messages, setMessages] = useState<Message[]>(
-        INITIAL_MESSAGES[incidentId || 'inc-001'] ?? INITIAL_MESSAGES['inc-001']
-    );
+    // Live backend data
+    const { messages, sendMessage } = useChatSocket(incidentId);
+
+    const [incident, setIncident] = useState<Incident | null>(null);
     const flatRef = useRef<FlatList>(null);
-    const isLive = incident.status === 'LIVE';
+    const isLive = (incident?.status ?? 'LIVE') === 'LIVE';
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
+
+    // Load incident metadata
+    useEffect(() => {
+        incidentService.getOne(incidentId)
+            .then((raw) => {
+                setIncident({
+                    id: String(raw.id),
+                    type: 'SOS Alert',
+                    status: raw.status === 'ACTIVE' ? 'LIVE' : raw.status as any,
+                    location: {
+                        latitude: Number(raw.latitude),
+                        longitude: Number(raw.longitude),
+                        updatedAt: raw.created_at,
+                    },
+                    participantCount: 1,
+                    createdAt: raw.created_at,
+                });
+            })
+            .catch(() => {
+                // Fallback to mock if backend unreachable
+                setIncident(MOCK_INCIDENTS[incidentId] ?? MOCK_INCIDENTS['inc-001']);
+            });
+    }, [incidentId]);
 
     // Auto-scroll on new messages
     useEffect(() => {
@@ -456,32 +482,9 @@ export default function ChatRoom() {
         }
     }, [messages.length]);
 
-    // Send message + mock auto-reply
     const handleSend = useCallback((text: string) => {
-        const userMsg: Message = {
-            id: `m-self-${Date.now()}`,
-            incidentId: incident.id,
-            sender: { id: SELF_ID, name: 'You', role: 'USER' },
-            content: text,
-            type: 'TEXT',
-            timestamp: new Date().toISOString(),
-        };
-
-        setMessages(prev => [...prev, userMsg]);
-
-        // Mock volunteer reply after 1 second
-        setTimeout(() => {
-            const reply: Message = {
-                id: `m-auto-${Date.now()}`,
-                incidentId: incident.id,
-                sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-                content: VOLUNTEER_REPLIES[Math.floor(Math.random() * VOLUNTEER_REPLIES.length)],
-                type: 'TEXT',
-                timestamp: new Date().toISOString(),
-            };
-            setMessages(prev => [...prev, reply]);
-        }, 1000);
-    }, [incident.id]);
+        sendMessage(text, 'TEXT');
+    }, [sendMessage]);
 
     const renderMessage = useCallback(({ item }: { item: Message }) => (
         <PillBubble msg={item} isOwn={item.sender.id === SELF_ID} />

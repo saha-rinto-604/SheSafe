@@ -6,7 +6,6 @@ export default function TabsLayout() {
     <>
       <StatusBar style="light" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#000000' }, animation: 'fade' }}>
-        <Stack.Screen name="index" />
         <Stack.Screen name="users" />
       </Stack>
     </>
