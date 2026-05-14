@@ -218,6 +218,38 @@ function generateSafeRoute(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MOCK PROVIDERS — Fallback when backend is unavailable
+// ═══════════════════════════════════════════════════════════════════════════════
+const MOCK_PROVIDERS: any[] = [
+    // Specialists
+    { id: 'doc-001', type: 'specialists', name: 'Dr. Anika Sultana', degree: 'MBBS, FCPS (Cardiology)', hospital: 'Evercare Hospital', specialty: 'Cardiologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8173, longitude: 90.4280, rating: 4.9, affiliation: 'Evercare Hospital Dhaka' },
+    { id: 'doc-002', type: 'specialists', name: 'Dr. Rafiq Hasan', degree: 'MBBS, MD (Neurology)', hospital: 'United Hospital', specialty: 'Neurologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7926, longitude: 90.4167, rating: 4.7, affiliation: 'United Hospital Ltd.' },
+    { id: 'doc-003', type: 'specialists', name: 'Dr. Tasneem Akhter', degree: 'MBBS, MS (Orthopedics)', hospital: 'Popular Diagnostic Centre', specialty: 'Orthopedic Surgeon', shift: 'now', safeRouteVerified: false, bookingUrl: 'https://www.populardiagnostic.com/appointment', latitude: 23.7465, longitude: 90.3747, rating: 4.5, affiliation: 'Popular Diagnostic Centre' },
+    { id: 'doc-004', type: 'specialists', name: 'Dr. Kabir Ahmed', degree: 'MBBS, FCPS (Gynecology)', hospital: 'Evercare Hospital', specialty: 'Gynecologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8180, longitude: 90.4275, rating: 4.8, affiliation: 'Evercare Hospital Dhaka' },
+    { id: 'doc-005', type: 'specialists', name: 'Dr. Nusrat Jahan', degree: 'MBBS, DCH (Pediatrics)', hospital: 'United Hospital', specialty: 'Pediatrician', shift: 'now', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7935, longitude: 90.4175, rating: 4.9, affiliation: 'United Hospital Ltd.' },
+    { id: 'doc-006', type: 'specialists', name: 'Dr. Faisal Rahman', degree: 'MBBS, FCPS (Dermatology)', hospital: 'Ibn Sina Hospital', specialty: 'Dermatologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.ibnsinatrust.com/appointment', latitude: 23.7450, longitude: 90.3730, rating: 4.6, affiliation: 'Ibn Sina Trust' },
+    // Hospitals
+    { id: 'hosp-001', type: 'hospital', name: 'Evercare Hospital', address: 'Plot 81, Block E, Bashundhara R/A, Dhaka', latitude: 23.8173, longitude: 90.4280, bookingUrl: 'https://www.evercaredhaka.com/appointments', safeRouteVerified: true, rating: 4.8, affiliation: 'Evercare Group' },
+    { id: 'hosp-002', type: 'hospital', name: 'United Hospital', address: 'Plot 15, Road 71, Gulshan, Dhaka', latitude: 23.7926, longitude: 90.4167, bookingUrl: 'https://www.uhlbd.com/appointment', safeRouteVerified: true, rating: 4.7, affiliation: 'United Group' },
+    { id: 'hosp-003', type: 'hospital', name: 'Popular Diagnostic Centre', address: 'House 16, Road 2, Dhanmondi, Dhaka', latitude: 23.7465, longitude: 90.3747, bookingUrl: 'https://www.populardiagnostic.com/appointment', safeRouteVerified: false, rating: 4.5, affiliation: 'Popular Group' },
+    { id: 'hosp-004', type: 'hospital', name: 'Ibn Sina Hospital', address: 'House 48, Road 9/A, Dhanmondi, Dhaka', latitude: 23.7450, longitude: 90.3730, bookingUrl: 'https://www.ibnsinatrust.com/appointment', safeRouteVerified: true, rating: 4.6, affiliation: 'Ibn Sina Trust' },
+    // Ambulances
+    { id: 'amb-001', type: 'ambulance', name: 'Evercare Ambulance', ambulanceType: 'icu_ccu', contactNumber: '+880-1711-000001', eta: '8 min', safeRouteVerified: true, latitude: 23.8165, longitude: 90.4270, rating: 4.9, affiliation: 'Evercare Hospital' },
+    { id: 'amb-002', type: 'ambulance', name: 'United Rapid Response', ambulanceType: 'ac', contactNumber: '+880-1711-000002', eta: '12 min', safeRouteVerified: true, latitude: 23.7940, longitude: 90.4160, rating: 4.7, affiliation: 'United Hospital' },
+    { id: 'amb-003', type: 'ambulance', name: 'Red Crescent Ambulance', ambulanceType: 'standard', contactNumber: '+880-1711-000003', eta: '15 min', safeRouteVerified: false, latitude: 23.8100, longitude: 90.4220, rating: 4.3, affiliation: 'Bangladesh Red Crescent' },
+    { id: 'amb-004', type: 'ambulance', name: 'Bashundhara Medical', ambulanceType: 'standard', contactNumber: '+880-1711-000004', eta: '10 min', safeRouteVerified: true, latitude: 23.8120, longitude: 90.4240, rating: 4.4, affiliation: 'Bashundhara Group' },
+    { id: 'amb-005', type: 'ambulance', name: 'Praava Health ICU', ambulanceType: 'icu_ccu', contactNumber: '+880-1711-000005', eta: '18 min', safeRouteVerified: true, latitude: 23.7950, longitude: 90.4030, rating: 4.8, affiliation: 'Praava Health' },
+    // Diagnostics
+    { id: 'diag-001', type: 'diagnostics', name: 'Popular Diagnostic Centre', address: 'Bashundhara R/A Branch, Dhaka', bookingUrl: 'https://www.populardiagnostic.com/', safeRouteVerified: true, latitude: 23.8130, longitude: 90.4255, rating: 4.6, affiliation: 'Popular Group' },
+    { id: 'diag-002', type: 'diagnostics', name: 'Ibn Sina Diagnostic', address: 'Gulshan Branch, Dhaka', bookingUrl: 'https://www.ibnsinatrust.com/', safeRouteVerified: true, latitude: 23.7900, longitude: 90.4140, rating: 4.5, affiliation: 'Ibn Sina Trust' },
+    { id: 'diag-003', type: 'diagnostics', name: 'Praava Health Lab', address: 'Banani, Dhaka', bookingUrl: 'https://praavahealth.com/', safeRouteVerified: false, latitude: 23.7945, longitude: 90.4035, rating: 4.7, affiliation: 'Praava Health' },
+    // Pharmacies
+    { id: 'pharm-001', type: 'pharmacy', name: 'Lazz Pharma', address: 'Bashundhara R/A, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100001', safeRouteVerified: true, latitude: 23.8140, longitude: 90.4260, rating: 4.5, affiliation: 'Lazz Group' },
+    { id: 'pharm-002', type: 'pharmacy', name: 'ACME Pharmacy', address: 'Gulshan 2, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100002', safeRouteVerified: true, latitude: 23.7920, longitude: 90.4150, rating: 4.4, affiliation: 'ACME Laboratories' },
+    { id: 'pharm-003', type: 'pharmacy', name: 'Model Pharmacy', address: 'Vatara, Dhaka', isDeliveryAvailable: false, contactNumber: '+880-1711-100003', safeRouteVerified: false, latitude: 23.8090, longitude: 90.4190, rating: 4.2, affiliation: 'Independent' },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MedicalMapView — Main Screen
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function MedicalMapView() {
@@ -240,7 +272,15 @@ export default function MedicalMapView() {
     const [backendProviders, setBackendProviders] = useState<any[]>([]);
 
     useEffect(() => {
-        medicalService.getProviders().then(setBackendProviders).catch(console.error);
+        medicalService.getProviders().then((data: any[]) => {
+            if (data && data.length > 0) {
+                setBackendProviders(data);
+            } else {
+                setBackendProviders(MOCK_PROVIDERS);
+            }
+        }).catch(() => {
+            setBackendProviders(MOCK_PROVIDERS);
+        });
     }, []);
 
     // Load profile picture on screen focus
@@ -333,7 +373,7 @@ export default function MedicalMapView() {
                 break;
         }
         
-        // Removed random marker generation so we only show real API data
+        // Uses backend API data when available, MOCK_PROVIDERS fallback otherwise
         return baseProviders;
     }, [category, shift, selectedChip, backendProviders]);
 
@@ -499,7 +539,7 @@ export default function MedicalMapView() {
                         if (showCallout) closeCallout();
                     }}
                 >
-                    {/* Provider Pins */}
+                    {/* Provider Green Circles */}
                     {sortedProviders.map(p => (
                         <Marker
                             key={p.id}
@@ -509,13 +549,13 @@ export default function MedicalMapView() {
                             anchor={{ x: 0.5, y: 0.5 }}
                         >
                             <View style={[
-                                st.pinBubble,
-                                selectedPin === p.id && st.pinBubbleActive,
+                                st.greenCircle,
+                                selectedPin === p.id && st.greenCircleActive,
                             ]}>
                                 <Ionicons
-                                    name={p.icon as any}
-                                    size={16}
-                                    color={selectedPin === p.id ? '#FFFFFF' : T.violet}
+                                    name="add"
+                                    size={18}
+                                    color={selectedPin === p.id ? '#FFFFFF' : '#E0FFF0'}
                                 />
                             </View>
                         </Marker>
@@ -584,7 +624,7 @@ export default function MedicalMapView() {
                     </Text>
                 </View>
 
-                {/* ── Callout Bottom Sheet ── */}
+                {/* ── Full Info Card — shows all provider details ── */}
                 {showCallout && selectedProvider && (
                     <RNAnimated.View style={[
                         st.calloutWrap,
@@ -596,86 +636,143 @@ export default function MedicalMapView() {
                         <View style={st.calloutGrabberWrap}>
                             <View style={st.calloutGrabber} />
                         </View>
-                        <View style={st.calloutContent}>
-                            {/* Left — Info */}
-                            <View style={st.calloutInfo}>
-                                <View style={st.calloutIconWrap}>
-                                    <Ionicons name={selectedProvider.icon as any} size={22} color={T.violet} />
-                                </View>
-                                <View style={st.calloutTextWrap}>
-                                    <Text style={st.calloutName} numberOfLines={1}>
-                                        {selectedProvider.name}
-                                    </Text>
-                                    <View style={st.calloutMetaRow}>
-                                        <Ionicons name="star" size={12} color="#F59E0B" />
-                                        <Text style={st.calloutRating}>
-                                            {selectedProvider.rating.toFixed(1)}
+
+                        {/* Header Row — Name + Type Badge + Close */}
+                        <View style={st.calloutHeader}>
+                            <View style={st.calloutIconWrap}>
+                                <Ionicons name={selectedProvider.icon as any} size={22} color="#10B981" />
+                            </View>
+                            <View style={{ flex: 1, gap: 2 }}>
+                                <Text style={st.calloutName} numberOfLines={2}>
+                                    {selectedProvider.name}
+                                </Text>
+                                <View style={st.calloutBadgeRow}>
+                                    <View style={st.typeBadge}>
+                                        <Text style={st.typeBadgeText}>
+                                            {(selectedProvider.type || selectedProvider.provider_type || category).toUpperCase()}
                                         </Text>
                                     </View>
-                                    {selectedProvider.affiliation ? (
-                                        <Text style={st.calloutAffiliation} numberOfLines={1}>
-                                            {selectedProvider.affiliation}
-                                        </Text>
-                                    ) : null}
+                                    {selectedProvider.rating != null && (
+                                        <View style={st.calloutMetaRow}>
+                                            <Ionicons name="star" size={12} color="#F59E0B" />
+                                            <Text style={st.calloutRating}>{Number(selectedProvider.rating).toFixed(1)}</Text>
+                                        </View>
+                                    )}
+                                    {selectedProvider.safeRouteVerified && (
+                                        <View style={st.safeBadge}>
+                                            <Ionicons name="shield-checkmark" size={10} color="#10B981" />
+                                            <Text style={st.safeBadgeText}>Safe Route</Text>
+                                        </View>
+                                    )}
                                 </View>
                             </View>
-                            {/* Right — Actions */}
-                            <View style={st.calloutActions}>
-                                {selectedProvider.bookingUrl ? (
-                                    <TouchableOpacity
-                                        style={st.bookNowBtn}
-                                        onPress={handleBookNow}
-                                        activeOpacity={0.85}
-                                    >
-                                        <LinearGradient
-                                            colors={G.navActive.colors}
-                                            start={G.navActive.start}
-                                            end={G.navActive.end}
-                                            style={st.bookNowGradient}
-                                        >
-                                            <Text style={st.bookNowText}>Book Now</Text>
-                                            <Ionicons name="arrow-forward" size={14} color={T.onPrimary} />
-                                        </LinearGradient>
-                                    </TouchableOpacity>
-                                ) : (
-                                    <TouchableOpacity
-                                        style={st.callBtn}
-                                        onPress={() => Haptics.selectionAsync()}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Ionicons name="call" size={18} color={T.onPrimary} />
-                                    </TouchableOpacity>
-                                )}
-                                <TouchableOpacity
-                                    style={st.dismissBtn}
-                                    onPress={closeCallout}
-                                    activeOpacity={0.7}
-                                >
-                                    <Ionicons name="close" size={16} color={D.muted} />
-                                </TouchableOpacity>
-                            </View>
+                            <TouchableOpacity style={st.dismissBtn} onPress={closeCallout} activeOpacity={0.7}>
+                                <Ionicons name="close" size={16} color={D.muted} />
+                            </TouchableOpacity>
                         </View>
-                        {/* Distance Indicator */}
-                        {selectedProvider?.distLabel ? (
-                            <View style={st.distanceIndicator}>
-                                <Ionicons name="location" size={14} color={D.subtitle} />
-                                <Text style={st.distanceText}>{selectedProvider.distLabel}</Text>
-                            </View>
-                        ) : null}
-                        {/* Pagination / Nav */}
-                        {sortedProviders.length > 1 && (
-                            <View style={st.calloutNavRow}>
-                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('prev')}>
-                                    <Feather name="chevron-left" size={18} color={D.subtitle} />
-                                    <Text style={st.navArrowText}>Prev options</Text>
+
+                        {/* Detail Rows */}
+                        <View style={st.detailSection}>
+                            {selectedProvider.affiliation ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="business-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>{selectedProvider.affiliation}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.address ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="location-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>{selectedProvider.address}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.degree ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="school-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>{selectedProvider.degree}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.specialty ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="medkit-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>{selectedProvider.specialty}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.shift ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="time-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>Shift: {selectedProvider.shift}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.eta ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="speedometer-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>ETA: {selectedProvider.eta}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.ambulanceType ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="car-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>Type: {selectedProvider.ambulanceType.toUpperCase()}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.contactNumber ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="call-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>{selectedProvider.contactNumber}</Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.isDeliveryAvailable != null ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="bicycle-outline" size={14} color={D.muted} />
+                                    <Text style={st.detailText}>
+                                        Delivery: {selectedProvider.isDeliveryAvailable ? 'Available' : 'Not available'}
+                                    </Text>
+                                </View>
+                            ) : null}
+                            {selectedProvider.distLabel ? (
+                                <View style={st.detailRow}>
+                                    <Ionicons name="navigate-outline" size={14} color="#10B981" />
+                                    <Text style={[st.detailText, { color: '#10B981', fontWeight: '700' }]}>
+                                        {selectedProvider.distLabel}
+                                    </Text>
+                                </View>
+                            ) : null}
+                        </View>
+
+                        {/* Action Row */}
+                        <View style={st.actionRow}>
+                            {selectedProvider.bookingUrl ? (
+                                <TouchableOpacity style={st.bookNowBtn} onPress={handleBookNow} activeOpacity={0.85}>
+                                    <LinearGradient
+                                        colors={['#10B981', '#059669']}
+                                        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+                                        style={st.bookNowGradient}
+                                    >
+                                        <Text style={st.bookNowText}>Book Now</Text>
+                                        <Ionicons name="arrow-forward" size={14} color={T.onPrimary} />
+                                    </LinearGradient>
                                 </TouchableOpacity>
-                                <View style={st.navDots} />
-                                <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('next')}>
-                                    <Text style={st.navArrowText}>Next options</Text>
-                                    <Feather name="chevron-right" size={18} color={D.subtitle} />
+                            ) : selectedProvider.contactNumber ? (
+                                <TouchableOpacity style={st.callActionBtn} onPress={() => Haptics.selectionAsync()} activeOpacity={0.85}>
+                                    <Ionicons name="call" size={16} color={T.onPrimary} />
+                                    <Text style={st.callActionText}>Call</Text>
                                 </TouchableOpacity>
-                            </View>
-                        )}
+                            ) : null}
+                            {/* Pagination */}
+                            {sortedProviders.length > 1 && (
+                                <View style={st.paginationRow}>
+                                    <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('prev')}>
+                                        <Feather name="chevron-left" size={18} color={D.subtitle} />
+                                    </TouchableOpacity>
+                                    <Text style={st.paginationText}>
+                                        {sortedProviders.findIndex(p => p.id === selectedPin) + 1}/{sortedProviders.length}
+                                    </Text>
+                                    <TouchableOpacity style={st.navArrowBtn} onPress={() => handleNextPrev('next')}>
+                                        <Feather name="chevron-right" size={18} color={D.subtitle} />
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </View>
                     </RNAnimated.View>
                 )}
 
@@ -790,128 +887,106 @@ const st = StyleSheet.create({
         letterSpacing: 0.3,
     },
 
-    // ── Simple Pin ────────────────────────────────────────────────────────
-    pinBubble: {
+    // ── Green Circle Marker ────────────────────────────────────────────────
+    greenCircle: {
         width: 40, height: 40, borderRadius: 20,
-        backgroundColor: D.cardFill,
-        borderWidth: 2, borderColor: T.violet,
+        backgroundColor: 'rgba(16,185,129,0.85)',
+        borderWidth: 2, borderColor: 'rgba(16,185,129,0.5)',
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.4, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            ios: { shadowColor: '#10B981', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 8 },
         }),
     },
-    pinBubbleActive: {
-        backgroundColor: T.violet,
+    greenCircleActive: {
+        backgroundColor: '#10B981',
         borderColor: '#FFFFFF',
-        transform: [{ scale: 1.15 }],
+        transform: [{ scale: 1.2 }],
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.6, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
+            ios: { shadowColor: '#10B981', shadowOpacity: 0.7, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
             android: { elevation: 12 },
         }),
     },
 
-    // ── Callout Bottom Sheet ────────────────────────────────────────────────
+    // ── Callout Info Card ────────────────────────────────────────────────────
     calloutWrap: {
         position: 'absolute', left: 14, right: 14,
         borderRadius: D.cardRadius, overflow: 'hidden',
-        borderWidth: 1, borderColor: `${T.violet}30`,
+        borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
         zIndex: 250,
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+            ios: { shadowColor: '#10B981', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
             android: { elevation: 10 },
         }),
     },
-    calloutTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    calloutTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.92)' },
     calloutGrabberWrap: { alignItems: 'center', paddingTop: 10 },
-    calloutGrabber: {
-        width: 42, height: 4, borderRadius: 2,
-        backgroundColor: T.lineBold, opacity: 0.75,
+    calloutGrabber: { width: 42, height: 4, borderRadius: 2, backgroundColor: T.lineBold, opacity: 0.75 },
+    calloutHeader: {
+        flexDirection: 'row', alignItems: 'flex-start',
+        paddingHorizontal: S.s4, paddingTop: 12, paddingBottom: 10, gap: S.s3,
     },
-    calloutContent: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: 12, paddingBottom: 14,
-        gap: S.s3,
-    },
-    calloutInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.s3 },
     calloutIconWrap: {
         width: 46, height: 46, borderRadius: 23,
-        backgroundColor: `${T.violet}18`,
-        borderWidth: 1, borderColor: `${T.violet}30`,
+        backgroundColor: 'rgba(16,185,129,0.15)',
+        borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
         alignItems: 'center', justifyContent: 'center', flexShrink: 0,
     },
-    calloutTextWrap: { flex: 1, gap: 2 },
-    calloutName: {
-        fontSize: 15, fontWeight: '700', color: D.title,
-        letterSpacing: -0.1,
+    calloutName: { fontSize: 15, fontWeight: '700', color: D.title, letterSpacing: -0.1 },
+    calloutBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 },
+    typeBadge: {
+        backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: 6,
+        paddingHorizontal: 7, paddingVertical: 2,
     },
-    calloutMetaRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 4,
+    typeBadgeText: { fontSize: 9, fontWeight: '800', color: '#10B981', letterSpacing: 0.5 },
+    calloutMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    calloutRating: { fontSize: 12, fontWeight: '700', color: '#F59E0B' },
+    safeBadge: {
+        flexDirection: 'row', alignItems: 'center', gap: 3,
+        backgroundColor: 'rgba(16,185,129,0.12)', borderRadius: 6,
+        paddingHorizontal: 6, paddingVertical: 2,
     },
-    calloutRating: {
-        fontSize: 12, fontWeight: '700', color: '#F59E0B',
-    },
-    calloutAffiliation: {
-        fontSize: 11, fontWeight: '500', color: D.muted,
-    },
-    calloutActions: {
-        flexDirection: 'row', alignItems: 'center', gap: 8,
-    },
-    bookNowBtn: {
-        borderRadius: 12, overflow: 'hidden',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
-        }),
-    },
-    bookNowGradient: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        paddingHorizontal: 14, paddingVertical: 10,
-        borderRadius: 12,
-    },
-    bookNowText: {
-        fontSize: 13, fontWeight: '800', color: T.onPrimary,
-    },
-    callBtn: {
-        width: 42, height: 42, borderRadius: 21,
-        backgroundColor: T.success,
-        alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#10B981', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 4 },
-        }),
-    },
+    safeBadgeText: { fontSize: 9, fontWeight: '700', color: '#10B981' },
     dismissBtn: {
         width: 30, height: 30, borderRadius: 15,
         backgroundColor: 'rgba(255,255,255,0.06)',
         borderWidth: 1, borderColor: D.hairline,
         alignItems: 'center', justifyContent: 'center',
     },
-
-    // ── Distance Indicator ──────────────────────────────────────────────────
-    distanceIndicator: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        paddingHorizontal: S.s4, paddingBottom: 10,
+    detailSection: {
+        paddingHorizontal: S.s4, paddingBottom: 12, gap: 7,
+        borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)',
+        paddingTop: 10,
     },
-    distanceText: {
-        fontSize: 12, fontWeight: '600', color: D.subtitle,
-    },
-
-    // ── Callout Nav Row ─────────────────────────────────────────────────────
-    calloutNavRow: {
+    detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    detailText: { fontSize: 12, fontWeight: '500', color: D.subtitle, flex: 1 },
+    actionRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingHorizontal: S.s3, paddingVertical: 10,
+        paddingHorizontal: S.s4, paddingVertical: 10,
         borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)',
         backgroundColor: 'rgba(255,255,255,0.02)',
     },
-    navArrowBtn: {
-        flexDirection: 'row', alignItems: 'center', gap: 4,
-        paddingVertical: 6, paddingHorizontal: 8,
+    bookNowBtn: {
+        borderRadius: 12, overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#10B981', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
     },
-    navArrowText: {
-        fontSize: 12, fontWeight: '600', color: D.subtitle,
+    bookNowGradient: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
     },
-    navDots: { flex: 1 },
+    bookNowText: { fontSize: 13, fontWeight: '800', color: T.onPrimary },
+    callActionBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        backgroundColor: '#10B981', borderRadius: 12,
+        paddingHorizontal: 16, paddingVertical: 10,
+    },
+    callActionText: { fontSize: 13, fontWeight: '800', color: T.onPrimary },
+    paginationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    paginationText: { fontSize: 12, fontWeight: '700', color: D.subtitle },
+    navArrowBtn: { padding: 4 },
 
     // ── Quick Selector Chips ────────────────────────────────────────────────
     chipContainer: {

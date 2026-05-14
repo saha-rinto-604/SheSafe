@@ -25,6 +25,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SafePlaceButton from '../../../../components/SafePlaceButton';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
+import { useAuth } from '../../../../src/context/AuthContext';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -433,7 +434,7 @@ const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label:
     { icon: 'log-out', label: 'Logout', danger: true },
 ];
 
-const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+const Drawer = memo(function Drawer({ visible, onClose, onNavigate }: { visible: boolean; onClose: () => void; onNavigate: (label: string) => void }) {
     const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
     useEffect(() => {
         RNAnimated.spring(slideX, { toValue: visible ? 0 : -width * 0.76, useNativeDriver: true, tension: 62, friction: 13 }).start();
@@ -452,7 +453,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
                     {DRAWER_ITEMS.map((item, i) => (
                         <React.Fragment key={i}>
                             {item.danger && <View style={dr.divider} />}
-                            <TouchableOpacity style={dr.row} onPress={onClose} activeOpacity={0.65}>
+                            <TouchableOpacity style={dr.row} onPress={() => { onClose(); onNavigate(item.label); }} activeOpacity={0.65}>
                                 <View style={[dr.iconBox, item.danger && dr.iconBoxDanger]}>
                                     <Feather name={item.icon} size={18} color={item.danger ? T.danger : T.violet} />
                                 </View>
@@ -596,6 +597,7 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
 export default function VolunteerHome() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { signOut } = useAuth();
     const mapRef = useRef<MapView>(null);
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
@@ -661,6 +663,28 @@ export default function VolunteerHome() {
     const [sosRouteDistance, setSosRouteDistance] = useState<string>('');
     const [sosRouteDuration, setSosRouteDuration] = useState<string>('');
     const [drawerOpen, setDrawerOpen] = useState(false);
+
+    const handleDrawerNavigate = useCallback((label: string) => {
+        const ROUTE_MAP: Record<string, string> = {
+            'Edit Profile': '/(tabs)/users/volunteer/edit-profile',
+            'Emergency Contacts': '/(tabs)/users/volunteer/emergency-contacts',
+            'Safety Settings': '/(tabs)/users/volunteer/safety-settings',
+            'Privacy & Security': '/(tabs)/users/volunteer/privacy-security',
+        };
+        if (label === 'Logout') {
+            Alert.alert('Logout', 'Are you sure you want to logout?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Logout', style: 'destructive', onPress: async () => { await signOut(); router.replace('/(auth)/login'); } },
+            ]);
+            return;
+        }
+        const route = ROUTE_MAP[label];
+        if (route) {
+            setTimeout(() => router.push(route as any), 100);
+        } else {
+            Alert.alert(label, 'This section will be available soon.');
+        }
+    }, [router, signOut]);
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -1275,7 +1299,7 @@ export default function VolunteerHome() {
         <AtmosphericShell>
             <View style={s.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} onNavigate={handleDrawerNavigate} />
 
                 <MapView
                     ref={mapRef}

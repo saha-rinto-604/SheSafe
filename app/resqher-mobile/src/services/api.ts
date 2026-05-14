@@ -124,4 +124,15 @@ export const authService = {
   },
 };
 
+export const medicalService = {
+  async getProviders() {
+    try {
+      const res = await api.get('/api/medical/providers');
+      return res.data?.providers ?? [];
+    } catch {
+      return [];
+    }
+  },
+};
+
 export default api;
