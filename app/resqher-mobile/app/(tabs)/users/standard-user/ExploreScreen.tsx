@@ -13,6 +13,7 @@ import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -68,7 +69,7 @@ function checkRouteSafety(coordinates: LatLng[], dangerZones: DangerZone[]): { i
         const p2 = coordinates[i + 1];
 
         for (const zone of dangerZones) {
-            if (haversineDistance(p1, zone) <= zone.radius) {
+            if (haversineDistance(p1, zone) <= zone.radius + 200) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
         }
@@ -83,7 +84,7 @@ function checkRouteSafety(coordinates: LatLng[], dangerZones: DangerZone[]): { i
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
                 for (const zone of dangerZones) {
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
+                    if (haversineDistance(interpPoint, zone) <= zone.radius + 200) {
                         return { isSafe: false, blockedZoneName: zone.name };
                     }
                 }
@@ -93,7 +94,7 @@ function checkRouteSafety(coordinates: LatLng[], dangerZones: DangerZone[]): { i
 
     const lastPoint = coordinates[coordinates.length - 1];
     for (const zone of dangerZones) {
-        if (haversineDistance(lastPoint, zone) <= zone.radius) {
+        if (haversineDistance(lastPoint, zone) <= zone.radius + 200) {
             return { isSafe: false, blockedZoneName: zone.name };
         }
     }
@@ -112,7 +113,7 @@ function getRouteRiskScore(coordinates: LatLng[], dangerZones: DangerZone[]): nu
         const p2 = coordinates[i + 1];
 
         for (const zone of dangerZones) {
-            if (haversineDistance(p1, zone) <= zone.radius) score++;
+            if (haversineDistance(p1, zone) <= zone.radius + 200) score++;
         }
 
         const dist = haversineDistance(p1, p2);
@@ -125,7 +126,7 @@ function getRouteRiskScore(coordinates: LatLng[], dangerZones: DangerZone[]): nu
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
                 for (const zone of dangerZones) {
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) score++;
+                    if (haversineDistance(interpPoint, zone) <= zone.radius + 200) score++;
                 }
             }
         }
@@ -489,6 +490,13 @@ export default function ExploreScreen() {
     // Route path selector: 'primary' = shortest (default), 'alt' = safe alternative
     const [selectedRoutePath, setSelectedRoutePath] = useState<'primary' | 'alt'>('primary');
 
+    // Long-press destination pin (shown briefly before directions mode starts)
+    const [longPressPin, setLongPressPin] = useState<LatLng | null>(null);
+
+    // Toast notification
+    const [toastMsg, setToastMsg] = useState<string | null>(null);
+    const toastAnim = useRef(new RNAnimated.Value(0)).current;
+
     // Double-tap routing
     const lastMapPressRef = useRef<{ time: number; coord: LatLng } | null>(null);
     const scanAnim = useRef(new RNAnimated.Value(0)).current;
@@ -501,6 +509,12 @@ export default function ExploreScreen() {
     const incidentZonesRef = useRef(incidentZones);
 
     useFocusEffect(useCallback(() => { getUserProfile().then(setProfile); }, []));
+
+    // Refresh zones immediately when screen regains focus (e.g. after user deletes SOS history)
+    useFocusEffect(useCallback(() => {
+        incidentService.getZones().then(setIncidentZones).catch(() => {});
+        api.get('/api/safe-places').then((res) => setSafePlaceZones(res.data?.zones ?? [])).catch(() => {});
+    }, []));
 
     // Persist travel mode across sessions
     useEffect(() => {
@@ -828,13 +842,21 @@ export default function ExploreScreen() {
                 }
 
                 if (bestRoute) {
-                    const firstBadPoint = bestRoute.coords.find(p => liveDangerZones.some(z => haversineDistance(p, z) <= z.radius));
+                    const firstBadPoint = bestRoute.coords.find(p => liveDangerZones.some(z => haversineDistance(p, z) <= z.radius + 200));
                     if (firstBadPoint) {
-                        const matchedZone = liveDangerZones.find(z => haversineDistance(firstBadPoint, z) <= z.radius);
+                        const matchedZone = liveDangerZones.find(z => haversineDistance(firstBadPoint, z) <= z.radius + 200);
                         if (matchedZone) {
-                            const directions = [{ lat: 0, lng: 1 }, { lat: 0, lng: -1 }, { lat: 1, lng: 0 }, { lat: -1, lng: 0 }];
+                            // 8 directions for higher chance of finding a clean detour
+                            const D = 0.7071;
+                            const directions = [
+                                { lat: 0, lng: 1 }, { lat: 0, lng: -1 },
+                                { lat: 1, lng: 0 }, { lat: -1, lng: 0 },
+                                { lat: D, lng: D }, { lat: D, lng: -D },
+                                { lat: -D, lng: D }, { lat: -D, lng: -D },
+                            ];
                             let foundPerfectDetour = false;
-                            const pushDistanceMeters = matchedZone.radius * 3;
+                            // Push waypoint beyond zone radius + 200 m buffer, times 2 for headroom
+                            const pushDistanceMeters = (matchedZone.radius + 200) * 2.5;
 
                             for (const dir of directions) {
                                 if (foundPerfectDetour) break;
@@ -877,6 +899,7 @@ export default function ExploreScreen() {
             setRouteCoords(finalCoords);
             setNavInstructions(instructions);
             setCurrentStepIdx(0);
+            setSelectedRoutePath('alt');
             setRouteUnsafe(bestScore > 0);
             setShowSafePath(false);
             stopScanAnimation();
@@ -884,14 +907,18 @@ export default function ExploreScreen() {
 
             mapRef.current?.fitToCoordinates(finalCoords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
 
-            if (bestScore === 0) Speech.speak('Safety update: Safest route selected, avoiding high risk areas.');
-            else Alert.alert('⚠️ Partial safety', 'No fully safe route found. Showing the least risky option.');
+            const zonesAvoided = liveDangerZones.length;
+            if (bestScore === 0) {
+                showToast(`Safest route found · Avoiding ${zonesAvoided} zone${zonesAvoided !== 1 ? 's' : ''}`);
+            } else {
+                showToast('Partial safe route · Some risk areas remain');
+            }
 
         } catch {
             stopScanAnimation(); setIsScanAnimating(false);
             Alert.alert('Error', 'Failed to calculate safe route.');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, showToast]);
 
     const closeLocationCard = useCallback(() => {
         RNAnimated.parallel([RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }), RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true })]).start(() => setShowLocationCard(false));
@@ -967,6 +994,53 @@ export default function ExploreScreen() {
             toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
     }, [address, directionsMode, directionsProgress, placeSheetOpen, showLocationCard, closePlaceSheet, closeLocationCard]);
+
+    const showToast = useCallback((msg: string) => {
+        setToastMsg(msg);
+        toastAnim.setValue(0);
+        RNAnimated.sequence([
+            RNAnimated.timing(toastAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+            RNAnimated.delay(2400),
+            RNAnimated.timing(toastAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
+        ]).start(() => setToastMsg(null));
+    }, [toastAnim]);
+
+    // Long press on map → drop destination pin and auto-route from current location
+    const handleMapLongPress = useCallback((e: any) => {
+        if (searchActive || startSearchActive || directionsMode || zoneSheetOpen) return;
+        const coord: LatLng = e.nativeEvent.coordinate;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setLongPressPin(coord);
+        if (placeSheetOpen) closePlaceSheet();
+        if (showLocationCard) closeLocationCard();
+        // Small delay so the pin marker renders first
+        setTimeout(() => {
+            const dest: PlaceSuggestion = {
+                id: `lp-${Date.now()}`,
+                name: 'Dropped pin',
+                address: `${coord.latitude.toFixed(5)}, ${coord.longitude.toFixed(5)}`,
+                latitude: coord.latitude,
+                longitude: coord.longitude,
+            };
+            const start: PlaceSuggestion = {
+                id: 'current-location',
+                name: 'Your location',
+                address: address || 'Current location',
+                latitude: userLocRef.current!.latitude,
+                longitude: userLocRef.current!.longitude,
+            };
+            setLongPressPin(null);
+            setStartLocation(start);
+            setStartSearchText('Your location');
+            setDirectionsMode(true);
+            setEndLocation(dest);
+            setRouteCoords([]);
+            setAltRouteCoords([]);
+            setSelectedRoutePath('primary');
+            RNAnimated.timing(directionsProgress, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+        }, 400);
+    }, [searchActive, startSearchActive, directionsMode, zoneSheetOpen, placeSheetOpen, showLocationCard,
+        address, directionsProgress, closePlaceSheet, closeLocationCard]);
 
     const handleMapPress = useCallback((e: any) => {
         if (searchActive || startSearchActive || zoneSheetOpen) return;
@@ -1066,6 +1140,7 @@ export default function ExploreScreen() {
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
                     onPress={handleMapPress}
+                    onLongPress={handleMapLongPress}
                 >
                     {/* Incident zones: yellow (<5 reports) or red (>=5) — Circle + tappable Marker */}
                     {incidentZones.map(zone => {
@@ -1133,6 +1208,22 @@ export default function ExploreScreen() {
                         </Marker>
                     )}
 
+                    {/* Long-press destination pin — shown briefly before routing */}
+                    {longPressPin && (
+                        <Marker
+                            coordinate={longPressPin}
+                            anchor={{ x: 0.5, y: 1 }}
+                            tracksViewChanges={false}
+                            zIndex={998}
+                        >
+                            <View style={s.longPressPin}>
+                                <View style={s.longPressPinRing} />
+                                <Ionicons name="navigate" size={18} color="#fff" />
+                                <Text style={s.longPressPinLabel}>Routing…</Text>
+                            </View>
+                        </Marker>
+                    )}
+
                     {/* ── Gray dashed Comparison Line (after safe recalculation) ── */}
                     {safeRouteCoords.length > 0 && !routeUnsafe && !isScanAnimating && (
                         <Polyline
@@ -1147,22 +1238,21 @@ export default function ExploreScreen() {
                     {/* ── Alternative / Safe route ── */}
                     {altRouteCoords.length > 1 && (
                         selectedRoutePath === 'alt' ? (
-                            /* Selected: bold purple (same style as primary) */
+                            /* Selected: bold green */
                             <Polyline
                                 coordinates={altRouteCoords}
-                                strokeColor={T.violet}
+                                strokeColor="#10B981"
                                 strokeWidth={5}
                                 lineCap="round"
                                 lineJoin="round"
-                                onPress={() => {}}
                             />
                         ) : (
-                            /* Default: small green dots — tap to activate */
+                            /* Default: faint green dots — tap to switch */
                             <Polyline
                                 coordinates={altRouteCoords}
-                                strokeColor="rgba(52,199,89,0.80)"
-                                strokeWidth={2.5}
-                                lineDashPattern={[2, 6]}
+                                strokeColor="rgba(52,199,89,0.55)"
+                                strokeWidth={2}
+                                lineDashPattern={[2, 7]}
                                 lineCap="round"
                                 onPress={() => setSelectedRoutePath('alt')}
                             />
@@ -1237,7 +1327,7 @@ export default function ExploreScreen() {
                                             <Ionicons name="notifications-outline" size={20} color={T.ink2} />
                                             <View style={s.notifDot} />
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={s.profileBtn} onPress={() => setDrawerOpen(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                        <TouchableOpacity style={s.profileBtn} onPress={() => router.push('/(tabs)/users/standard-user/profile-menu' as any)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                                             {profile?.photoUri ? <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} /> : <Image source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }} style={s.profileAvatar} />}
                                         </TouchableOpacity>
                                     </View>
@@ -1419,25 +1509,42 @@ export default function ExploreScreen() {
                                 <Text style={ns.distText}>{navInstructions[currentStepIdx]?.distance}</Text>
                             </View>
                         </View>
-                        {/* Route selector pill — shown when an alternative route is available */}
+                        {/* Route selector — current label + one switch button */}
                         {altRouteCoords.length > 1 && (
                             <View style={ns.routePillRow}>
-                                <TouchableOpacity
-                                    style={[ns.routePill, selectedRoutePath === 'primary' && ns.routePillActive]}
-                                    onPress={() => setSelectedRoutePath('primary')}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="flash" size={11} color={selectedRoutePath === 'primary' ? T.onPrimary : T.ink3} style={{ marginRight: 3 }} />
-                                    <Text style={[ns.routePillText, selectedRoutePath === 'primary' && ns.routePillTextActive]}>Shortest</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[ns.routePill, selectedRoutePath === 'alt' && ns.routePillAlt]}
-                                    onPress={() => setSelectedRoutePath('alt')}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="shield-checkmark" size={11} color={selectedRoutePath === 'alt' ? '#fff' : T.ink3} style={{ marginRight: 3 }} />
-                                    <Text style={[ns.routePillText, selectedRoutePath === 'alt' && ns.routePillTextActive]}>Safest</Text>
-                                </TouchableOpacity>
+                                {/* Current route indicator */}
+                                <View style={ns.routeCurrentLabel}>
+                                    <Ionicons
+                                        name={selectedRoutePath === 'primary' ? 'flash' : 'shield-checkmark'}
+                                        size={11}
+                                        color={selectedRoutePath === 'primary' ? T.ink3 : '#10B981'}
+                                        style={{ marginRight: 4 }}
+                                    />
+                                    <Text style={[ns.routeCurrentText, selectedRoutePath === 'alt' && ns.routeCurrentTextSafe]}>
+                                        {selectedRoutePath === 'primary' ? 'Shortest Path' : 'Safest Path'}
+                                    </Text>
+                                </View>
+
+                                {/* Switch action */}
+                                {selectedRoutePath === 'primary' ? (
+                                    <TouchableOpacity
+                                        style={[ns.routePill, ns.routePillAlt]}
+                                        onPress={() => setSelectedRoutePath('alt')}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="shield-checkmark" size={11} color="#fff" style={{ marginRight: 3 }} />
+                                        <Text style={[ns.routePillText, ns.routePillTextActive]}>Safe Route</Text>
+                                    </TouchableOpacity>
+                                ) : (
+                                    <TouchableOpacity
+                                        style={[ns.routePill, ns.routePillActive]}
+                                        onPress={() => setSelectedRoutePath('primary')}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="flash" size={11} color={T.onPrimary} style={{ marginRight: 3 }} />
+                                        <Text style={[ns.routePillText, ns.routePillTextActive]}>Shortest Path</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
                         )}
 
@@ -1532,6 +1639,23 @@ export default function ExploreScreen() {
                 )}
 
                 <SafetyScanOverlay visible={isScanAnimating} spinAnim={scanAnim} r0={radarAnim0} r1={radarAnim1} r2={radarAnim2} zoneName={blockedZoneName} />
+
+                {/* ── Safe-route found toast ────────────────────────────────── */}
+                {toastMsg && (
+                    <RNAnimated.View
+                        pointerEvents="none"
+                        style={[
+                            s.toast,
+                            {
+                                opacity: toastAnim,
+                                transform: [{ translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+                            },
+                        ]}
+                    >
+                        <Ionicons name="shield-checkmark" size={15} color="#10B981" style={{ marginRight: 7 }} />
+                        <Text style={s.toastTxt}>{toastMsg}</Text>
+                    </RNAnimated.View>
+                )}
 
                 <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
@@ -1675,6 +1799,40 @@ const s = StyleSheet.create({
     navUnderline: { width: 16, height: 3, borderRadius: 1.5, marginTop: 5 },
     navIconBox: { width: 36, height: 36, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
     navIconBoxActive: { backgroundColor: 'rgba(138,56,246,0.12)', borderColor: `${T.violet}40` },
+
+    // Long-press destination pin
+    longPressPin: {
+        alignItems: 'center', gap: 2,
+        backgroundColor: T.violet,
+        paddingHorizontal: 10, paddingVertical: 6,
+        borderRadius: 12,
+        borderWidth: 2, borderColor: '#fff',
+    },
+    longPressPinRing: {
+        position: 'absolute', width: 48, height: 48,
+        borderRadius: 24, borderWidth: 1.5,
+        borderColor: `${T.violet}60`,
+    },
+    longPressPinLabel: { fontSize: 10, fontWeight: '700', color: '#fff', letterSpacing: 0.3 },
+
+    // Safe-route toast
+    toast: {
+        position: 'absolute',
+        alignSelf: 'center',
+        bottom: 160,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(10,8,20,0.92)',
+        paddingHorizontal: 16, paddingVertical: 10,
+        borderRadius: 999,
+        borderWidth: 1, borderColor: 'rgba(16,185,129,0.4)',
+        zIndex: 500,
+        ...Platform.select({
+            ios: { shadowColor: '#10B981', shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    toastTxt: { fontSize: 13, fontWeight: '700', color: '#fff', letterSpacing: 0.1 },
 });
 
 const ns = StyleSheet.create({
@@ -1697,7 +1855,10 @@ const ns = StyleSheet.create({
     safePathBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.3 },
     warningBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
     warningBadgeText: { fontSize: 11, fontWeight: '600', color: '#E25B3A', letterSpacing: 0.2 },
-    routePillRow: { flexDirection: 'row', gap: 6, paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
+    routePillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
+    routeCurrentLabel: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+    routeCurrentText: { fontSize: 11, fontWeight: '600', color: T.ink3 },
+    routeCurrentTextSafe: { color: '#10B981', fontWeight: '700' },
     routePill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
     routePillActive: { backgroundColor: T.violet, borderColor: `${T.violet}80` },
     routePillAlt: { backgroundColor: '#10B981', borderColor: 'rgba(16,185,129,0.6)' },
