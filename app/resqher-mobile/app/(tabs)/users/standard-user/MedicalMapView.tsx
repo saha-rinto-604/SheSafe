@@ -497,7 +497,7 @@ export default function MedicalMapView() {
     const [bookingModalOpen, setBookingModalOpen] = useState(false);
     const [bookingDone, setBookingDone] = useState(false);
     // Start with MOCK_PROVIDERS so pins are visible immediately.
-    // Backend data replaces mock data if the server has seeded records.
+    // Backend data replaces mock data once the server responds.
     const [backendProviders, setBackendProviders] = useState<any[]>(MOCK_PROVIDERS);
 
     useEffect(() => {

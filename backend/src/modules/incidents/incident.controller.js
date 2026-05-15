@@ -36,6 +36,24 @@ async function cancel(req, res, next) {
   }
 }
 
+async function resolve(req, res, next) {
+  try {
+    const incident = await incidentService.resolveIncident(req.user.id, req.params.id);
+    res.status(200).json({ incident });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getMyIncidents(req, res, next) {
+  try {
+    const incidents = await incidentService.getMyIncidents(req.user.id);
+    res.status(200).json({ incidents });
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function clearMyHistory(req, res, next) {
   try {
     const result = await incidentService.clearMyHistory(req.user.id);
@@ -45,4 +63,4 @@ async function clearMyHistory(req, res, next) {
   }
 }
 
-module.exports = { report, getZones, getOne, cancel, clearMyHistory };
+module.exports = { report, getZones, getOne, cancel, resolve, getMyIncidents, clearMyHistory };

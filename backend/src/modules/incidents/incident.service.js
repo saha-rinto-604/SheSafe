@@ -1,5 +1,5 @@
 const { httpError } = require('../../utils/httpError');
-const { createIncident, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser } = require('./incident.repository');
+const { createIncident, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, findMyIncidents } = require('./incident.repository');
 
 /**
  * Report a new incident (triggered by SOS).
@@ -50,4 +50,18 @@ async function clearMyHistory(userId) {
   return cancelAllByUser(userId);
 }
 
-module.exports = { reportIncident, getZones, getOne, cancelIncident, clearMyHistory };
+async function resolveIncident(userId, incidentId) {
+  const incident = await findIncidentById(incidentId);
+  if (!incident) throw httpError(404, 'Incident not found.');
+  if (Number(incident.user_id) !== Number(userId)) {
+    throw httpError(403, 'You can only resolve your own incidents.');
+  }
+  if (incident.status === 'RESOLVED') return incident;
+  return updateIncidentStatus(incidentId, 'RESOLVED');
+}
+
+async function getMyIncidents(userId) {
+  return findMyIncidents(userId);
+}
+
+module.exports = { reportIncident, getZones, getOne, cancelIncident, clearMyHistory, resolveIncident, getMyIncidents };

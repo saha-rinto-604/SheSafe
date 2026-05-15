@@ -37,6 +37,7 @@ import { G } from '../../../../src/constants/gradients';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
+import { incidentHistory } from '../../../../src/services/incidentHistory';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -547,6 +548,7 @@ export default function SOSScreen() {
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const navigatedRef = useRef(false);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
 
     // Load profile picture on screen focus
@@ -638,52 +640,72 @@ export default function SOSScreen() {
         });
     }, []);
 
-    // SOS logic — create incident then open chat room immediately
+    // SOS logic — create incident and start cancel countdown;
+    // navigation to chat room happens after the countdown expires (see useEffect below)
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
+        navigatedRef.current = false;
 
         const lat = userLoc?.latitude;
         const lng = userLoc?.longitude;
 
         if (lat && lng) {
             incidentService.createIncident({ latitude: lat, longitude: lng, address: address || undefined })
-                .then((incident) => {
-                    const incidentId = String(incident.id);
-                    setActiveIncidentId(incidentId);
-                    incidentService.getZones().then(setZones).catch(() => {});
-                    // Navigate to chat room immediately
-                    router.push({
-                        pathname: '/(tabs)/users/standard-user/chat_room',
-                        params: {
-                            incidentId,
-                            autoMessage: 'true',
-                            userLat: String(lat),
-                            userLng: String(lng),
-                            userAddress: address || '',
-                        },
-                    } as any);
+                .then(async (incident) => {
+                    const id = String(incident.id);
+                    setActiveIncidentId(id);
+                    const SecureStore = await import('expo-secure-store');
+                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    const createdAt = new Date().toISOString();
+                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                        incidentId: id, displayNumber, lat, lng, address: address || '',
+                        createdAt,
+                    }));
+                    await incidentHistory.add({
+                        incidentId: id, displayNumber, lat, lng,
+                        address: address || '', createdAt, status: 'ACTIVE',
+                    });
                 })
-                .catch(() => {
-                    // Backend unreachable — still open chat with a temp id
-                    const tempId = `temp-${Date.now()}`;
-                    router.push({
-                        pathname: '/(tabs)/users/standard-user/chat_room',
-                        params: {
-                            incidentId: tempId,
-                            autoMessage: 'true',
-                            userLat: String(lat),
-                            userLng: String(lng),
-                            userAddress: address || '',
-                        },
-                    } as any);
+                .catch(async () => {
+                    const id = `temp-${Date.now()}`;
+                    setActiveIncidentId(id);
+                    const SecureStore = await import('expo-secure-store');
+                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    const createdAt = new Date().toISOString();
+                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                        incidentId: id, displayNumber, lat, lng, address: address || '',
+                        createdAt,
+                    }));
+                    await incidentHistory.add({
+                        incidentId: id, displayNumber, lat, lng,
+                        address: address || '', createdAt, status: 'ACTIVE',
+                    });
                 });
         } else {
-            // No location yet — open chat room without incident id
-            router.push({ pathname: '/(tabs)/users/standard-user/chat_room', params: { incidentId: 'sos-new', autoMessage: 'true' } } as any);
+            const id = 'sos-new';
+            setActiveIncidentId(id);
+            (async () => {
+                const SecureStore = await import('expo-secure-store');
+                const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                    incidentId: id, displayNumber, lat: null, lng: null, address: '',
+                    createdAt,
+                }));
+                await incidentHistory.add({
+                    incidentId: id, displayNumber, lat: null, lng: null,
+                    address: '', createdAt, status: 'ACTIVE',
+                });
+            })();
         }
-    }, [cancelDuration, userLoc, address, router]);
+    }, [cancelDuration, userLoc, address]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -697,14 +719,33 @@ export default function SOSScreen() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sosActive, cancelCountdown === cancelDuration]);
 
+    // Navigate to chat room once the cancel window expires and SOS is still active
+    useEffect(() => {
+        if (!isEmergencyLive || navigatedRef.current) return;
+        navigatedRef.current = true;
+        const lat = userLoc?.latitude;
+        const lng = userLoc?.longitude;
+        const incId = activeIncidentId ?? `temp-${Date.now()}`;
+        router.replace({
+            pathname: '/(tabs)/users/standard-user/chat_room',
+            params: {
+                incidentId: incId,
+                autoMessage: 'true',
+                ...(lat && lng ? { userLat: String(lat), userLng: String(lng) } : {}),
+                userAddress: address || '',
+            },
+        } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isEmergencyLive, activeIncidentId]);
+
     const cancelSOS = useCallback(() => {
+        navigatedRef.current = false;
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
+        import('expo-secure-store').then(SecureStore => SecureStore.deleteItemAsync('resqher_active_sos_v1'));
         if (activeIncidentId) {
-            incidentService.cancelIncident(activeIncidentId)
-                .then(() => incidentService.getZones().then(setZones).catch(() => {}))
-                .catch(() => {});
+            incidentService.cancelIncident(activeIncidentId).catch(() => {});
             setActiveIncidentId(null);
         }
     }, [activeIncidentId]);
