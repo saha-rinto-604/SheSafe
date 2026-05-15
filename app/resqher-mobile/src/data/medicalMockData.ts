@@ -1,4 +1,4 @@
-// ─── ResQher Medical Module — Seeded Mock Data ──────────────────────────────
+// ─── ResQher Medical Module — Mock Data ──────────────────────────────
 // Dhaka context — specialists, hospitals, ambulances, pharmacies, others
 // V4.0 — Rich provider data for all categories with map coordinates
 
@@ -12,7 +12,6 @@ export const CATEGORIES: CategoryItem[] = [
     { id: 'hospital', label: 'Hospitals', icon: 'business-outline', description: 'Navigate to hospitals' },
     { id: 'ambulance', label: 'Ambulance', icon: 'car-outline', description: 'Request ambulance' },
     { id: 'pharmacy', label: 'Pharmacy', icon: 'bandage-outline', description: 'Find nearby pharmacy' },
-    { id: 'others', label: 'Others', icon: 'flask-outline', description: 'Diagnostics & more' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -16,6 +16,7 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
+import { getStoredIdentity } from '../../src/services/api';
 import { ROLE_DEFAULT_ROUTE, VOLUNTEER } from '../../src/constants/routes';
 
 type FormData = { phone: string; password: string };
@@ -35,13 +36,10 @@ export default function Login() {
       const phone = data.phone.trim();
       await signIn(phone, data.password);
 
-      let route = ROLE_DEFAULT_ROUTE.USER;
-      if (['5', '6', '7', '8', '5678'].includes(phone) && ['5', '6', '7', '8', '5678'].includes(data.password)) {
-        route = ROLE_DEFAULT_ROUTE.VOLUNTEER;
-      }
-
+      const identity = await getStoredIdentity();
+      const role = identity?.role ?? 'USER';
+      const route = ROLE_DEFAULT_ROUTE[role as keyof typeof ROLE_DEFAULT_ROUTE] ?? ROLE_DEFAULT_ROUTE.USER;
       router.replace(route as any);
-      console.log("Login Successful: Redirecting to", route);
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
     } finally {
@@ -139,7 +137,7 @@ export default function Login() {
 
             {/* Forgot password */}
             <TouchableOpacity
-              onPress={() => Alert.alert('Reset password', 'A reset link will be sent to your registered phone.')}
+              onPress={() => router.push('/(auth)/forgot-password' as any)}
               style={st.forgotRow}
               activeOpacity={0.7}
             >

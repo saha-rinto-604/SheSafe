@@ -173,13 +173,10 @@ export default function IncidentHistoryScreen() {
 
                 {/* ── Content ── */}
                 <ScrollView
-                    contentContainerStyle={[
-                        s.scroll,
-                        { paddingBottom: insets.bottom + 36 },
-                    ]}
+                    contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + 36 }]}
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* Section header */}
+                    {/* Incident list */}
                     <Text style={s.sectionLabel}>
                         {incidents.length} {incidents.length === 1 ? 'Incident' : 'Incidents'}
                     </Text>

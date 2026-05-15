@@ -1,8 +1,18 @@
 import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { jwtDecode } from 'jwt-decode';
 
 const ACCESS_KEY = 'resqher_access_token';
 const REFRESH_KEY = 'resqher_refresh_token';
+const IDENTITY_KEY = 'resqher_identity_v1';
+
+type StoredIdentity = { role: string; userId: string };
+
+const DB_ROLE_MAP: Record<string, string> = {
+  standard_user: 'USER',
+  volunteer: 'VOLUNTEER',
+  law_enforcement: 'POLICE',
+};
 
 function normalizeBaseUrl(url: string) {
   // allow user to pass either with or without trailing slash
@@ -21,11 +31,21 @@ const api = axios.create({
 export async function setTokens(access: string, refresh: string) {
   await SecureStore.setItemAsync(ACCESS_KEY, access);
   await SecureStore.setItemAsync(REFRESH_KEY, refresh);
+  // Decode JWT to extract role and userId for the app
+  try {
+    const decoded = jwtDecode<{ sub: string; role: string }>(access);
+    const identity: StoredIdentity = {
+      userId: decoded.sub,
+      role: DB_ROLE_MAP[decoded.role] ?? 'USER',
+    };
+    await SecureStore.setItemAsync(IDENTITY_KEY, JSON.stringify(identity));
+  } catch { /* token malformed — identity stays stale */ }
 }
 
 export async function clearTokens() {
   await SecureStore.deleteItemAsync(ACCESS_KEY);
   await SecureStore.deleteItemAsync(REFRESH_KEY);
+  await SecureStore.deleteItemAsync(IDENTITY_KEY);
 }
 
 export async function getAccessToken() {
@@ -34,6 +54,12 @@ export async function getAccessToken() {
 
 export async function getRefreshToken() {
   return SecureStore.getItemAsync(REFRESH_KEY);
+}
+
+export async function getStoredIdentity(): Promise<StoredIdentity | null> {
+  const raw = await SecureStore.getItemAsync(IDENTITY_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw) as StoredIdentity; } catch { return null; }
 }
 
 // Attach token automatically
@@ -76,6 +102,13 @@ function friendlyError(err: unknown) {
   return new Error('Request failed');
 }
 
+const ROLE_MAP: Record<string, string> = {
+  USER: 'standard_user',
+  VOLUNTEER: 'volunteer',
+  POLICE: 'law_enforcement',
+  ADMIN: 'standard_user',
+};
+
 export const authService = {
   async register(
     phone: string,
@@ -85,12 +118,12 @@ export const authService = {
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
     try {
-      await api.post('/api/v1/auth/register/', {
-        phone,
+      await api.post('/api/auth/signup', {
+        phoneNumber: phone,
         password,
-        first_name: firstName,
-        last_name: lastName,
-        role
+        firstName,
+        lastName,
+        role: ROLE_MAP[role] ?? 'standard_user',
       });
     } catch (e) {
       throw friendlyError(e);
@@ -98,22 +131,12 @@ export const authService = {
   },
 
   async login(username: string, password: string) {
-    // Mock logic for fast testing
-    if (username === '1234' && password === '1234') {
-      await setTokens('mock-access-token-1234', 'mock-refresh-token-1234');
-      return 'mock-access-token-1234';
-    }
-    if (username === '5678' && password === '5678') {
-      await setTokens('mock-access-token-5678', 'mock-refresh-token-5678');
-      return 'mock-access-token-5678';
-    }
-
     try {
-      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
-      const { access, refresh } = res.data || {};
-      if (!access || !refresh) throw new Error('Invalid token response');
-      await setTokens(access, refresh);
-      return access as string;
+      const res = await api.post('/api/auth/login', { phoneNumber: username, password });
+      const { accessToken } = res.data || {};
+      if (!accessToken) throw new Error('Invalid token response');
+      await setTokens(accessToken, accessToken);
+      return accessToken as string;
     } catch (e) {
       throw friendlyError(e);
     }
@@ -121,6 +144,23 @@ export const authService = {
 
   async logout() {
     await clearTokens();
+  },
+
+  async forgotPassword(phoneNumber: string) {
+    try {
+      const res = await api.post('/api/auth/forgot-password', { phoneNumber });
+      return res.data as { otpCode: string };
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
+  async resetPassword(phoneNumber: string, otpCode: string, newPassword: string) {
+    try {
+      await api.post('/api/auth/reset-password', { phoneNumber, otpCode, newPassword });
+    } catch (e) {
+      throw friendlyError(e);
+    }
   },
 };
 

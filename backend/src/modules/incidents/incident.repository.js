@@ -18,7 +18,7 @@ async function createIncident({ userId, latitude, longitude, address }) {
 }
 
 /**
- * Fetch all non-cancelled incidents (ACTIVE or RESOLVED) with user details.
+ * Fetch all ACTIVE incidents with user details (used for zone map).
  */
 async function getActiveIncidents() {
   return query(
@@ -26,7 +26,7 @@ async function getActiveIncidents() {
             u.first_name, u.last_name
      FROM incidents i
      JOIN users u ON i.user_id = u.id
-     WHERE i.status != 'CANCELLED'
+     WHERE i.status = 'ACTIVE'
      ORDER BY i.created_at DESC`
   );
 }
@@ -35,7 +35,7 @@ async function getActiveIncidents() {
  * Aggregate incidents into geographic zones.
  *
  * Algorithm:
- * 1. Fetch all non-cancelled incidents.
+ * 1. Fetch all ACTIVE incidents.
  * 2. Cluster them using a greedy 500-metre radius approach:
  *    - For each incident, check if it falls within 500m of an existing cluster centre.
  *    - If yes, add it to that cluster. If no, start a new cluster centred on it.
@@ -114,4 +114,43 @@ async function getIncidentZones() {
   }));
 }
 
-module.exports = { createIncident, getActiveIncidents, getIncidentZones };
+async function findIncidentById(id) {
+  const rows = await query(
+    `SELECT i.id, i.user_id, i.latitude, i.longitude, i.address, i.status, i.created_at,
+            u.first_name, u.last_name
+     FROM incidents i
+     JOIN users u ON i.user_id = u.id
+     WHERE i.id = ? LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function updateIncidentStatus(id, status) {
+  await query(
+    `UPDATE incidents SET status = ? WHERE id = ?`,
+    [status, id]
+  );
+  return findIncidentById(id);
+}
+
+async function cancelAllByUser(userId) {
+  const result = await query(
+    `UPDATE incidents SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'`,
+    [userId]
+  );
+  return { cancelled: result.affectedRows };
+}
+
+async function findMyIncidents(userId) {
+  return query(
+    `SELECT id, user_id, latitude, longitude, address, status, created_at
+     FROM incidents
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT 30`,
+    [userId]
+  );
+}
+
+module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, findMyIncidents };

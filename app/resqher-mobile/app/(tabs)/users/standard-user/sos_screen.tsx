@@ -36,6 +36,9 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
+import { incidentService } from '../../../../src/services/incidentService';
+import { incidentHistory } from '../../../../src/services/incidentHistory';
+import { notificationStore } from '../../../../src/services/notificationStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -544,15 +547,21 @@ export default function SOSScreen() {
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
+    const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const navigatedRef = useRef(false);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+    const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
 
     // Load profile picture on screen focus
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
+            notificationStore.getUnreadCount().then(n => setHasUnreadNotif(n > 0));
         }, []),
     );
+
+    // (navigation now happens immediately inside triggerSOS, not here)
 
     // Load persisted SOS cancel timer setting on mount
     useEffect(() => {
@@ -634,12 +643,90 @@ export default function SOSScreen() {
         });
     }, []);
 
-    // SOS logic
+    // SOS logic — create incident and start cancel countdown;
+    // navigation to chat room happens after the countdown expires (see useEffect below)
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-    }, [cancelDuration]);
+        navigatedRef.current = false;
+
+        const lat = userLoc?.latitude;
+        const lng = userLoc?.longitude;
+
+        if (lat && lng) {
+            incidentService.createIncident({ latitude: lat, longitude: lng, address: address || undefined })
+                .then(async (incident) => {
+                    const id = String(incident.id);
+                    setActiveIncidentId(id);
+                    const SecureStore = await import('expo-secure-store');
+                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    const createdAt = new Date().toISOString();
+                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                        incidentId: id, displayNumber, lat, lng, address: address || '',
+                        createdAt,
+                    }));
+                    await incidentHistory.add({
+                        incidentId: id, displayNumber, lat, lng,
+                        address: address || '', createdAt, status: 'ACTIVE',
+                    });
+                    await notificationStore.add({
+                        type: 'sos_triggered',
+                        title: 'SOS Alert Sent',
+                        body: `Emergency alert triggered at ${address || 'your location'}`,
+                        incidentId: id,
+                    });
+                })
+                .catch(async () => {
+                    const id = `temp-${Date.now()}`;
+                    setActiveIncidentId(id);
+                    const SecureStore = await import('expo-secure-store');
+                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    const createdAt = new Date().toISOString();
+                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                        incidentId: id, displayNumber, lat, lng, address: address || '',
+                        createdAt,
+                    }));
+                    await incidentHistory.add({
+                        incidentId: id, displayNumber, lat, lng,
+                        address: address || '', createdAt, status: 'ACTIVE',
+                    });
+                    await notificationStore.add({
+                        type: 'sos_triggered',
+                        title: 'SOS Alert Sent',
+                        body: `Emergency alert triggered at ${address || 'your location'}`,
+                        incidentId: id,
+                    });
+                });
+        } else {
+            const id = 'sos-new';
+            setActiveIncidentId(id);
+            (async () => {
+                const SecureStore = await import('expo-secure-store');
+                const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+                await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                    incidentId: id, displayNumber, lat: null, lng: null, address: '',
+                    createdAt,
+                }));
+                await incidentHistory.add({
+                    incidentId: id, displayNumber, lat: null, lng: null,
+                    address: '', createdAt, status: 'ACTIVE',
+                });
+                await notificationStore.add({
+                    type: 'sos_triggered',
+                    title: 'SOS Alert Sent',
+                    body: 'Emergency alert triggered (location unavailable)',
+                    incidentId: id,
+                });
+            })();
+        }
+    }, [cancelDuration, userLoc, address]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -653,11 +740,36 @@ export default function SOSScreen() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sosActive, cancelCountdown === cancelDuration]);
 
+    // Navigate to chat room once the cancel window expires and SOS is still active
+    useEffect(() => {
+        if (!isEmergencyLive || navigatedRef.current) return;
+        navigatedRef.current = true;
+        const lat = userLoc?.latitude;
+        const lng = userLoc?.longitude;
+        const incId = activeIncidentId ?? `temp-${Date.now()}`;
+        router.replace({
+            pathname: '/(tabs)/users/standard-user/chat_room',
+            params: {
+                incidentId: incId,
+                autoMessage: 'true',
+                ...(lat && lng ? { userLat: String(lat), userLng: String(lng) } : {}),
+                userAddress: address || '',
+            },
+        } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isEmergencyLive, activeIncidentId]);
+
     const cancelSOS = useCallback(() => {
+        navigatedRef.current = false;
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-    }, []);
+        import('expo-secure-store').then(SecureStore => SecureStore.deleteItemAsync('resqher_active_sos_v1'));
+        if (activeIncidentId) {
+            incidentService.cancelIncident(activeIncidentId).catch(() => {});
+            setActiveIncidentId(null);
+        }
+    }, [activeIncidentId]);
 
     const confirmStop = useCallback(() => {
         Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [
@@ -732,7 +844,7 @@ export default function SOSScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
-                        <View style={s.notifDot} />
+                        {hasUnreadNotif && <View style={s.notifDot} />}
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={s.profileBtn}

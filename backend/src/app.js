@@ -4,6 +4,8 @@ const authRoutes = require('./modules/auth/auth.routes');
 const locationRoutes = require('./modules/locations/location.routes');
 const incidentRoutes = require('./modules/incidents/incident.routes');
 const medicalRoutes = require('./modules/medical/medical.routes');
+const chatRoutes = require('./modules/chat/chat.routes');
+const safePlacesRoutes = require('./modules/safe-places/safe-places.routes');
 
 const app = express();
 
@@ -18,6 +20,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/incidents', incidentRoutes);
 app.use('/api/medical', medicalRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/safe-places', safePlacesRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });

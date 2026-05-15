@@ -4,7 +4,7 @@
  * Entry point for Account Security and Privacy sub-screens.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -12,12 +12,16 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
+    Alert,
+    ActivityIndicator,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import api from '../../../../src/services/api';
+import { incidentHistory } from '../../../../src/services/incidentHistory';
 
 // ── Nav item definition ───────────────────────────────────────────────────────
 type NavRoute =
@@ -101,6 +105,31 @@ function Section({
 export default function PrivacySecurityScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const [deletingHistory, setDeletingHistory] = useState(false);
+
+    const handleClearSosHistory = () => {
+        Alert.alert(
+            'Clear SOS History',
+            'This will remove your SOS call history from the explorer map. Active incidents will be cancelled. This cannot be undone.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Clear', style: 'destructive', onPress: async () => {
+                        setDeletingHistory(true);
+                        try {
+                            await api.delete('/api/incidents/my');
+                            await incidentHistory.clearAll();
+                            Alert.alert('Done', 'Your SOS history has been cleared from the map.');
+                        } catch {
+                            Alert.alert('Error', 'Failed to clear. Please try again.');
+                        } finally {
+                            setDeletingHistory(false);
+                        }
+                    },
+                },
+            ]
+        );
+    };
 
     return (
         <AtmosphericShell>
@@ -126,6 +155,29 @@ export default function PrivacySecurityScreen() {
                 >
                     <Section title="Account Security" items={ACCOUNT_ITEMS} />
                     <Section title="Privacy" items={PRIVACY_ITEMS} />
+
+                    {/* ── Data Management ── */}
+                    <Text style={s.sectionLabel}>Data Management</Text>
+                    <View style={s.dangerCard}>
+                        <TouchableOpacity
+                            style={s.dangerRow}
+                            onPress={handleClearSosHistory}
+                            activeOpacity={0.75}
+                            disabled={deletingHistory}
+                        >
+                            <View style={s.dangerIconBox}>
+                                {deletingHistory
+                                    ? <ActivityIndicator size="small" color={T.danger} />
+                                    : <Feather name="alert-circle" size={17} color={T.danger} />
+                                }
+                            </View>
+                            <View style={s.dangerContent}>
+                                <Text style={s.dangerLabel}>Clear SOS History</Text>
+                                <Text style={s.dangerDesc}>Remove your SOS calls from the explorer map</Text>
+                            </View>
+                            <Feather name="chevron-right" size={15} color={T.ink4} />
+                        </TouchableOpacity>
+                    </View>
                 </ScrollView>
             </View>
         </AtmosphericShell>
@@ -205,16 +257,34 @@ const s = StyleSheet.create({
         backgroundColor: T.violetDim,
     },
     rowContent: { flex: 1 },
-    rowLabel: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: T.ink,
+    rowLabel: { fontSize: 14, fontWeight: '600', color: T.ink },
+    rowDesc: { fontSize: 12, fontWeight: '400', color: T.ink4, marginTop: 2 },
+
+    // Danger / data management
+    dangerCard: {
+        backgroundColor: T.surfaceBulky,
+        borderRadius: R.lg,
+        borderWidth: 1,
+        borderColor: T.lineMid,
+        overflow: 'hidden',
+        marginBottom: 12,
     },
-    rowDesc: {
-        fontSize: 12,
-        fontWeight: '400',
-        color: T.ink4,
-        marginTop: 2,
+    dangerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 14,
+        paddingHorizontal: S.s4,
+        gap: 12,
     },
+    dangerIconBox: {
+        width: 34, height: 34,
+        borderRadius: R.sm,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: `${T.danger}14`,
+    },
+    dangerContent: { flex: 1 },
+    dangerLabel: { fontSize: 14, fontWeight: '600', color: T.danger },
+    dangerDesc: { fontSize: 12, color: T.ink4, marginTop: 2 },
+
 });
 

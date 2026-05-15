@@ -50,6 +50,7 @@ const MENU_SECTIONS: MenuSection[] = [
         items: [
             { icon: 'check-circle', label: 'Volunteer Verification' },
             { icon: 'clock', label: 'Incident History' },
+            { icon: 'calendar', label: 'Booking History' },
             { icon: 'lock', label: 'Privacy & Security' },
         ],
     },
@@ -119,6 +120,11 @@ export default function ProfileMenuScreen() {
 
         if (item.label === 'Incident History') {
             router.push('/(tabs)/users/standard-user/incident-history');
+            return;
+        }
+
+        if (item.label === 'Booking History') {
+            router.push('/(tabs)/users/standard-user/booking-history' as any);
             return;
         }
 
