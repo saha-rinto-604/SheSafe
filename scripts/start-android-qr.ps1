@@ -16,13 +16,15 @@ $mobileEnvPath = Join-Path $mobileDir ".env"
 function Stop-PortProcess {
   param([int]$Port)
   try {
-    $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if (-not $conns) { Write-Host "  Port $Port is free."; return }
-    foreach ($c in $conns) {
-      $pid_ = $c.OwningProcess
-      if ($pid_ -and $pid_ -ne $PID) {
+    # Use netstat instead of Get-NetTCPConnection (which can hang on some Windows configs)
+    $lines = netstat -ano 2>$null | Select-String ":$Port\s" | Select-String "LISTENING"
+    if (-not $lines) { Write-Host "  Port $Port is free."; return }
+    foreach ($line in $lines) {
+      $parts = ($line -replace '\s+', ' ').Trim().Split(' ')
+      $pid_ = $parts[-1]
+      if ($pid_ -and $pid_ -ne '0' -and $pid_ -ne "$PID") {
         Write-Host "  Stopping PID $pid_ on port $Port..."
-        Stop-Process -Id $pid_ -Force -ErrorAction SilentlyContinue
+        Stop-Process -Id ([int]$pid_) -Force -ErrorAction SilentlyContinue
       }
     }
   } catch {
@@ -32,12 +34,12 @@ function Stop-PortProcess {
 
 function Get-LanIp {
   try {
-    $cfg = Get-NetIPConfiguration |
-      Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.IPv4DefaultGateway -ne $null } |
-      Select-Object -First 1
-    if ($cfg -and $cfg.IPv4Address -and $cfg.IPv4Address.IPAddress) {
-      return $cfg.IPv4Address.IPAddress
-    }
+    # Use ipconfig instead of Get-NetIPConfiguration (which can hang on some Windows configs)
+    $output = ipconfig 2>$null
+    $ip = $output | Select-String 'IPv4 Address' | ForEach-Object {
+      if ($_ -match ':\s*(\d+\.\d+\.\d+\.\d+)') { $matches[1] }
+    } | Where-Object { $_ -ne '127.0.0.1' } | Select-Object -First 1
+    if ($ip) { return $ip }
   } catch {}
   return '127.0.0.1'
 }

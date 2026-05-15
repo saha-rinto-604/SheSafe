@@ -1,12 +1,12 @@
 /**
  * incident-history.tsx — Incident History Screen (Standard User)
  * ──────────────────────────────────────────────────────────────
- * Shows a list of past SOS incidents.
- * Currently renders dummy data — wire to the backend /incidents endpoint
- * once the API is ready; only DUMMY_INCIDENTS needs to be replaced.
+ * Shows a list of past SOS incidents fetched from the backend.
+ * Each incident shows exact location, date/time, and status.
+ * Status: Active (SOS on) | Resolved (completed) | Cancelled
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -14,10 +14,12 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
+    ActivityIndicator,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
@@ -27,35 +29,13 @@ type IncidentStatus = 'Active' | 'Resolved' | 'Cancelled';
 type Incident = {
     id: string;
     incidentNumber: number;
+    latitude: number;
+    longitude: number;
     location: string;
-    occurredAtLabel: string; // human-readable date label until real timestamps arrive
+    occurredAt: string;          // ISO timestamp from backend
+    occurredAtLabel: string;     // Pre-formatted date/time string from backend
     status: IncidentStatus;
 };
-
-// ── Dummy data (replace with API response later) ───────────────────────────────
-const DUMMY_INCIDENTS: Incident[] = [
-    {
-        id: 'inc-204',
-        incidentNumber: 204,
-        location: 'Dhaka',
-        occurredAtLabel: '12 Feb 2026',
-        status: 'Resolved',
-    },
-    {
-        id: 'inc-198',
-        incidentNumber: 198,
-        location: 'Chattogram',
-        occurredAtLabel: '01 Feb 2026',
-        status: 'Cancelled',
-    },
-    {
-        id: 'inc-175',
-        incidentNumber: 175,
-        location: 'Sylhet',
-        occurredAtLabel: '14 Jan 2026',
-        status: 'Active',
-    },
-];
 
 // ── Status badge config ────────────────────────────────────────────────────────
 type StatusStyle = { color: string; bg: string; border: string; dot: string };
@@ -151,7 +131,35 @@ export default function IncidentHistoryScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const incidents = DUMMY_INCIDENTS; // swap with API data later
+    const [incidents, setIncidents] = useState<Incident[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    // ── Fetch incident history from API on mount ────────────────────────
+    useEffect(() => {
+        (async () => {
+            try {
+                const { data } = await api.get('/api/incidents/my');
+                const list: Incident[] = (data?.incidents || []).map((inc: any) => ({
+                    id: String(inc.id),
+                    incidentNumber: Number(inc.incidentNumber || inc.id),
+                    latitude: Number(inc.latitude || 0),
+                    longitude: Number(inc.longitude || 0),
+                    location: inc.location || `${Number(inc.latitude || 0).toFixed(4)}, ${Number(inc.longitude || 0).toFixed(4)}`,
+                    occurredAt: inc.occurredAt || inc.created_at || '',
+                    occurredAtLabel: inc.occurredAtLabel || new Date(inc.occurredAt || inc.created_at).toLocaleString('en-GB', {
+                        day: '2-digit', month: 'short', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit', hour12: true,
+                    }),
+                    status: inc.status as IncidentStatus,
+                }));
+                setIncidents(list);
+            } catch (err) {
+                console.log('[INC_HISTORY] API load failed:', (err as Error).message);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, []);
 
     return (
         <AtmosphericShell>

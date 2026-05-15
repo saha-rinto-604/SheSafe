@@ -45,4 +45,17 @@ async function clearMyHistory(req, res, next) {
   }
 }
 
-module.exports = { report, getZones, getOne, cancel, clearMyHistory };
+/**
+ * GET /api/incidents/my — Get all incidents created by the authenticated user.
+ * Returns incidents with exact location, date/time, and status.
+ */
+async function getMyIncidents(req, res, next) {
+  try {
+    const incidents = await incidentService.getMyIncidents(req.user.id);
+    res.status(200).json({ incidents });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { report, getZones, getOne, cancel, clearMyHistory, getMyIncidents };

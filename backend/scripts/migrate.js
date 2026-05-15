@@ -19,6 +19,7 @@ const MIGRATIONS = [
   'migration_add_chat.sql',
   'migration_add_otp.sql',
   'migration_add_safe_places.sql',
+  'migration_add_profile_and_modules.sql',
 ]; // add new migration files here in order
 
 async function runSqlMigrations(conn) {

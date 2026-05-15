@@ -2,6 +2,8 @@ import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
 
+export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
+
 const ACCESS_KEY = 'resqher_access_token';
 const REFRESH_KEY = 'resqher_refresh_token';
 const IDENTITY_KEY = 'resqher_identity_v1';
@@ -62,8 +64,9 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
   try { return JSON.parse(raw) as StoredIdentity; } catch { return null; }
 }
 
-// Attach token automatically
+// Attach token automatically + debug logger
 api.interceptors.request.use(async (config) => {
+  console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.data ? JSON.stringify(config.data).substring(0, 120) : '');
   const token = await getAccessToken();
   if (token) {
     config.headers = config.headers ?? {};
@@ -118,13 +121,18 @@ export const authService = {
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
     try {
-      await api.post('/api/auth/signup', {
+      const res = await api.post('/api/auth/signup', {
         phoneNumber: phone,
         password,
         firstName,
         lastName,
         role: ROLE_MAP[role] ?? 'standard_user',
       });
+      const { accessToken } = res.data || {};
+      if (accessToken) {
+        await setTokens(accessToken, accessToken);
+      }
+      return res.data;
     } catch (e) {
       throw friendlyError(e);
     }
