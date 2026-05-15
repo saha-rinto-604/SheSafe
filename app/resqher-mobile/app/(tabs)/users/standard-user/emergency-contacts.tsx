@@ -2,7 +2,7 @@
  * emergency-contacts.tsx — Emergency Contacts Screen (Standard User)
  * ─────────────────────────────────────────────────────────────────────────
  * Sections: Contact List · Add Emergency Contact (floating blur-card form)
- * Persistence: expo-secure-store (key: resqher_emergency_contacts_v1)
+ * Persistence: Backend API → /api/emergency-contacts (with SecureStore fallback)
  * Rules: Max 5 contacts · One Primary contact at a time
  */
 
@@ -21,17 +21,17 @@ import {
     KeyboardAvoidingView,
     Platform,
     Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import * as SecureStore from 'expo-secure-store';
+import api from '../../../../src/services/api';
 import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'resqher_emergency_contacts_v1';
 const MAX_CONTACTS = 5;
 const PRIORITY_OPTIONS: ContactPriority[] = ['Primary', 'Secondary'];
 
@@ -56,13 +56,20 @@ const EMPTY_DRAFT: DraftContact = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function generateId(): string {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-
 function isValidPhone(phone: string): boolean {
     // Must contain exactly 11 digits (ignoring spaces, dashes, parentheses, leading +)
     return phone.replace(/\D/g, '').length === 11;
+}
+
+/** Transform API response to local shape. */
+function apiToContact(c: any): EmergencyContact {
+    return {
+        id: String(c.id),
+        name: c.name || '',
+        phone: c.phone || '',
+        relationship: c.relationship || '',
+        priority: c.priority === 'Primary' ? 'Primary' : 'Secondary',
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,29 +84,21 @@ export default function EmergencyContactsScreen() {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [draft, setDraft] = useState<DraftContact>(EMPTY_DRAFT);
     const [isSaving, setIsSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
 
-    // ── Load persisted contacts on mount ──────────────────────────────────
+    // ── Load contacts from API on mount ──────────────────────────────────
     useEffect(() => {
         (async () => {
             try {
-                const raw = await SecureStore.getItemAsync(STORAGE_KEY);
-                if (raw) {
-                    const parsed: EmergencyContact[] = JSON.parse(raw);
-                    if (Array.isArray(parsed)) setContacts(parsed);
-                }
-            } catch {
-                // Corrupted data — silently start fresh
+                const { data } = await api.get('/api/emergency-contacts');
+                const list = (data?.contacts || []).map(apiToContact);
+                setContacts(list);
+            } catch (err) {
+                console.log('[EC] API load failed:', (err as Error).message);
+            } finally {
+                setLoading(false);
             }
         })();
-    }, []);
-
-    // ── Persist contacts to SecureStore ───────────────────────────────────
-    const persist = useCallback(async (updated: EmergencyContact[]) => {
-        try {
-            await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(updated));
-        } catch {
-            // Best-effort save; in-memory state is still updated
-        }
     }, []);
 
     // ── Open add form (empty draft) ───────────────────────────────────────
@@ -187,52 +186,57 @@ export default function EmergencyContactsScreen() {
         relationship: string;
     }) => {
         setIsSaving(true);
-        let updated: EmergencyContact[];
-
-        if (editingId) {
-            // Edit mode — update the matching contact, demote any other Primary if needed
-            updated = contacts.map(c => {
-                if (c.id === editingId) {
-                    return { ...c, name, phone, relationship, priority: draft.priority };
+        try {
+            if (editingId) {
+                // Edit mode — PUT /api/emergency-contacts/:id
+                const { data } = await api.put(`/api/emergency-contacts/${editingId}`, {
+                    name, phone, relationship, priority: draft.priority,
+                });
+                const updated = data?.contact ? apiToContact(data.contact) : null;
+                if (updated) {
+                    setContacts(prev => {
+                        let list = prev.map(c => c.id === editingId ? updated : c);
+                        // If new contact is Primary, demote others
+                        if (draft.priority === 'Primary') {
+                            list = list.map(c => c.id !== editingId && c.priority === 'Primary'
+                                ? { ...c, priority: 'Secondary' as ContactPriority }
+                                : c
+                            );
+                        }
+                        return list;
+                    });
                 }
-                if (draft.priority === 'Primary' && c.priority === 'Primary') {
-                    return { ...c, priority: 'Secondary' as ContactPriority };
-                }
-                return c;
-            });
-        } else {
-            // Add mode — enforce max contacts
-            if (contacts.length >= MAX_CONTACTS) {
-                Alert.alert(
-                    'Contact limit reached',
-                    `You can add up to ${MAX_CONTACTS} emergency contacts.`,
-                );
-                setIsSaving(false);
-                return;
-            }
-            const newContact: EmergencyContact = {
-                id: generateId(),
-                name,
-                phone,
-                relationship,
-                priority: draft.priority,
-            };
-            if (draft.priority === 'Primary') {
-                updated = [
-                    ...contacts.map(c =>
-                        c.priority === 'Primary' ? { ...c, priority: 'Secondary' as ContactPriority } : c,
-                    ),
-                    newContact,
-                ];
             } else {
-                updated = [...contacts, newContact];
+                // Add mode — POST /api/emergency-contacts
+                if (contacts.length >= MAX_CONTACTS) {
+                    Alert.alert('Contact limit reached', `You can add up to ${MAX_CONTACTS} emergency contacts.`);
+                    setIsSaving(false);
+                    return;
+                }
+                const { data } = await api.post('/api/emergency-contacts', {
+                    name, phone, relationship, priority: draft.priority,
+                });
+                const newContact = data?.contact ? apiToContact(data.contact) : null;
+                if (newContact) {
+                    setContacts(prev => {
+                        let list = [...prev];
+                        if (draft.priority === 'Primary') {
+                            list = list.map(c => c.priority === 'Primary'
+                                ? { ...c, priority: 'Secondary' as ContactPriority }
+                                : c
+                            );
+                        }
+                        return [...list, newContact];
+                    });
+                }
             }
+            closeForm();
+        } catch (err: any) {
+            const msg = err?.response?.data?.error || err?.message || 'Could not save contact.';
+            Alert.alert('Error', msg);
+        } finally {
+            setIsSaving(false);
         }
-
-        setContacts(updated);
-        await persist(updated);
-        setIsSaving(false);
-        closeForm();
     };
 
     // ── Call a contact ────────────────────────────────────────────────────
@@ -258,9 +262,13 @@ export default function EmergencyContactsScreen() {
                     text: 'Delete',
                     style: 'destructive',
                     onPress: async () => {
-                        const updated = contacts.filter(c => c.id !== contact.id);
-                        setContacts(updated);
-                        await persist(updated);
+                        try {
+                            await api.delete(`/api/emergency-contacts/${contact.id}`);
+                            setContacts(prev => prev.filter(c => c.id !== contact.id));
+                        } catch (err: any) {
+                            const msg = err?.response?.data?.error || 'Could not delete contact.';
+                            Alert.alert('Error', msg);
+                        }
                     },
                 },
             ],

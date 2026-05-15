@@ -2,7 +2,7 @@
  * volunteer-verification.tsx — Volunteer Verification Screen (Standard User)
  * ─────────────────────────────────────────────────────────────────────────────
  * States: Initial → Form (Upload Docs) → Pending → Verified | Rejected
- * Persistence: expo-secure-store (key: resqher_volunteer_verification_v1)
+ * Persistence: Backend API → /api/verification
  * Upload: expo-image-picker (gallery for ID/Certificate, camera+gallery for Selfie)
  */
 
@@ -22,13 +22,11 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as SecureStore from 'expo-secure-store';
+import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-export const VERIFICATION_KEY = 'resqher_volunteer_verification_v1';
-
+// ── Types ──────────────────────────────────────────────────────────────────
 export type VerificationStatus =
     | 'not_applied'
     | 'draft'
@@ -50,18 +48,20 @@ export type VerificationRecord = {
 const INITIAL_RECORD: VerificationRecord = { status: 'not_applied' };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-export async function loadVerificationRecord(): Promise<VerificationRecord> {
-    try {
-        const raw = await SecureStore.getItemAsync(VERIFICATION_KEY);
-        if (raw) return { ...INITIAL_RECORD, ...JSON.parse(raw) };
-    } catch { /* returns default */ }
-    return { ...INITIAL_RECORD };
-}
 
-async function saveRecord(record: VerificationRecord) {
-    try {
-        await SecureStore.setItemAsync(VERIFICATION_KEY, JSON.stringify(record));
-    } catch { /* best-effort */ }
+/** Transform API response to local shape. */
+function apiToRecord(v: any): VerificationRecord {
+    if (!v) return { ...INITIAL_RECORD };
+    return {
+        status: v.status || 'not_applied',
+        submittedOn: v.submittedAt || v.submitted_at || undefined,
+        documents: {
+            idCardUri: v.idCardUrl || v.id_card_url || undefined,
+            selfieUri: v.selfieUrl || v.selfie_url || undefined,
+            certificateUri: v.certificateUrl || v.certificate_url || undefined,
+        },
+        rejectionReason: v.rejectionReason || v.rejection_reason || undefined,
+    };
 }
 
 function formatDate(iso: string): string {
@@ -70,6 +70,25 @@ function formatDate(iso: string): string {
             day: '2-digit', month: 'short', year: 'numeric',
         });
     } catch { return iso; }
+}
+
+/** Upload a document image to the backend. */
+async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localUri: string): Promise<string | null> {
+    const formData = new FormData();
+    const filename = localUri.split('/').pop() || 'doc.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const mimeType = match ? `image/${match[1]}` : 'image/jpeg';
+
+    formData.append('document', {
+        uri: localUri,
+        name: filename,
+        type: mimeType,
+    } as any);
+
+    const { data } = await api.post(`/api/verification/upload/${type}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data?.url || data?.verification?.[`${type}_url`] || localUri;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -174,35 +193,41 @@ export default function VolunteerVerificationScreen() {
     const [certUri, setCertUri] = useState<string | undefined>();
     const [submitting, setSubmitting] = useState(false);
 
-    // ── Load persisted record on mount ────────────────────────────────────
+    // ── Load verification status from API on mount ────────────────────────
     useEffect(() => {
-        loadVerificationRecord().then(rec => {
-            setRecord(rec);
-            if (rec.status === 'not_applied') {
+        (async () => {
+            try {
+                const { data } = await api.get('/api/verification');
+                const rec = apiToRecord(data?.verification);
+                setRecord(rec);
+                if (rec.status === 'not_applied') {
+                    setViewState('initial');
+                } else if (rec.status === 'draft') {
+                    setIdCardUri(rec.documents?.idCardUri);
+                    setSelfieUri(rec.documents?.selfieUri);
+                    setCertUri(rec.documents?.certificateUri);
+                    setViewState('form');
+                } else {
+                    setViewState('status');
+                }
+            } catch {
+                // API failed — show initial state
                 setViewState('initial');
-            } else if (rec.status === 'draft') {
-                // Restore any saved draft uris
-                setIdCardUri(rec.documents?.idCardUri);
-                setSelfieUri(rec.documents?.selfieUri);
-                setCertUri(rec.documents?.certificateUri);
-                setViewState('form');
-            } else {
-                setViewState('status');
             }
-        });
-    }, []);
-
-    // ── Persist helper ────────────────────────────────────────────────────
-    const persist = useCallback(async (rec: VerificationRecord) => {
-        setRecord(rec);
-        await saveRecord(rec);
+        })();
     }, []);
 
     // ── Actions ──────────────────────────────────────────────────────────
     const handleApply = async () => {
-        const draft: VerificationRecord = { status: 'draft', documents: {} };
-        await persist(draft);
-        setViewState('form');
+        try {
+            const { data } = await api.post('/api/verification/apply');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setViewState('form');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not start application.';
+            Alert.alert('Error', msg);
+        }
     };
 
     const handleSubmit = async () => {
@@ -214,27 +239,38 @@ export default function VolunteerVerificationScreen() {
             return;
         }
         setSubmitting(true);
-        const pendingRecord: VerificationRecord = {
-            status: 'pending',
-            submittedOn: new Date().toISOString(),
-            documents: {
-                idCardUri,
-                selfieUri,
-                certificateUri: certUri,
-            },
-        };
-        await persist(pendingRecord);
-        setSubmitting(false);
-        setViewState('status');
+        try {
+            // Upload documents to backend
+            await uploadDocument('id_card', idCardUri);
+            await uploadDocument('selfie', selfieUri);
+            if (certUri) await uploadDocument('certificate', certUri);
+
+            // Submit for review
+            const { data } = await api.post('/api/verification/submit');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setViewState('status');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not submit verification.';
+            Alert.alert('Error', msg);
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const handleReapply = async () => {
-        const draft: VerificationRecord = { status: 'draft', documents: {} };
-        setIdCardUri(undefined);
-        setSelfieUri(undefined);
-        setCertUri(undefined);
-        await persist(draft);
-        setViewState('form');
+        try {
+            const { data } = await api.post('/api/verification/reapply');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setIdCardUri(undefined);
+            setSelfieUri(undefined);
+            setCertUri(undefined);
+            setViewState('form');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not reapply.';
+            Alert.alert('Error', msg);
+        }
     };
 
     // ── Image picker helpers ──────────────────────────────────────────────
@@ -284,21 +320,7 @@ export default function VolunteerVerificationScreen() {
         ]);
     };
 
-    // ── Persist draft uris whenever images change ─────────────────────────
-    useEffect(() => {
-        if (viewState !== 'form') return;
-        const updated: VerificationRecord = {
-            ...record,
-            status: 'draft',
-            documents: {
-                idCardUri,
-                selfieUri,
-                certificateUri: certUri,
-            },
-        };
-        void saveRecord(updated);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [idCardUri, selfieUri, certUri]);
+    // Draft state is now managed by the API — no local auto-save needed
 
     const canSubmit = !!idCardUri && !!selfieUri;
 
@@ -470,6 +492,7 @@ export default function VolunteerVerificationScreen() {
 
                                 {/* Pending message */}
                                 {record.status === 'pending' && (
+                                    <>
                                     <Section title="What happens next">
                                         <View style={s.infoRow}>
                                             <Feather name="clock" size={15} color={T.accent} />
@@ -486,6 +509,30 @@ export default function VolunteerVerificationScreen() {
                                             </Text>
                                         </View>
                                     </Section>
+
+                                    {/* Edit Documents — reverts pending → draft so user can re-upload */}
+                                    <TouchableOpacity
+                                        style={[s.primaryBtn, s.editDocsBtn]}
+                                        onPress={async () => {
+                                            try {
+                                                const { data } = await api.post('/api/verification/edit');
+                                                const rec = apiToRecord(data?.verification);
+                                                setRecord(rec);
+                                                setIdCardUri(rec.documents?.idCardUri);
+                                                setSelfieUri(rec.documents?.selfieUri);
+                                                setCertUri(rec.documents?.certificateUri);
+                                                setViewState('form');
+                                            } catch (err: any) {
+                                                const msg = err?.response?.data?.message || 'Could not edit documents.';
+                                                Alert.alert('Error', msg);
+                                            }
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Feather name="edit-2" size={17} color={T.violet} />
+                                        <Text style={[s.primaryBtnText, { color: T.violet }]}>Edit Documents</Text>
+                                    </TouchableOpacity>
+                                    </>
                                 )}
 
                                 {/* Verified message */}
@@ -663,6 +710,11 @@ const s = StyleSheet.create({
     },
     reapplyBtn: {
         backgroundColor: T.dangerPressed,
+    },
+    editDocsBtn: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: `${T.violet}40`,
     },
 
     // ── Form intro ────────────────────────────────────────────────────────────

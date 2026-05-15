@@ -45,10 +45,28 @@ async function resetPassword(req, res, next) {
   }
 }
 
+/**
+ * POST /api/auth/change-password — Change password for authenticated user.
+ * Requires JWT + current password confirmation.
+ */
+async function changePassword(req, res, next) {
+  try {
+    const result = await authService.changePassword({
+      userId: req.user.id,
+      currentPassword: req.body.currentPassword,
+      newPassword: req.body.newPassword,
+    });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   signup,
   login,
   getRoles,
   forgotPassword,
   resetPassword,
+  changePassword,
 };

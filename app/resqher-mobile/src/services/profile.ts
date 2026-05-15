@@ -1,15 +1,16 @@
 /**
- * profile.ts — Local user profile service
- * ─────────────────────────────────────────
- * Backs profile fields with SecureStore so Profile Menu, Profile Information,
- * and Edit Profile all read/write the same data.
- * TODO: Replace SecureStore stubs with PATCH / GET /api/v1/users/me/ calls
- *       when the backend profile endpoint is ready.
+ * profile.ts — User Profile Service (API + SecureStore fallback)
+ * ─────────────────────────────────────────────────────────────────
+ * Syncs profile data with the backend via API calls.
+ * Falls back to SecureStore for offline resilience.
+ *
+ * All write operations hit the backend first, then update local cache.
+ * Read operations try API first, then fall back to local cache.
  */
 
 import * as SecureStore from 'expo-secure-store';
+import api from './api';
 import type { Identity, Role } from '../identity/identity.types';
-// import api from './api'; // uncomment when backend is ready
 
 // ── Storage key ──────────────────────────────────────────────────────────────
 export const PROFILE_KEY = 'resqher_user_profile_v1';
@@ -25,7 +26,7 @@ export type UserProfile = {
     bloodGroup: string;
     medicalInfo: string[];
     homeAddress: string;
-    /** Local URI from image picker — cleared when synced to backend */
+    /** Cloudinary URL from backend, or local URI from image picker */
     photoUri: string;
 };
 
@@ -43,8 +44,30 @@ const DEFAULT_PROFILE: UserProfile = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Load profile from SecureStore, filling in defaults for any missing fields. */
-export async function getUserProfile(): Promise<UserProfile> {
+/** Transform backend API response to local UserProfile shape. */
+function apiToProfile(apiUser: any): UserProfile {
+    return {
+        firstName: apiUser.firstName || '',
+        lastName: apiUser.lastName || '',
+        phone: apiUser.phoneNumber || '+880 1XXX-XXXXXX',
+        dobISO: apiUser.dobISO || '',
+        gender: apiUser.gender || '',
+        bloodGroup: apiUser.bloodGroup || '',
+        medicalInfo: Array.isArray(apiUser.medicalInfo) ? apiUser.medicalInfo : [],
+        homeAddress: apiUser.homeAddress || '',
+        photoUri: apiUser.photoUrl || '',
+    };
+}
+
+/** Cache profile locally for offline access. */
+async function cacheLocally(profile: UserProfile): Promise<void> {
+    try {
+        await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(profile));
+    } catch { /* best-effort cache */ }
+}
+
+/** Load cached profile from SecureStore. */
+async function loadFromCache(): Promise<UserProfile> {
     try {
         const raw = await SecureStore.getItemAsync(PROFILE_KEY);
         if (raw) {
@@ -56,14 +79,80 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 /**
- * Merge patch into the stored profile and persist.
- * Returns the updated profile.
- * TODO: also call PATCH /api/v1/users/me/ with the patch fields when backend is ready.
+ * Fetch profile from backend API.
+ * Falls back to local cache if API is unreachable.
+ */
+export async function getUserProfile(): Promise<UserProfile> {
+    try {
+        const { data } = await api.get('/api/users/me');
+        if (data?.user) {
+            const profile = apiToProfile(data.user);
+            await cacheLocally(profile);
+            return profile;
+        }
+    } catch (err) {
+        console.log('[PROFILE] API fetch failed, using local cache:', (err as Error).message);
+    }
+    return loadFromCache();
+}
+
+/**
+ * Save profile to backend API, then update local cache.
+ * Sends PATCH /api/users/me with changed fields.
  */
 export async function saveUserProfile(patch: Partial<UserProfile>): Promise<UserProfile> {
-    const current = await getUserProfile();
-    const updated: UserProfile = { ...current, ...patch };
-    await SecureStore.setItemAsync(PROFILE_KEY, JSON.stringify(updated));
+    const { data } = await api.patch('/api/users/me', {
+        firstName: patch.firstName,
+        lastName: patch.lastName,
+        phoneNumber: patch.phone,
+        dobISO: patch.dobISO,
+        gender: patch.gender,
+        bloodGroup: patch.bloodGroup,
+        medicalInfo: patch.medicalInfo,
+        homeAddress: patch.homeAddress,
+    });
+
+    if (data?.user) {
+        const profile = apiToProfile(data.user);
+        await cacheLocally(profile);
+        return profile;
+    }
+
+    throw new Error('Unexpected response from server.');
+}
+
+/**
+ * Upload profile photo to backend.
+ * POST /api/users/me/photo (multipart/form-data)
+ */
+export async function uploadProfilePhoto(localUri: string): Promise<UserProfile> {
+    const formData = new FormData();
+    const filename = localUri.split('/').pop() || 'photo.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+    formData.append('photo', {
+        uri: localUri,
+        name: filename,
+        type,
+    } as any);
+
+    try {
+        const { data } = await api.post('/api/users/me/photo', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        if (data?.user) {
+            const profile = apiToProfile(data.user);
+            await cacheLocally(profile);
+            return profile;
+        }
+    } catch (err) {
+        console.log('[PROFILE] Photo upload failed:', (err as Error).message);
+    }
+    // Fallback: store local URI
+    const current = await loadFromCache();
+    const updated = { ...current, photoUri: localUri };
+    await cacheLocally(updated);
     return updated;
 }
 
@@ -88,8 +177,6 @@ export function formatDob(isoDate: string): string {
 }
 
 // ── Identity-layer bridge ────────────────────────────────────────────────────
-// Converts a local UserProfile into the Identity shape consumed by AuthContext.
-// The "id" and "role" come from the auth layer, not from SecureStore.
 export function toIdentity(
     profile: UserProfile,
     id: string | null,

@@ -142,4 +142,26 @@ async function cancelAllByUser(userId) {
   return { cancelled: result.affectedRows };
 }
 
-module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser };
+/**
+ * Fetch all incidents created by a specific user.
+ * Returns exact location (lat/lng + address), exact date/time, and status.
+ * Ordered by most recent first.
+ *
+ * Status mapping for the frontend:
+ *   ACTIVE    → SOS is currently active
+ *   RESOLVED  → SOS was resolved/completed
+ *   CANCELLED → SOS was cancelled by the user
+ */
+async function getMyIncidents(userId) {
+  return query(
+    `SELECT i.id, i.user_id, i.latitude, i.longitude, i.address,
+            i.status, i.created_at
+     FROM incidents i
+     WHERE i.user_id = ?
+     ORDER BY i.created_at DESC`,
+    [userId]
+  );
+}
+
+module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, getMyIncidents };
+

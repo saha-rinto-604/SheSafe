@@ -14,7 +14,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   signIn: (username: string, password: string) => Promise<void>;
-  signUp: (phone: string, password: string, firstName: string, lastName: string, role?: Role) => Promise<void>;
+  signUp: (phone: string, password: string, firstName: string, lastName: string, role?: Role) => Promise<{ role: Role }>;
   signOut: () => Promise<void>;
   refreshIdentity: () => Promise<void>;
 };
@@ -70,10 +70,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn: async (username: string, password: string) => {
         setIsLoading(true);
         try {
+          console.log('[AUTH_CTX] signIn called with phone:', username);
           const token = await authService.login(username, password);
+          console.log('[AUTH_CTX] signIn token received:', token ? 'yes' : 'no');
           setAccessToken(token);
           // Role and userId are decoded from the JWT and stored by setTokens()
           const identity = await getStoredIdentity();
+          console.log('[AUTH_CTX] signIn identity:', identity);
           const resolvedRole: Role = (identity?.role as Role) ?? 'USER';
           setRole(resolvedRole);
           setUserId(identity?.userId ?? null);
@@ -82,17 +85,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
       },
-      signUp: async (phone: string, password: string, firstName: string, lastName: string, signUpRole: Role = 'USER') => {
+      signUp: async (phone: string, password: string, firstName: string, lastName: string, signUpRole: Role = 'USER'): Promise<{ role: Role }> => {
         setIsLoading(true);
         try {
+          console.log('[AUTH_CTX] signUp called:', { phone, signUpRole });
           await authService.register(phone, password, firstName, lastName, signUpRole);
-          const token = await authService.login(phone, password);
+          // register() now stores the token via setTokens() — read it back
+          let token = await getAccessToken();
+          if (!token) {
+            // Fallback: login explicitly if register didn't store a token
+            console.log('[AUTH_CTX] No token from register, falling back to login');
+            token = await authService.login(phone, password);
+          }
           setAccessToken(token);
           const identity = await getStoredIdentity();
           const resolvedRole: Role = (identity?.role as Role) ?? signUpRole;
+          console.log('[AUTH_CTX] signUp resolved role:', resolvedRole, 'identity:', identity);
           setRole(resolvedRole);
           setUserId(identity?.userId ?? null);
           await hydrateIdentity(resolvedRole);
+          return { role: resolvedRole };
         } finally {
           setIsLoading(false);
         }

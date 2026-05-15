@@ -15,12 +15,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as SecureStore from 'expo-secure-store';
-import { VERIFICATION_KEY } from './volunteer-verification';
 import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
+import api from '../../../../src/services/api';
 
 type MenuItem = {
     label: string;
@@ -77,13 +76,13 @@ export default function ProfileMenuScreen() {
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
-            SecureStore.getItemAsync(VERIFICATION_KEY).then(raw => {
-                if (!raw) return;
-                try {
-                    const rec = JSON.parse(raw);
-                    setIsVerifiedVolunteer(rec?.status === 'verified');
-                } catch { /* ignore */ }
-            });
+            api.get('/api/verification')
+                .then(({ data }) => {
+                    setIsVerifiedVolunteer(data?.verification?.status === 'verified');
+                })
+                .catch(() => {
+                    setIsVerifiedVolunteer(false);
+                });
         }, []),
     );
 

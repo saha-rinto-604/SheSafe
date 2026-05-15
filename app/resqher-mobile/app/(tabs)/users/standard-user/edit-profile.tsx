@@ -28,7 +28,7 @@ import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import { getUserProfile, saveUserProfile } from '../../../../src/services/profile';
+import { getUserProfile, saveUserProfile, uploadProfilePhoto } from '../../../../src/services/profile';
 
 // ─── Blood group & gender options ────────────────────────────────────────────
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -197,7 +197,6 @@ export default function EditProfileScreen() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            // TODO: also call PATCH /api/v1/users/me/ when backend is ready
             await saveUserProfile({
                 firstName, lastName, phone, dobISO, gender, bloodGroup, medicalInfo, homeAddress, photoUri,
             });
@@ -226,7 +225,15 @@ export default function EditProfileScreen() {
             quality: 0.85,
         });
         if (!result.canceled && result.assets?.[0]?.uri) {
-            setPhotoUri(result.assets[0].uri);
+            const localUri = result.assets[0].uri;
+            setPhotoUri(localUri);
+            // Upload to backend in the background
+            try {
+                const updated = await uploadProfilePhoto(localUri);
+                if (updated.photoUri) setPhotoUri(updated.photoUri);
+            } catch (err) {
+                console.log('[EDIT_PROFILE] Photo upload failed, keeping local URI');
+            }
         }
     };
 
