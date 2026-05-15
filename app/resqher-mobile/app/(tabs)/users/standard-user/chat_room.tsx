@@ -13,11 +13,12 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable, Alert,
+    Modal, Pressable, Alert, BackHandler,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as SecureStore from 'expo-secure-store';
 
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -30,9 +31,12 @@ import { T, R, S, Ty } from '../../../../src/constants/theme';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
 import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 import { incidentService } from '../../../../src/services/incidentService';
+import { chatService } from '../../../../src/services/chatService';
+import { incidentHistory } from '../../../../src/services/incidentHistory';
+import { notificationStore } from '../../../../src/services/notificationStore';
+import { useAuth } from '../../../../src/context/AuthContext';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
-const SELF_ID = 'self';
 const MAP_STRIP_HEIGHT = 180;
 
 // ─── Mock Incidents (lookup) ────────────────────────────────────────────────
@@ -420,7 +424,7 @@ function FloatingInput({ onSend, onPhoto, onAudio, bottomInset }: {
 }
 
 // ─── Read-Only Archive Pill (RESOLVED state) ────────────────────────────────
-function ArchivePill({ bottomInset }: { bottomInset: number }) {
+function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete: () => void }) {
     return (
         <View style={[st.archiveOuter, { paddingBottom: Math.max(bottomInset, S.s4) }]}>
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
@@ -429,6 +433,10 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
                     <Text style={st.archiveText}>Incident Archived — Case Read-Only</Text>
                 </View>
             </BlurView>
+            <TouchableOpacity style={st.archiveDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
+                <Feather name="trash-2" size={14} color="#FF453A" />
+                <Text style={st.archiveDeleteText}>Delete Incident</Text>
+            </TouchableOpacity>
         </View>
     );
 }
@@ -437,31 +445,46 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { userId } = useAuth();
     const {
         incidentId: rawIncidentId,
         autoMessage,
         userLat,
         userLng,
         userAddress,
+        joinMode,
     } = useLocalSearchParams<{
         incidentId: string;
         autoMessage?: string;
         userLat?: string;
         userLng?: string;
         userAddress?: string;
+        joinMode?: string;
     }>();
     const incidentId = rawIncidentId || 'inc-001';
+    const isJoiner = joinMode === 'true';
     const autoSent = useRef(false);
 
+    // Block hardware back during an active SOS session
+    useFocusEffect(
+        useCallback(() => {
+            if (autoMessage !== 'true') return;
+            const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+            return () => sub.remove();
+        }, [autoMessage])
+    );
+
     // Live backend data
-    const { messages, sendMessage } = useChatSocket(incidentId);
+    const { messages, sendMessage, isConnected } = useChatSocket(incidentId, userId ?? undefined);
 
     const [incident, setIncident] = useState<Incident | null>(null);
     const flatRef = useRef<FlatList>(null);
     const isLive = (incident?.status ?? 'LIVE') === 'LIVE';
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
 
-    // Load incident metadata
+    const isRealIncident = !!incidentId && !incidentId.startsWith('temp-') && incidentId !== 'sos-new';
+
+    // Load incident metadata and join as participant
     useEffect(() => {
         incidentService.getOne(incidentId)
             .then((raw) => {
@@ -481,27 +504,39 @@ export default function ChatRoom() {
             .catch(() => {
                 setIncident(MOCK_INCIDENTS[incidentId] ?? MOCK_INCIDENTS['inc-001']);
             });
+
+        if (isRealIncident) {
+            chatService.joinIncident(incidentId).catch(() => {});
+        }
     }, [incidentId]);
 
-    // Auto-send location + help message when chat opens from SOS trigger
+    // Auto-send location + help message when chat opens from SOS trigger.
+    // Checks SecureStore directly (1200ms after mount) to avoid race conditions
+    // where two useEffects compete to set/read the same ref.
     useEffect(() => {
-        if (autoMessage !== 'true' || autoSent.current) return;
-        const lat = parseFloat(userLat ?? '');
-        const lng = parseFloat(userLng ?? '');
-        const hasCoords = isFinite(lat) && isFinite(lng);
-        const locationText = hasCoords
-            ? `📍 My location: ${lat.toFixed(5)}, ${lng.toFixed(5)}${userAddress ? ` (${userAddress})` : ''}`
-            : '📍 Location not available';
+        if (autoMessage !== 'true') return;
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            if (cancelled) return;
+            // If we already sent for this incidentId, skip
+            const sentFor = await SecureStore.getItemAsync('resqher_sos_autosent_v1');
+            if (sentFor === incidentId) { autoSent.current = true; return; }
 
-        // Short delay so the socket has time to connect before sending
-        const timer = setTimeout(() => {
+            const lat = parseFloat(userLat ?? '');
+            const lng = parseFloat(userLng ?? '');
+            const hasCoords = isFinite(lat) && isFinite(lng);
+            const locationText = hasCoords
+                ? `📍 My location: ${lat.toFixed(5)}, ${lng.toFixed(5)}${userAddress ? ` (${userAddress})` : ''}`
+                : '📍 Location not available';
+
             sendMessage('🆘 SOS ALERT — I need immediate help!', 'TEXT');
-            setTimeout(() => sendMessage(locationText, 'TEXT'), 600);
+            setTimeout(() => { if (!cancelled) sendMessage(locationText, 'TEXT'); }, 600);
             autoSent.current = true;
+            await SecureStore.setItemAsync('resqher_sos_autosent_v1', incidentId);
         }, 1200);
-        return () => clearTimeout(timer);
+        return () => { cancelled = true; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [autoMessage]);
+    }, [autoMessage, incidentId]);
 
     // Auto-scroll on new messages
     useEffect(() => {
@@ -557,9 +592,120 @@ export default function ChatRoom() {
         }
     }, [sendMessage]);
 
+    const selfId = userId ?? 'self';
+    const chatTitle = incident
+        ? `${incident.type} · ${caseLabel(incident.id, incident.createdAt)}`
+        : DEFAULT_GROUP_CHAT_NAME;
+
+    const isSOSSession = autoMessage === 'true';
+
+    const clearSOSAndLeave = useCallback(async () => {
+        await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+        router.replace('/(tabs)/users/standard-user/sos_screen' as any);
+    }, [router]);
+
+    const afterAction = useCallback(() => {
+        setHeaderMenuOpen(false);
+        if (isSOSSession) {
+            router.replace('/(tabs)/users/standard-user/sos_screen' as any);
+        } else {
+            router.back();
+        }
+    }, [isSOSSession, router]);
+
+    const handleResolve = useCallback(() => {
+        Alert.alert(
+            'Mark as Resolved',
+            'This will close the incident and notify all participants.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Resolve', onPress: async () => {
+                        try {
+                            if (isRealIncident) await incidentService.resolveIncident(incidentId);
+                        } catch { /* best-effort */ }
+                        await incidentHistory.updateStatus(incidentId, 'RESOLVED');
+                        await notificationStore.add({
+                            type: 'incident_resolved',
+                            title: 'Incident Resolved',
+                            body: `Incident ${incidentId} has been marked as resolved`,
+                            incidentId,
+                        });
+                        await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+                        await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+                        afterAction();
+                    },
+                },
+            ]
+        );
+    }, [incidentId, isRealIncident, afterAction]);
+
+    const handleCloseIncident = useCallback(() => {
+        Alert.alert(
+            'Close Incident',
+            'Cancel this incident and remove it from active chats.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Close', style: 'destructive', onPress: async () => {
+                        try {
+                            if (isRealIncident) await incidentService.cancelIncident(incidentId);
+                        } catch { /* best-effort */ }
+                        await incidentHistory.updateStatus(incidentId, 'CANCELLED');
+                        await notificationStore.add({
+                            type: 'incident_cancelled',
+                            title: 'Incident Closed',
+                            body: `Incident ${incidentId} has been cancelled`,
+                            incidentId,
+                        });
+                        await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+                        await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+                        afterAction();
+                    },
+                },
+            ]
+        );
+    }, [incidentId, isRealIncident, afterAction]);
+
+    const handleDeleteIncident = useCallback(() => {
+        Alert.alert(
+            'Delete Incident',
+            'This will permanently remove this chat from your history.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete', style: 'destructive', onPress: async () => {
+                        await incidentHistory.remove(incidentId);
+                        router.back();
+                    },
+                },
+            ]
+        );
+    }, [incidentId, router]);
+
+    const handleBack = useCallback(() => {
+        Haptics.selectionAsync();
+        if (isSOSSession) {
+            Alert.alert(
+                'Leave Emergency Chat?',
+                'This is an active SOS session. Are you sure you want to leave?',
+                [
+                    { text: 'Stay', style: 'cancel' },
+                    {
+                        text: 'Leave', style: 'destructive',
+                        onPress: () => router.replace('/(tabs)/users/standard-user/sos_screen' as any),
+                    },
+                ]
+            );
+        } else {
+            router.back();
+        }
+    }, [isSOSSession, router]);
+
     const renderMessage = useCallback(({ item }: { item: Message }) => (
-        <PillBubble msg={item} isOwn={item.sender.id === SELF_ID} />
-    ), []);
+        <PillBubble msg={item} isOwn={item.sender.id === selfId} />
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ), [selfId]);
 
     return (
         <AtmosphericShell>
@@ -574,7 +720,7 @@ export default function ChatRoom() {
                             {/* ── LEFT ZONE (Navigation & Profile) ── */}
                             <View style={st.headerLeft}>
                                 <TouchableOpacity
-                                    onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                                    onPress={handleBack}
                                     hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                                     style={st.headerBtn}
                                     activeOpacity={0.7}
@@ -584,7 +730,7 @@ export default function ChatRoom() {
 
                                 <View style={st.headerTitleBlock}>
                                     <Text style={st.headerTitle} numberOfLines={1}>
-                                        {DEFAULT_GROUP_CHAT_NAME}
+                                        {chatTitle}
                                     </Text>
                                     <View style={st.headerMeta}>
                                         <View style={[
@@ -595,6 +741,10 @@ export default function ChatRoom() {
                                                 {isLive ? 'LIVE' : 'ARCHIVED'}
                                             </Text>
                                         </View>
+                                        <View style={st.connPill}>
+                                            <View style={[st.connDot, { backgroundColor: isConnected ? T.success : T.ink5 }]} />
+                                            <Text style={st.connTxt}>{isConnected ? 'Connected' : 'Reconnecting…'}</Text>
+                                        </View>
                                     </View>
                                 </View>
                             </View>
@@ -604,7 +754,7 @@ export default function ChatRoom() {
                                 <TouchableOpacity
                                     style={st.liveMapCircularBtn}
                                     activeOpacity={0.7}
-                                    onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                                    onPress={handleBack}
                                 >
                                     <View style={[StyleSheet.absoluteFill, st.liveMapCircularBg]} />
                                     <Feather name="map" size={18} color="#FFFFFF" />
@@ -626,6 +776,26 @@ export default function ChatRoom() {
 
                 {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
                 <View style={{ marginTop: 12 }} />
+
+                {/* ── SOS Action Bar — visible only for active SOS sessions ── */}
+                {isSOSSession && (
+                    <View style={st.sosActionBar}>
+                        <View style={st.sosActivePill}>
+                            <View style={st.sosActiveDot} />
+                            <Text style={st.sosActiveText}>ACTIVE SOS</Text>
+                        </View>
+                        <View style={st.sosActionBtns}>
+                            <TouchableOpacity style={st.resolveBtn} onPress={handleResolve} activeOpacity={0.8}>
+                                <Feather name="check-circle" size={13} color="#34C759" />
+                                <Text style={st.resolveBtnText}>Resolve</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={st.closeIncidentBtn} onPress={handleCloseIncident} activeOpacity={0.8}>
+                                <Feather name="x-circle" size={13} color="#FF453A" />
+                                <Text style={st.closeIncidentBtnText}>Close</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                )}
 
                 {/* ── Messages + Input ────────────────────── */}
                 <KeyboardAvoidingView
@@ -656,7 +826,7 @@ export default function ChatRoom() {
                     {isLive ? (
                         <FloatingInput onSend={handleSend} onPhoto={handleSendPhoto} onAudio={handleSendAudio} bottomInset={insets.bottom} />
                     ) : (
-                        <ArchivePill bottomInset={insets.bottom} />
+                        <ArchivePill bottomInset={insets.bottom} onDelete={handleDeleteIncident} />
                     )}
                 </KeyboardAvoidingView>
 
@@ -675,25 +845,52 @@ export default function ChatRoom() {
 
                             <View style={st.headerMenuDivider} />
 
-                            <TouchableOpacity
-                                style={st.headerMenuRow}
-                                activeOpacity={0.7}
-                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); }}
-                            >
-                                <Feather name="edit-2" size={16} color="#FFFFFF" />
-                                <Text style={st.headerMenuText}>Edit Case Details</Text>
-                            </TouchableOpacity>
+                            {isLive ? (
+                                <>
+                                    {!isJoiner && (
+                                        <>
+                                            <TouchableOpacity
+                                                style={st.headerMenuRow}
+                                                activeOpacity={0.7}
+                                                onPress={handleResolve}
+                                            >
+                                                <Feather name="check-circle" size={16} color="#34C759" />
+                                                <Text style={[st.headerMenuText, { color: '#34C759' }]}>Mark as Resolved</Text>
+                                            </TouchableOpacity>
 
-                            <View style={st.headerMenuDivider} />
+                                            <View style={st.headerMenuDivider} />
 
-                            <TouchableOpacity
-                                style={st.headerMenuRow}
-                                activeOpacity={0.7}
-                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); }}
-                            >
-                                <Feather name="x-circle" size={16} color="#FF453A" />
-                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Leave Dispatch</Text>
-                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={st.headerMenuRow}
+                                                activeOpacity={0.7}
+                                                onPress={handleCloseIncident}
+                                            >
+                                                <Feather name="x-circle" size={16} color="#FF453A" />
+                                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Close Incident</Text>
+                                            </TouchableOpacity>
+                                        </>
+                                    )}
+                                    {isJoiner && (
+                                        <TouchableOpacity
+                                            style={st.headerMenuRow}
+                                            activeOpacity={0.7}
+                                            onPress={() => { setHeaderMenuOpen(false); router.back(); }}
+                                        >
+                                            <Feather name="log-out" size={16} color={T.ink3} />
+                                            <Text style={st.headerMenuText}>Leave Chat</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </>
+                            ) : (
+                                <TouchableOpacity
+                                    style={st.headerMenuRow}
+                                    activeOpacity={0.7}
+                                    onPress={() => { setHeaderMenuOpen(false); handleDeleteIncident(); }}
+                                >
+                                    <Feather name="trash-2" size={16} color="#FF453A" />
+                                    <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Delete Incident</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </Pressable>
                 </Modal>
@@ -705,6 +902,74 @@ export default function ChatRoom() {
 // ─── Styles ─────────────────────────────────────────────────────────────────
 const st = StyleSheet.create({
     root: { flex: 1 },
+
+    // ── SOS Action Bar
+    sosActionBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginHorizontal: S.s3,
+        marginBottom: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,69,58,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,69,58,0.25)',
+    },
+    sosActivePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    sosActiveDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: '#FF453A',
+    },
+    sosActiveText: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: '#FF453A',
+        letterSpacing: 1,
+    },
+    sosActionBtns: {
+        flexDirection: 'row',
+        gap: 8,
+    },
+    resolveBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: 'rgba(52,199,89,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(52,199,89,0.30)',
+    },
+    resolveBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#34C759',
+    },
+    closeIncidentBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: 'rgba(255,69,58,0.10)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,69,58,0.28)',
+    },
+    closeIncidentBtnText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#FF453A',
+    },
 
     // ── Floating Capsule Header — glassmorphism, inset from edges
     headerOuter: {
@@ -1157,6 +1422,7 @@ const st = StyleSheet.create({
         paddingHorizontal: S.s4,
         paddingTop: S.s2,
         alignItems: 'center',
+        gap: 10,
     },
     archiveBlur: {
         borderRadius: R.pill,
@@ -1177,6 +1443,22 @@ const st = StyleSheet.create({
         fontWeight: '600',
         color: T.ink4,
         letterSpacing: 0.2,
+    },
+    archiveDeleteBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: R.pill,
+        backgroundColor: 'rgba(255,69,58,0.10)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,69,58,0.28)',
+    },
+    archiveDeleteText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#FF453A',
     },
 
     // ── Empty
@@ -1200,5 +1482,23 @@ const st = StyleSheet.create({
     emptyChatText: {
         ...Ty.bodySm,
         color: T.ink4,
+    },
+
+    // ── Connection status pill (header subtitle row)
+    connPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    connDot: {
+        width: 5,
+        height: 5,
+        borderRadius: 2.5,
+    },
+    connTxt: {
+        fontSize: 9,
+        fontWeight: '600',
+        color: T.ink5,
+        letterSpacing: 0.3,
     },
 });

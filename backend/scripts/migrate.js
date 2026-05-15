@@ -21,6 +21,7 @@ const MIGRATIONS = [
   'migration_add_safe_places.sql',
   'migration_add_profile_and_modules.sql',
   'seed_medical.sql',        // idempotent — INSERT IGNORE
+  'seed_incidents_demo.sql', // idempotent — WHERE NOT EXISTS
 ]; // add new migration files here in order
 
 async function runSqlMigrations(conn) {

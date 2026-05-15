@@ -1,4 +1,4 @@
-// ─── ResQher Medical Module — Seeded Mock Data ──────────────────────────────
+// ─── ResQher Medical Module — Mock Data ──────────────────────────────
 // Dhaka context — specialists, hospitals, ambulances, pharmacies, others
 // V4.0 — Rich provider data for all categories with map coordinates
 

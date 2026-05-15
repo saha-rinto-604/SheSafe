@@ -202,7 +202,7 @@ async function run() {
 
                 await query(
                     "INSERT INTO incidents (user_id, latitude, longitude, address, status, created_at) VALUES (?, ?, ?, ?, 'ACTIVE', DATE_SUB(DATE_SUB(NOW(), INTERVAL ? HOUR), INTERVAL ? MINUTE))",
-                    [randUserId, zone.latitude + latDiff, zone.longitude + lngDiff, zone.name + " (Seeded)", randHours, randMins]
+                    [randUserId, zone.latitude + latDiff, zone.longitude + lngDiff, zone.name, randHours, randMins]
                 );
             }
         }
