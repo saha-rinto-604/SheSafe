@@ -4,7 +4,7 @@
  * Entry point for Account Security and Privacy sub-screens.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
@@ -12,15 +12,12 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
-    Alert,
-    ActivityIndicator,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import api from '../../../../src/services/api';
 
 // ── Nav item definition ───────────────────────────────────────────────────────
 type NavRoute =
@@ -100,85 +97,10 @@ function Section({
     );
 }
 
-// ── Danger action button ──────────────────────────────────────────────────────
-function DangerAction({
-    icon, label, description, onPress, loading,
-}: {
-    icon: React.ComponentProps<typeof Feather>['name'];
-    label: string;
-    description: string;
-    onPress: () => void;
-    loading?: boolean;
-}) {
-    return (
-        <TouchableOpacity style={s.dangerRow} onPress={onPress} activeOpacity={0.75} disabled={loading}>
-            <View style={s.dangerIconBox}>
-                {loading
-                    ? <ActivityIndicator size="small" color={T.danger} />
-                    : <Feather name={icon} size={17} color={T.danger} />
-                }
-            </View>
-            <View style={s.rowContent}>
-                <Text style={s.dangerLabel}>{label}</Text>
-                <Text style={s.rowDesc}>{description}</Text>
-            </View>
-            <Feather name="chevron-right" size={15} color={T.ink4} />
-        </TouchableOpacity>
-    );
-}
-
 // ── Screen ────────────────────────────────────────────────────────────────────
 export default function PrivacySecurityScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const [deletingSafePlaces, setDeletingSafePlaces] = useState(false);
-    const [deletingHistory, setDeletingHistory] = useState(false);
-
-    const handleDeleteSafePlaces = () => {
-        Alert.alert(
-            'Delete Safe Place Reports',
-            'This will permanently remove all safe place reports you submitted. Green zone markers from your reports will be removed from the map.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete', style: 'destructive', onPress: async () => {
-                        setDeletingSafePlaces(true);
-                        try {
-                            await api.delete('/api/safe-places/my');
-                            Alert.alert('Done', 'Your safe place reports have been deleted.');
-                        } catch {
-                            Alert.alert('Error', 'Failed to delete. Please try again.');
-                        } finally {
-                            setDeletingSafePlaces(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleClearSosHistory = () => {
-        Alert.alert(
-            'Clear SOS History',
-            'This will cancel all your active incidents and clear your SOS history from the map.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Clear', style: 'destructive', onPress: async () => {
-                        setDeletingHistory(true);
-                        try {
-                            await api.delete('/api/incidents/my');
-                            Alert.alert('Done', 'Your SOS history has been cleared.');
-                        } catch {
-                            Alert.alert('Error', 'Failed to clear. Please try again.');
-                        } finally {
-                            setDeletingHistory(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
 
     return (
         <AtmosphericShell>
@@ -204,28 +126,6 @@ export default function PrivacySecurityScreen() {
                 >
                     <Section title="Account Security" items={ACCOUNT_ITEMS} />
                     <Section title="Privacy" items={PRIVACY_ITEMS} />
-
-                    {/* ── My Data ── */}
-                    <View style={s.section}>
-                        <Text style={s.sectionLabel}>My Data</Text>
-                        <View style={s.sectionCard}>
-                            <DangerAction
-                                icon="map-pin"
-                                label="Delete Safe Place Reports"
-                                description="Remove all green zone markers you submitted"
-                                onPress={handleDeleteSafePlaces}
-                                loading={deletingSafePlaces}
-                            />
-                            <View style={s.divider} />
-                            <DangerAction
-                                icon="alert-circle"
-                                label="Clear SOS & Incident History"
-                                description="Cancel active incidents and remove your SOS history from the map"
-                                onPress={handleClearSosHistory}
-                                loading={deletingHistory}
-                            />
-                        </View>
-                    </View>
                 </ScrollView>
             </View>
         </AtmosphericShell>
@@ -308,21 +208,5 @@ const s = StyleSheet.create({
     rowLabel: { fontSize: 14, fontWeight: '600', color: T.ink },
     rowDesc: { fontSize: 12, fontWeight: '400', color: T.ink4, marginTop: 2 },
 
-    dangerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 14,
-        paddingHorizontal: S.s4,
-        gap: 12,
-    },
-    dangerIconBox: {
-        width: 34,
-        height: 34,
-        borderRadius: R.sm,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: `${T.danger}14`,
-    },
-    dangerLabel: { fontSize: 14, fontWeight: '600', color: T.danger },
 });
 

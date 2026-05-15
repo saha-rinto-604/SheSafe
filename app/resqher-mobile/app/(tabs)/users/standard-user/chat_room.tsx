@@ -13,7 +13,7 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable
+    Modal, Pressable, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import { Audio } from 'expo-av';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
@@ -324,7 +326,12 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
 
 // ─── Floating Glass Pill Input ──────────────────────────────────────────────
-function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void; bottomInset: number }) {
+function FloatingInput({ onSend, onPhoto, onAudio, bottomInset }: {
+    onSend: (text: string) => void;
+    onPhoto?: () => void;
+    onAudio?: () => void;
+    bottomInset: number;
+}) {
     const [text, setText] = useState('');
     const [isAttachMenuVisible, setAttachMenuVisible] = useState(false);
     const inputRef = useRef<TextInput>(null);
@@ -346,21 +353,10 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
                     <TouchableOpacity
                         style={st.attachOptionRow}
                         activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
+                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); onAudio?.(); }}
                     >
                         <Feather name="mic" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Audio Note</Text>
-                    </TouchableOpacity>
-
-                    <View style={st.attachOptionDivider} />
-
-                    <TouchableOpacity
-                        style={st.attachOptionRow}
-                        activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
-                    >
-                        <Feather name="video" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Video Evidence</Text>
+                        <Text style={st.attachOptionText}>Voice Note</Text>
                     </TouchableOpacity>
 
                     <View style={st.attachOptionDivider} />
@@ -368,10 +364,10 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
                     <TouchableOpacity
                         style={[st.attachOptionRow, { paddingBottom: 12 }]}
                         activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
+                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); onPhoto?.(); }}
                     >
                         <Feather name="image" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Photo</Text>
+                        <Text style={st.attachOptionText}>Send Photo</Text>
                     </TouchableOpacity>
                 </View>
             )}
@@ -441,8 +437,21 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { incidentId: rawIncidentId } = useLocalSearchParams<{ incidentId: string }>();
+    const {
+        incidentId: rawIncidentId,
+        autoMessage,
+        userLat,
+        userLng,
+        userAddress,
+    } = useLocalSearchParams<{
+        incidentId: string;
+        autoMessage?: string;
+        userLat?: string;
+        userLng?: string;
+        userAddress?: string;
+    }>();
     const incidentId = rawIncidentId || 'inc-001';
+    const autoSent = useRef(false);
 
     // Live backend data
     const { messages, sendMessage } = useChatSocket(incidentId);
@@ -470,10 +479,29 @@ export default function ChatRoom() {
                 });
             })
             .catch(() => {
-                // Fallback to mock if backend unreachable
                 setIncident(MOCK_INCIDENTS[incidentId] ?? MOCK_INCIDENTS['inc-001']);
             });
     }, [incidentId]);
+
+    // Auto-send location + help message when chat opens from SOS trigger
+    useEffect(() => {
+        if (autoMessage !== 'true' || autoSent.current) return;
+        const lat = parseFloat(userLat ?? '');
+        const lng = parseFloat(userLng ?? '');
+        const hasCoords = isFinite(lat) && isFinite(lng);
+        const locationText = hasCoords
+            ? `📍 My location: ${lat.toFixed(5)}, ${lng.toFixed(5)}${userAddress ? ` (${userAddress})` : ''}`
+            : '📍 Location not available';
+
+        // Short delay so the socket has time to connect before sending
+        const timer = setTimeout(() => {
+            sendMessage('🆘 SOS ALERT — I need immediate help!', 'TEXT');
+            setTimeout(() => sendMessage(locationText, 'TEXT'), 600);
+            autoSent.current = true;
+        }, 1200);
+        return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoMessage]);
 
     // Auto-scroll on new messages
     useEffect(() => {
@@ -484,6 +512,49 @@ export default function ChatRoom() {
 
     const handleSend = useCallback((text: string) => {
         sendMessage(text, 'TEXT');
+    }, [sendMessage]);
+
+    const handleSendPhoto = useCallback(async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission needed', 'Allow photo library access to send photos.');
+            return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            quality: 0.7,
+            allowsEditing: false,
+        });
+        if (!result.canceled && result.assets[0]?.uri) {
+            sendMessage(result.assets[0].uri, 'IMAGE');
+        }
+    }, [sendMessage]);
+
+    const handleSendAudio = useCallback(async () => {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission needed', 'Allow microphone access to record audio.');
+            return;
+        }
+        try {
+            await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+            const { recording } = await Audio.Recording.createAsync(
+                Audio.RecordingOptionsPresets.HIGH_QUALITY
+            );
+            // Record for max 30 s, then stop automatically
+            Alert.alert(
+                'Recording…',
+                'Tap OK to stop and send the voice note.',
+                [{ text: 'Send', onPress: async () => {
+                    await recording.stopAndUnloadAsync();
+                    const uri = recording.getURI();
+                    if (uri) sendMessage(uri, 'AUDIO');
+                }}],
+                { cancelable: false }
+            );
+        } catch {
+            Alert.alert('Error', 'Could not start recording.');
+        }
     }, [sendMessage]);
 
     const renderMessage = useCallback(({ item }: { item: Message }) => (
@@ -583,7 +654,7 @@ export default function ChatRoom() {
 
                     {/* ── Input or Archive Pill ───────────── */}
                     {isLive ? (
-                        <FloatingInput onSend={handleSend} bottomInset={insets.bottom} />
+                        <FloatingInput onSend={handleSend} onPhoto={handleSendPhoto} onAudio={handleSendAudio} bottomInset={insets.bottom} />
                     ) : (
                         <ArchivePill bottomInset={insets.bottom} />
                     )}

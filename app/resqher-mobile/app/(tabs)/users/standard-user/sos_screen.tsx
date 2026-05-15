@@ -556,16 +556,7 @@ export default function SOSScreen() {
         }, []),
     );
 
-    // Navigate to chat room once emergency is live (countdown reached 0)
-    useEffect(() => {
-        if (isEmergencyLive && activeIncidentId) {
-            router.push({
-                pathname: '/(tabs)/users/standard-user/chat_room',
-                params: { incidentId: activeIncidentId },
-            } as any);
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isEmergencyLive]);
+    // (navigation now happens immediately inside triggerSOS, not here)
 
     // Load persisted SOS cancel timer setting on mount
     useEffect(() => {
@@ -647,28 +638,52 @@ export default function SOSScreen() {
         });
     }, []);
 
-    // SOS logic
+    // SOS logic — create incident then open chat room immediately
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-        // Create incident in DB immediately so zone appears on the map
-        if (userLoc) {
-            incidentService.createIncident({
-                latitude: userLoc.latitude,
-                longitude: userLoc.longitude,
-                address: address || undefined,
-            })
+
+        const lat = userLoc?.latitude;
+        const lng = userLoc?.longitude;
+
+        if (lat && lng) {
+            incidentService.createIncident({ latitude: lat, longitude: lng, address: address || undefined })
                 .then((incident) => {
-                    setActiveIncidentId(String(incident.id));
-                    // Refresh zones so the new incident zone appears
+                    const incidentId = String(incident.id);
+                    setActiveIncidentId(incidentId);
                     incidentService.getZones().then(setZones).catch(() => {});
+                    // Navigate to chat room immediately
+                    router.push({
+                        pathname: '/(tabs)/users/standard-user/chat_room',
+                        params: {
+                            incidentId,
+                            autoMessage: 'true',
+                            userLat: String(lat),
+                            userLng: String(lng),
+                            userAddress: address || '',
+                        },
+                    } as any);
                 })
                 .catch(() => {
-                    // Incident creation failed — SOS still active locally
+                    // Backend unreachable — still open chat with a temp id
+                    const tempId = `temp-${Date.now()}`;
+                    router.push({
+                        pathname: '/(tabs)/users/standard-user/chat_room',
+                        params: {
+                            incidentId: tempId,
+                            autoMessage: 'true',
+                            userLat: String(lat),
+                            userLng: String(lng),
+                            userAddress: address || '',
+                        },
+                    } as any);
                 });
+        } else {
+            // No location yet — open chat room without incident id
+            router.push({ pathname: '/(tabs)/users/standard-user/chat_room', params: { incidentId: 'sos-new', autoMessage: 'true' } } as any);
         }
-    }, [cancelDuration, userLoc, address]);
+    }, [cancelDuration, userLoc, address, router]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;

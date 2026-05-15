@@ -15,8 +15,10 @@ import React, { useState, useRef, useCallback, useMemo, useEffect, memo } from '
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
     Dimensions, Platform, ScrollView, ViewStyle, Image,
+    Modal, TextInput, Alert, KeyboardAvoidingView,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +28,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as Linking from 'expo-linking';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
@@ -75,11 +78,11 @@ const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: st
 
 // ── Provider pin config per icon key ─────────────────────────────────────────
 const PROVIDER_PIN = {
-    medkit:  { icon: 'medkit',        color: '#8A38F6' }, // specialists — violet
-    business:{ icon: 'business',      color: '#2563EB' }, // hospitals   — blue
-    car:     { icon: 'car-sport',     color: '#F97316' }, // ambulances  — orange
-    bandage: { icon: 'bandage',       color: '#10B981' }, // pharmacies  — green
-    flask:   { icon: 'flask',         color: '#0891B2' }, // diagnostics — teal
+    medkit:  { icon: 'medkit',   color: '#8A38F6' },
+    business:{ icon: 'business', color: '#8A38F6' },
+    car:     { icon: 'car-sport',color: '#8A38F6' },
+    bandage: { icon: 'bandage',  color: '#8A38F6' },
+    flask:   { icon: 'flask',    color: '#8A38F6' },
 } as const;
 
 // ── Tactical Map Style ────────────────────────────────────────────────────
@@ -178,26 +181,29 @@ const QuickChipRow = memo(function QuickChipRow({
             contentContainerStyle={st.chipRowContent}
             style={st.chipRow}
         >
-            {chips.map(chip => (
-                <TouchableOpacity
-                    key={chip.id}
-                    style={[st.chip, selected === chip.id && st.chipActive]}
-                    onPress={() => {
-                        Haptics.selectionAsync();
-                        onSelect(chip.id);
-                    }}
-                    activeOpacity={0.7}
-                >
-                    <Ionicons
-                        name={chip.icon as any}
-                        size={14}
-                        color={selected === chip.id ? T.violet : D.muted}
-                    />
-                    <Text style={[st.chipText, selected === chip.id && st.chipTextActive]}>
-                        {chip.label}
-                    </Text>
-                </TouchableOpacity>
-            ))}
+            {chips.map(chip => {
+                const isActive = selected === chip.id;
+                return (
+                    <TouchableOpacity
+                        key={chip.id}
+                        style={[st.chip, isActive && st.chipActive]}
+                        onPress={() => { Haptics.selectionAsync(); onSelect(chip.id); }}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={chip.icon as any}
+                            size={13}
+                            color={isActive ? '#fff' : D.muted}
+                        />
+                        <Text style={[st.chipText, isActive && st.chipTextActive]}>
+                            {chip.label}
+                        </Text>
+                        {isActive && (
+                            <Ionicons name="checkmark" size={12} color="#fff" />
+                        )}
+                    </TouchableOpacity>
+                );
+            })}
         </ScrollView>
     );
 });
@@ -230,35 +236,218 @@ function generateSafeRoute(
 // MOCK PROVIDERS — Fallback when backend is unavailable
 // ═══════════════════════════════════════════════════════════════════════════════
 const MOCK_PROVIDERS: any[] = [
-    // Specialists
-    { id: 'doc-001', type: 'specialists', name: 'Dr. Anika Sultana', degree: 'MBBS, FCPS (Cardiology)', hospital: 'Evercare Hospital', specialty: 'Cardiologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8173, longitude: 90.4280, rating: 4.9, affiliation: 'Evercare Hospital Dhaka' },
-    { id: 'doc-002', type: 'specialists', name: 'Dr. Rafiq Hasan', degree: 'MBBS, MD (Neurology)', hospital: 'United Hospital', specialty: 'Neurologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7926, longitude: 90.4167, rating: 4.7, affiliation: 'United Hospital Ltd.' },
-    { id: 'doc-003', type: 'specialists', name: 'Dr. Tasneem Akhter', degree: 'MBBS, MS (Orthopedics)', hospital: 'Popular Diagnostic Centre', specialty: 'Orthopedic Surgeon', shift: 'now', safeRouteVerified: false, bookingUrl: 'https://www.populardiagnostic.com/appointment', latitude: 23.7465, longitude: 90.3747, rating: 4.5, affiliation: 'Popular Diagnostic Centre' },
-    { id: 'doc-004', type: 'specialists', name: 'Dr. Kabir Ahmed', degree: 'MBBS, FCPS (Gynecology)', hospital: 'Evercare Hospital', specialty: 'Gynecologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8180, longitude: 90.4275, rating: 4.8, affiliation: 'Evercare Hospital Dhaka' },
-    { id: 'doc-005', type: 'specialists', name: 'Dr. Nusrat Jahan', degree: 'MBBS, DCH (Pediatrics)', hospital: 'United Hospital', specialty: 'Pediatrician', shift: 'now', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7935, longitude: 90.4175, rating: 4.9, affiliation: 'United Hospital Ltd.' },
-    { id: 'doc-006', type: 'specialists', name: 'Dr. Faisal Rahman', degree: 'MBBS, FCPS (Dermatology)', hospital: 'Ibn Sina Hospital', specialty: 'Dermatologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.ibnsinatrust.com/appointment', latitude: 23.7450, longitude: 90.3730, rating: 4.6, affiliation: 'Ibn Sina Trust' },
-    // Hospitals
-    { id: 'hosp-001', type: 'hospital', name: 'Evercare Hospital', address: 'Plot 81, Block E, Bashundhara R/A, Dhaka', latitude: 23.8173, longitude: 90.4280, bookingUrl: 'https://www.evercaredhaka.com/appointments', safeRouteVerified: true, rating: 4.8, affiliation: 'Evercare Group' },
-    { id: 'hosp-002', type: 'hospital', name: 'United Hospital', address: 'Plot 15, Road 71, Gulshan, Dhaka', latitude: 23.7926, longitude: 90.4167, bookingUrl: 'https://www.uhlbd.com/appointment', safeRouteVerified: true, rating: 4.7, affiliation: 'United Group' },
-    { id: 'hosp-003', type: 'hospital', name: 'Popular Diagnostic Centre', address: 'House 16, Road 2, Dhanmondi, Dhaka', latitude: 23.7465, longitude: 90.3747, bookingUrl: 'https://www.populardiagnostic.com/appointment', safeRouteVerified: false, rating: 4.5, affiliation: 'Popular Group' },
-    { id: 'hosp-004', type: 'hospital', name: 'Ibn Sina Hospital', address: 'House 48, Road 9/A, Dhanmondi, Dhaka', latitude: 23.7450, longitude: 90.3730, bookingUrl: 'https://www.ibnsinatrust.com/appointment', safeRouteVerified: true, rating: 4.6, affiliation: 'Ibn Sina Trust' },
-    // Ambulances
+    // Specialists (14)
+    { id: 'doc-001', type: 'specialists', name: 'Dr. Anika Sultana', degree: 'MBBS, FCPS (Cardiology)', specialty: 'Cardiologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8173, longitude: 90.4280, rating: 4.9, affiliation: 'Evercare Hospital Dhaka' },
+    { id: 'doc-002', type: 'specialists', name: 'Dr. Rafiq Hasan', degree: 'MBBS, MD (Neurology)', specialty: 'Neurologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7926, longitude: 90.4167, rating: 4.7, affiliation: 'United Hospital Ltd.' },
+    { id: 'doc-003', type: 'specialists', name: 'Dr. Tasneem Akhter', degree: 'MBBS, MS (Orthopedics)', specialty: 'Orthopedic Surgeon', shift: 'now', safeRouteVerified: false, bookingUrl: 'https://www.populardiagnostic.com/appointment', latitude: 23.7465, longitude: 90.3747, rating: 4.5, affiliation: 'Popular Diagnostic Centre' },
+    { id: 'doc-004', type: 'specialists', name: 'Dr. Kabir Ahmed', degree: 'MBBS, FCPS (Gynecology)', specialty: 'Gynecologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.evercaredhaka.com/appointments', latitude: 23.8180, longitude: 90.4275, rating: 4.8, affiliation: 'Evercare Hospital Dhaka' },
+    { id: 'doc-005', type: 'specialists', name: 'Dr. Nusrat Jahan', degree: 'MBBS, DCH (Pediatrics)', specialty: 'Pediatrician', shift: 'now', safeRouteVerified: true, bookingUrl: 'https://www.uhlbd.com/appointment', latitude: 23.7935, longitude: 90.4175, rating: 4.9, affiliation: 'United Hospital Ltd.' },
+    { id: 'doc-006', type: 'specialists', name: 'Dr. Faisal Rahman', degree: 'MBBS, FCPS (Dermatology)', specialty: 'Dermatologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.ibnsinatrust.com/appointment', latitude: 23.7450, longitude: 90.3730, rating: 4.6, affiliation: 'Ibn Sina Trust' },
+    { id: 'doc-007', type: 'specialists', name: 'Dr. Shirin Begum', degree: 'MBBS, MD (Psychiatry)', specialty: 'Psychiatrist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.nimhbd.org/', latitude: 23.7780, longitude: 90.3770, rating: 4.6, affiliation: 'NIMH Dhaka' },
+    { id: 'doc-008', type: 'specialists', name: 'Dr. Mahbub Alam', degree: 'MBBS, MS (General Surgery)', specialty: 'General Surgeon', shift: 'now', safeRouteVerified: true, bookingUrl: 'https://dmch.gov.bd/', latitude: 23.7260, longitude: 90.3985, rating: 4.5, affiliation: 'DMCH' },
+    { id: 'doc-009', type: 'specialists', name: 'Dr. Roksana Islam', degree: 'MBBS, FCPS (Ophthalmology)', specialty: 'Eye Specialist', shift: 'morning', safeRouteVerified: false, bookingUrl: null, latitude: 23.7612, longitude: 90.4002, rating: 4.4, affiliation: 'Eye Care BD' },
+    { id: 'doc-010', type: 'specialists', name: 'Dr. Tariq Morshed', degree: 'MBBS, MD (Endocrinology)', specialty: 'Endocrinologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://www.birdem-general-hospital.com/', latitude: 23.7388, longitude: 90.3940, rating: 4.8, affiliation: 'BIRDEM Hospital' },
+    { id: 'doc-011', type: 'specialists', name: 'Dr. Parvin Sultana', degree: 'MBBS, FCPS (Rheumatology)', specialty: 'Rheumatologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://www.squarehospital.com/', latitude: 23.7512, longitude: 90.3815, rating: 4.7, affiliation: 'Square Hospital Ltd.' },
+    { id: 'doc-012', type: 'specialists', name: 'Dr. Aminul Islam', degree: 'MBBS, DLO (ENT)', specialty: 'ENT Specialist', shift: 'now', safeRouteVerified: false, bookingUrl: null, latitude: 23.8040, longitude: 90.3660, rating: 4.3, affiliation: 'Mirpur ENT Centre' },
+    { id: 'doc-013', type: 'specialists', name: 'Dr. Laila Anjum', degree: 'MBBS, MD (Oncology)', specialty: 'Oncologist', shift: 'morning', safeRouteVerified: true, bookingUrl: 'https://ahsaniamissioncancerhospital.com/', latitude: 23.7895, longitude: 90.3780, rating: 4.9, affiliation: 'Ahsania Mission' },
+    { id: 'doc-014', type: 'specialists', name: 'Dr. Zubayer Chowdhury', degree: 'MBBS, FCPS (Urology)', specialty: 'Urologist', shift: 'evening', safeRouteVerified: true, bookingUrl: 'https://labaid.com.bd/', latitude: 23.7480, longitude: 90.3755, rating: 4.5, affiliation: 'Labaid Group' },
+    // Hospitals (10)
+    { id: 'hosp-001', type: 'hospital', name: 'Evercare Hospital', address: 'Plot 81, Block E, Bashundhara R/A', latitude: 23.8173, longitude: 90.4280, bookingUrl: 'https://www.evercaredhaka.com/appointments', safeRouteVerified: true, rating: 4.8, affiliation: 'Evercare Group' },
+    { id: 'hosp-002', type: 'hospital', name: 'United Hospital', address: 'Plot 15, Road 71, Gulshan', latitude: 23.7926, longitude: 90.4167, bookingUrl: 'https://www.uhlbd.com/appointment', safeRouteVerified: true, rating: 4.7, affiliation: 'United Group' },
+    { id: 'hosp-003', type: 'hospital', name: 'Popular Diagnostic Centre', address: 'House 16, Road 2, Dhanmondi', latitude: 23.7465, longitude: 90.3747, bookingUrl: 'https://www.populardiagnostic.com/appointment', safeRouteVerified: false, rating: 4.5, affiliation: 'Popular Group' },
+    { id: 'hosp-004', type: 'hospital', name: 'Ibn Sina Hospital', address: 'House 48, Road 9/A, Dhanmondi', latitude: 23.7450, longitude: 90.3730, bookingUrl: 'https://www.ibnsinatrust.com/appointment', safeRouteVerified: true, rating: 4.6, affiliation: 'Ibn Sina Trust' },
+    { id: 'hosp-005', type: 'hospital', name: 'Dhaka Medical College Hospital', address: 'Bakshibazar, Dhaka 1000', latitude: 23.7260, longitude: 90.3985, bookingUrl: 'https://dmch.gov.bd/', safeRouteVerified: true, rating: 4.4, affiliation: 'Government' },
+    { id: 'hosp-006', type: 'hospital', name: 'Square Hospital', address: 'West Panthapath, Dhaka', latitude: 23.7512, longitude: 90.3815, bookingUrl: 'https://www.squarehospital.com/', safeRouteVerified: true, rating: 4.7, affiliation: 'Square Group' },
+    { id: 'hosp-007', type: 'hospital', name: 'Labaid Specialized Hospital', address: 'House 1, Road 4, Dhanmondi', latitude: 23.7480, longitude: 90.3755, bookingUrl: 'https://labaid.com.bd/', safeRouteVerified: true, rating: 4.5, affiliation: 'Labaid Group' },
+    { id: 'hosp-008', type: 'hospital', name: 'BIRDEM General Hospital', address: 'Shahbag, Dhaka', latitude: 23.7388, longitude: 90.3940, bookingUrl: 'https://www.birdem-general-hospital.com/', safeRouteVerified: true, rating: 4.6, affiliation: 'BIRDEM' },
+    { id: 'hosp-009', type: 'hospital', name: 'Mugda Medical College Hospital', address: 'Mugda, Dhaka', latitude: 23.7334, longitude: 90.4310, bookingUrl: null, safeRouteVerified: false, rating: 4.1, affiliation: 'Government' },
+    { id: 'hosp-010', type: 'hospital', name: 'Shaheed Suhrawardy Medical College', address: 'Sher-E-Bangla Nagar, Dhaka', latitude: 23.7770, longitude: 90.3755, bookingUrl: null, safeRouteVerified: true, rating: 4.3, affiliation: 'Government' },
+    // Ambulances (10)
     { id: 'amb-001', type: 'ambulance', name: 'Evercare Ambulance', ambulanceType: 'icu_ccu', contactNumber: '+880-1711-000001', eta: '8 min', safeRouteVerified: true, latitude: 23.8165, longitude: 90.4270, rating: 4.9, affiliation: 'Evercare Hospital' },
     { id: 'amb-002', type: 'ambulance', name: 'United Rapid Response', ambulanceType: 'ac', contactNumber: '+880-1711-000002', eta: '12 min', safeRouteVerified: true, latitude: 23.7940, longitude: 90.4160, rating: 4.7, affiliation: 'United Hospital' },
     { id: 'amb-003', type: 'ambulance', name: 'Red Crescent Ambulance', ambulanceType: 'standard', contactNumber: '+880-1711-000003', eta: '15 min', safeRouteVerified: false, latitude: 23.8100, longitude: 90.4220, rating: 4.3, affiliation: 'Bangladesh Red Crescent' },
     { id: 'amb-004', type: 'ambulance', name: 'Bashundhara Medical', ambulanceType: 'standard', contactNumber: '+880-1711-000004', eta: '10 min', safeRouteVerified: true, latitude: 23.8120, longitude: 90.4240, rating: 4.4, affiliation: 'Bashundhara Group' },
     { id: 'amb-005', type: 'ambulance', name: 'Praava Health ICU', ambulanceType: 'icu_ccu', contactNumber: '+880-1711-000005', eta: '18 min', safeRouteVerified: true, latitude: 23.7950, longitude: 90.4030, rating: 4.8, affiliation: 'Praava Health' },
-    // Diagnostics
-    { id: 'diag-001', type: 'diagnostics', name: 'Popular Diagnostic Centre', address: 'Bashundhara R/A Branch, Dhaka', bookingUrl: 'https://www.populardiagnostic.com/', safeRouteVerified: true, latitude: 23.8130, longitude: 90.4255, rating: 4.6, affiliation: 'Popular Group' },
-    { id: 'diag-002', type: 'diagnostics', name: 'Ibn Sina Diagnostic', address: 'Gulshan Branch, Dhaka', bookingUrl: 'https://www.ibnsinatrust.com/', safeRouteVerified: true, latitude: 23.7900, longitude: 90.4140, rating: 4.5, affiliation: 'Ibn Sina Trust' },
-    { id: 'diag-003', type: 'diagnostics', name: 'Praava Health Lab', address: 'Banani, Dhaka', bookingUrl: 'https://praavahealth.com/', safeRouteVerified: false, latitude: 23.7945, longitude: 90.4035, rating: 4.7, affiliation: 'Praava Health' },
-    // Pharmacies
+    { id: 'amb-006', type: 'ambulance', name: 'DMCH Emergency Ambulance', ambulanceType: 'standard', contactNumber: '+880-1711-000006', eta: '20 min', safeRouteVerified: true, latitude: 23.7265, longitude: 90.3990, rating: 4.2, affiliation: 'Dhaka Medical College' },
+    { id: 'amb-007', type: 'ambulance', name: 'Square Hospital Ambulance', ambulanceType: 'ac', contactNumber: '+880-1711-000007', eta: '14 min', safeRouteVerified: true, latitude: 23.7508, longitude: 90.3820, rating: 4.6, affiliation: 'Square Hospital' },
+    { id: 'amb-008', type: 'ambulance', name: 'Ibn Sina ICU Ambulance', ambulanceType: 'icu_ccu', contactNumber: '+880-1711-000008', eta: '11 min', safeRouteVerified: true, latitude: 23.7455, longitude: 90.3738, rating: 4.7, affiliation: 'Ibn Sina Trust' },
+    { id: 'amb-009', type: 'ambulance', name: 'Mirpur Fire & Rescue EMS', ambulanceType: 'standard', contactNumber: '+880-1711-000009', eta: '22 min', safeRouteVerified: false, latitude: 23.8060, longitude: 90.3690, rating: 4.0, affiliation: 'Fire Service BD' },
+    { id: 'amb-010', type: 'ambulance', name: 'Gulshan Emergency Care', ambulanceType: 'ac', contactNumber: '+880-1711-000010', eta: '9 min', safeRouteVerified: true, latitude: 23.7840, longitude: 90.4120, rating: 4.5, affiliation: 'Gulshan Clinic' },
+    // Pharmacies (7)
     { id: 'pharm-001', type: 'pharmacy', name: 'Lazz Pharma', address: 'Bashundhara R/A, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100001', safeRouteVerified: true, latitude: 23.8140, longitude: 90.4260, rating: 4.5, affiliation: 'Lazz Group' },
     { id: 'pharm-002', type: 'pharmacy', name: 'ACME Pharmacy', address: 'Gulshan 2, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100002', safeRouteVerified: true, latitude: 23.7920, longitude: 90.4150, rating: 4.4, affiliation: 'ACME Laboratories' },
     { id: 'pharm-003', type: 'pharmacy', name: 'Model Pharmacy', address: 'Vatara, Dhaka', isDeliveryAvailable: false, contactNumber: '+880-1711-100003', safeRouteVerified: false, latitude: 23.8090, longitude: 90.4190, rating: 4.2, affiliation: 'Independent' },
+    { id: 'pharm-004', type: 'pharmacy', name: 'Nipa Drug House', address: 'Dhanmondi 27, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100004', safeRouteVerified: true, latitude: 23.7465, longitude: 90.3760, rating: 4.3, affiliation: 'Independent' },
+    { id: 'pharm-005', type: 'pharmacy', name: 'Gonoshasthaya Pharmacy', address: 'Panthapath, Dhaka', isDeliveryAvailable: false, contactNumber: '+880-1711-100005', safeRouteVerified: true, latitude: 23.7512, longitude: 90.3820, rating: 4.6, affiliation: 'Gonoshasthaya Kendra' },
+    { id: 'pharm-006', type: 'pharmacy', name: 'Popular Pharmacy', address: 'Bakshibazar, Dhaka', isDeliveryAvailable: false, contactNumber: '+880-1711-100006', safeRouteVerified: false, latitude: 23.7260, longitude: 90.3985, rating: 4.1, affiliation: 'Popular Group' },
+    { id: 'pharm-007', type: 'pharmacy', name: 'Square Pharmacy', address: 'Gulshan 1, Dhaka', isDeliveryAvailable: true, contactNumber: '+880-1711-100007', safeRouteVerified: true, latitude: 23.7935, longitude: 90.4175, rating: 4.7, affiliation: 'Square Group' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── BookingModal ─────────────────────────────────────────────────────────────
+const BOOKINGS_KEY = 'resqher_bookings_v1';
+
+function BookingModal({
+    provider, visible, done, onDone, onClose,
+}: {
+    provider: any;
+    visible: boolean;
+    done: boolean;
+    onDone: () => void;
+    onClose: () => void;
+}) {
+    const [name, setName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [date, setDate] = useState('');
+    const [time, setTime] = useState('');
+    const [reason, setReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+
+    const canSubmit = name.trim() && phone.trim() && date.trim() && time.trim();
+
+    const handleSubmit = async () => {
+        if (!canSubmit) return;
+        setSubmitting(true);
+        try {
+            const existing = await SecureStore.getItemAsync(BOOKINGS_KEY);
+            const list: any[] = existing ? JSON.parse(existing) : [];
+            const booking = {
+                id: `bk-${Date.now()}`,
+                providerName: provider.name,
+                providerType: provider.type || provider.provider_type,
+                affiliation: provider.affiliation || '',
+                patientName: name.trim(),
+                phone: phone.trim(),
+                date: date.trim(),
+                time: time.trim(),
+                reason: reason.trim(),
+                bookedAt: new Date().toISOString(),
+            };
+            list.unshift(booking);
+            await SecureStore.setItemAsync(BOOKINGS_KEY, JSON.stringify(list));
+            onDone();
+        } catch {
+            Alert.alert('Error', 'Could not save booking. Please try again.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    if (done) {
+        return (
+            <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+                <View style={bm.backdrop}>
+                    <View style={bm.card}>
+                        <View style={bm.successIcon}>
+                            <Ionicons name="checkmark-circle" size={52} color="#10B981" />
+                        </View>
+                        <Text style={bm.successTitle}>Booking Confirmed!</Text>
+                        <Text style={bm.successSub}>
+                            Your appointment with {provider.name} has been requested for {date} at {time}.
+                            {'\n'}You will receive a confirmation shortly.
+                        </Text>
+                        <TouchableOpacity style={bm.successBtn} onPress={onClose} activeOpacity={0.85}>
+                            <Text style={bm.successBtnTxt}>Done</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+        );
+    }
+
+    return (
+        <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose}>
+            <KeyboardAvoidingView
+                style={bm.backdrop}
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+                <View style={bm.card}>
+                    {/* Header */}
+                    <View style={bm.header}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={bm.headerTitle}>Book Appointment</Text>
+                            <Text style={bm.headerSub} numberOfLines={1}>{provider.name} · {provider.affiliation || ''}</Text>
+                        </View>
+                        <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                            <Ionicons name="close" size={22} color="rgba(255,255,255,0.5)" />
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                        {[
+                            { label: 'Full Name *', value: name, onChange: setName, placeholder: 'Enter your full name', keyboard: 'default' as const },
+                            { label: 'Phone Number *', value: phone, onChange: setPhone, placeholder: '01XXXXXXXXX', keyboard: 'phone-pad' as const },
+                            { label: 'Preferred Date *', value: date, onChange: setDate, placeholder: 'e.g. 20 Jun 2026', keyboard: 'default' as const },
+                            { label: 'Preferred Time *', value: time, onChange: setTime, placeholder: 'e.g. 10:30 AM', keyboard: 'default' as const },
+                            { label: 'Reason / Chief Complaint', value: reason, onChange: setReason, placeholder: 'Brief description of your concern', keyboard: 'default' as const },
+                        ].map(field => (
+                            <View key={field.label} style={bm.fieldWrap}>
+                                <Text style={bm.fieldLabel}>{field.label}</Text>
+                                <TextInput
+                                    style={bm.fieldInput}
+                                    value={field.value}
+                                    onChangeText={field.onChange}
+                                    placeholder={field.placeholder}
+                                    placeholderTextColor="rgba(255,255,255,0.3)"
+                                    keyboardType={field.keyboard}
+                                    autoCapitalize="words"
+                                    selectionColor={T.violet}
+                                />
+                            </View>
+                        ))}
+                        <Text style={bm.note}>* Required fields. Booking requests are reviewed by the provider.</Text>
+                    </ScrollView>
+
+                    <TouchableOpacity
+                        style={[bm.submitBtn, !canSubmit && bm.submitBtnDisabled]}
+                        onPress={handleSubmit}
+                        disabled={!canSubmit || submitting}
+                        activeOpacity={0.85}
+                    >
+                        <Ionicons name="calendar-outline" size={16} color="#fff" style={{ marginRight: 6 }} />
+                        <Text style={bm.submitBtnTxt}>{submitting ? 'Booking…' : 'Confirm Booking'}</Text>
+                    </TouchableOpacity>
+                </View>
+            </KeyboardAvoidingView>
+        </Modal>
+    );
+}
+
+const bm = StyleSheet.create({
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+    card: {
+        backgroundColor: '#120C26', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+        paddingHorizontal: 20, paddingTop: 20, paddingBottom: 36,
+        maxHeight: '90%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    header: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
+    headerTitle: { fontSize: 18, fontWeight: '800', color: '#fff', letterSpacing: -0.3 },
+    headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 },
+    fieldWrap: { marginBottom: 14 },
+    fieldLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.5)', letterSpacing: 0.5, marginBottom: 6 },
+    fieldInput: {
+        height: 46, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+        backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 14,
+        fontSize: 14, fontWeight: '600', color: '#fff',
+    },
+    note: { fontSize: 11, color: 'rgba(255,255,255,0.3)', marginBottom: 18, lineHeight: 16 },
+    submitBtn: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+        backgroundColor: T.violet, borderRadius: 14, height: 50,
+        marginTop: 4,
+    },
+    submitBtnDisabled: { backgroundColor: 'rgba(138,56,246,0.35)' },
+    submitBtnTxt: { fontSize: 15, fontWeight: '700', color: '#fff', letterSpacing: 0.2 },
+    successIcon: { alignItems: 'center', paddingTop: 12, paddingBottom: 8 },
+    successTitle: { fontSize: 22, fontWeight: '800', color: '#fff', textAlign: 'center', marginBottom: 10 },
+    successSub: { fontSize: 14, color: 'rgba(255,255,255,0.55)', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+    successBtn: {
+        backgroundColor: '#10B981', borderRadius: 14, height: 50,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    successBtnTxt: { fontSize: 15, fontWeight: '700', color: '#fff' },
+});
+
 // MedicalMapView — Main Screen
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function MedicalMapView() {
@@ -273,11 +462,40 @@ export default function MedicalMapView() {
 
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [selectedChip, setSelectedChip] = useState('all');
+    // Reset chip filter whenever category changes
+    useEffect(() => { setSelectedChip('all'); }, [category]);
+
+    // Auto-zoom map to show all filtered provider pins when chip or category changes
+    useEffect(() => {
+        if (!mapRef.current || sortedProviders.length === 0) return;
+        const coords = sortedProviders
+            .filter(p => p.latitude && p.longitude && p.latitude !== 0 && p.longitude !== 0)
+            .map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) }));
+        if (coords.length === 0) return;
+
+        const delay = setTimeout(() => {
+            if (coords.length === 1) {
+                mapRef.current?.animateToRegion(
+                    { latitude: coords[0].latitude, longitude: coords[0].longitude, latitudeDelta: 0.018, longitudeDelta: 0.018 },
+                    600
+                );
+            } else {
+                mapRef.current?.fitToCoordinates(coords, {
+                    edgePadding: { top: 140, right: 60, bottom: 320, left: 60 },
+                    animated: true,
+                });
+            }
+        }, 300);
+        return () => clearTimeout(delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedChip, category]);
     const [selectedPin, setSelectedPin] = useState<string | null>(null);
     const [showCallout, setShowCallout] = useState(false);
     const [safeRoute, setSafeRoute] = useState<{ latitude: number; longitude: number }[] | null>(null);
     const [returnFromWebView, setReturnFromWebView] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [bookingModalOpen, setBookingModalOpen] = useState(false);
+    const [bookingDone, setBookingDone] = useState(false);
     // Start with MOCK_PROVIDERS so pins are visible immediately.
     // Backend data replaces mock data if the server has seeded records.
     const [backendProviders, setBackendProviders] = useState<any[]>(MOCK_PROVIDERS);
@@ -502,19 +720,13 @@ export default function MedicalMapView() {
         handlePinPress(sortedProviders[newIdx].id);
     }, [selectedPin, sortedProviders, handlePinPress]);
 
-    // ── Book Now → WebView ──────────────────────────────────────────────────
+    // ── Book Now → open in-app booking modal ───────────────────────────────
     const handleBookNow = useCallback(() => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        router.push({
-            pathname: '/(tabs)/users/standard-user/HospitalBookingWebView',
-            params: {
-                bookingUrl: selectedProvider.bookingUrl,
-                hospitalName: selectedProvider.name,
-                returnToMap: 'true',
-            },
-        } as any);
-    }, [selectedProvider, router]);
+        setBookingDone(false);
+        setBookingModalOpen(true);
+    }, [selectedProvider]);
 
     // ── Nav press ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
@@ -559,24 +771,33 @@ export default function MedicalMapView() {
                     {sortedProviders.map(p => {
                         const isSelected = selectedPin === p.id;
                         const cfg = PROVIDER_PIN[p.icon as keyof typeof PROVIDER_PIN] ?? PROVIDER_PIN.medkit;
+                        const pinSize = isSelected ? 52 : 42;
+                        const iconSize = isSelected ? 24 : 20;
                         return (
                             <Marker
                                 key={p.id}
                                 coordinate={{ latitude: p.latitude, longitude: p.longitude }}
                                 onPress={() => handlePinPress(p.id)}
-                                tracksViewChanges={false}
+                                tracksViewChanges={isSelected}
                                 anchor={{ x: 0.5, y: 0.5 }}
                             >
-                                <View style={[
-                                    st.providerPin,
-                                    { backgroundColor: isSelected ? cfg.color : `${cfg.color}CC`, borderColor: isSelected ? '#fff' : cfg.color },
-                                    isSelected && st.providerPinSelected,
-                                ]}>
-                                    <Ionicons
-                                        name={cfg.icon as any}
-                                        size={isSelected ? 17 : 14}
-                                        color="#FFFFFF"
-                                    />
+                                {/* Padding wrapper so Android shadow doesn't clip the icon */}
+                                <View style={{ padding: 4 }}>
+                                    <View style={{
+                                        width: pinSize, height: pinSize,
+                                        borderRadius: pinSize / 2,
+                                        backgroundColor: cfg.color,
+                                        borderWidth: isSelected ? 3 : 2,
+                                        borderColor: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
+                                        alignItems: 'center', justifyContent: 'center',
+                                        overflow: 'hidden',
+                                    }}>
+                                        <Ionicons
+                                            name={cfg.icon as any}
+                                            size={iconSize}
+                                            color="#FFFFFF"
+                                        />
+                                    </View>
                                 </View>
                             </Marker>
                         );
@@ -820,6 +1041,17 @@ export default function MedicalMapView() {
                     </PremiumBar>
                 </View>
             </View>
+
+            {/* ── Booking Modal ──────────────────────────────────────────────── */}
+            {bookingModalOpen && selectedProvider && (
+                <BookingModal
+                    provider={selectedProvider}
+                    visible={bookingModalOpen}
+                    done={bookingDone}
+                    onDone={() => setBookingDone(true)}
+                    onClose={() => { setBookingModalOpen(false); setBookingDone(false); }}
+                />
+            )}
         </AtmosphericShell>
     );
 }
@@ -910,17 +1142,18 @@ const st = StyleSheet.create({
 
     // ── Provider pin marker ───────────────────────────────────────────────
     providerPin: {
-        width: 36, height: 36, borderRadius: 18,
-        borderWidth: 2,
+        width: 44, height: 44, borderRadius: 22,
+        borderWidth: 2.5,
         alignItems: 'center', justifyContent: 'center',
+        overflow: 'visible',
         ...Platform.select({
             ios: { shadowOpacity: 0.45, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 8 },
         }),
     },
     providerPinSelected: {
-        width: 44, height: 44, borderRadius: 22,
-        borderWidth: 2.5,
+        width: 54, height: 54, borderRadius: 27,
+        borderWidth: 3,
         ...Platform.select({
             ios: { shadowOpacity: 0.65, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
             android: { elevation: 14 },
@@ -1033,18 +1266,14 @@ const st = StyleSheet.create({
         }),
     },
     chipActive: {
-        backgroundColor: D.cardFillActive,
-        borderColor: D.hairlineActive,
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
-            android: { elevation: 6 },
-        }),
+        backgroundColor: T.violet,
+        borderColor: T.violet,
     },
     chipText: {
         fontSize: 12, fontWeight: '600', color: D.muted,
     },
     chipTextActive: {
-        color: T.violet,
+        color: '#fff', fontWeight: '700',
     },
 
     // ── Nav Bar ─────────────────────────────────────────────────────────────

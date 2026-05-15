@@ -12,7 +12,6 @@ export const CATEGORIES: CategoryItem[] = [
     { id: 'hospital', label: 'Hospitals', icon: 'business-outline', description: 'Navigate to hospitals' },
     { id: 'ambulance', label: 'Ambulance', icon: 'car-outline', description: 'Request ambulance' },
     { id: 'pharmacy', label: 'Pharmacy', icon: 'bandage-outline', description: 'Find nearby pharmacy' },
-    { id: 'others', label: 'Others', icon: 'flask-outline', description: 'Diagnostics & more' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
