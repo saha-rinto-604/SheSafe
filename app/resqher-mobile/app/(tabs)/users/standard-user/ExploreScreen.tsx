@@ -476,7 +476,6 @@ export default function ExploreScreen() {
     const [isScanAnimating, setIsScanAnimating] = useState(false);
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
-    const [showSafePath, setShowSafePath] = useState(false);
 
     // Live data from backend
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
@@ -625,7 +624,7 @@ export default function ExploreScreen() {
         setSelectedPlace(null); setPlaceIncidents([]); setEndLocation(null);
 
         if (directionsMode) { exitDirectionsMode(); } else {
-            setRouteCoords([]); setAltRouteCoords([]); setSelectedRoutePath('primary'); setNavInstructions([]); setCurrentStepIdx(0); setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
+            setRouteCoords([]); setAltRouteCoords([]); setSelectedRoutePath('primary'); setNavInstructions([]); setCurrentStepIdx(0); setRouteUnsafe(false); setBlockedZoneName(null); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
         }
 
         if (userLocRef.current) mapRef.current?.animateToRegion({ latitude: userLocRef.current.latitude, longitude: userLocRef.current.longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 700);
@@ -698,8 +697,7 @@ export default function ExploreScreen() {
             setAltRouteCoords([]);
             setRouteUnsafe(false);
             setBlockedZoneName(null);
-            setShowSafePath(false);
-            setSafeRouteCoords([]);
+                       setSafeRouteCoords([]);
             setUnsafeRouteCoords([]);
             setIsScanAnimating(false);
 
@@ -748,10 +746,8 @@ export default function ExploreScreen() {
                     .map(z => ({ name: z.name, latitude: z.latitude, longitude: z.longitude, radius: z.radius }));
                 const safetyCheck = checkRouteSafety(chosenCoords, dangerZones);
                 if (!safetyCheck.isSafe) {
-                    setRouteUnsafe(true); setBlockedZoneName(safetyCheck.blockedZoneName ?? null); setShowSafePath(true);
-                } else {
-                    setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false);
-                }
+                    setRouteUnsafe(true); setBlockedZoneName(safetyCheck.blockedZoneName ?? null);                } else {
+                    setRouteUnsafe(false); setBlockedZoneName(null);                }
 
                 if (chosenCoords.length > 1) {
                     mapRef.current?.fitToCoordinates(chosenCoords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
@@ -792,8 +788,7 @@ export default function ExploreScreen() {
         const fetchId = routeRequestId.current;
 
         setIsScanAnimating(true);
-        setShowSafePath(false);
-        startScanAnimation();
+               startScanAnimation();
 
         await new Promise(r => setTimeout(r, 1800));
 
@@ -901,8 +896,7 @@ export default function ExploreScreen() {
             setCurrentStepIdx(0);
             setSelectedRoutePath('alt');
             setRouteUnsafe(bestScore > 0);
-            setShowSafePath(false);
-            stopScanAnimation();
+                       stopScanAnimation();
             setIsScanAnimating(false);
 
             mapRef.current?.fitToCoordinates(finalCoords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
@@ -1089,7 +1083,7 @@ export default function ExploreScreen() {
 
     const exitDirectionsMode = useCallback(() => {
         setDirectionsMode(false); setIsLiveNav(false); setStartSearchActive(false); setStartSearchText(''); setStartLocation(null); setRouteCoords([]); setAltRouteCoords([]); setSelectedRoutePath('primary'); setNavInstructions([]); setCurrentStepIdx(0);
-        setRouteUnsafe(false); setBlockedZoneName(null); setShowSafePath(false); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
+        setRouteUnsafe(false); setBlockedZoneName(null); setIsScanAnimating(false); setSafeRouteCoords([]); setUnsafeRouteCoords([]);
         RNAnimated.timing(directionsProgress, { toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
     }, [directionsProgress]);
 
@@ -1238,23 +1232,22 @@ export default function ExploreScreen() {
                     {/* ── Alternative / Safe route ── */}
                     {altRouteCoords.length > 1 && (
                         selectedRoutePath === 'alt' ? (
-                            /* Selected: bold green */
+                            /* Active: solid bold green */
                             <Polyline
                                 coordinates={altRouteCoords}
                                 strokeColor="#10B981"
-                                strokeWidth={5}
+                                strokeWidth={6}
                                 lineCap="round"
                                 lineJoin="round"
                             />
                         ) : (
-                            /* Default: faint green dots — tap to switch */
+                            /* Inactive: faint dots to hint the alt route exists */
                             <Polyline
                                 coordinates={altRouteCoords}
-                                strokeColor="rgba(52,199,89,0.55)"
+                                strokeColor="rgba(52,199,89,0.45)"
                                 strokeWidth={2}
-                                lineDashPattern={[2, 7]}
+                                lineDashPattern={[2, 8]}
                                 lineCap="round"
-                                onPress={() => setSelectedRoutePath('alt')}
                             />
                         )
                     )}
@@ -1509,57 +1502,31 @@ export default function ExploreScreen() {
                                 <Text style={ns.distText}>{navInstructions[currentStepIdx]?.distance}</Text>
                             </View>
                         </View>
-                        {/* Route selector — current label + one switch button */}
-                        {altRouteCoords.length > 1 && (
-                            <View style={ns.routePillRow}>
-                                {/* Current route indicator */}
-                                <View style={ns.routeCurrentLabel}>
-                                    <Ionicons
-                                        name={selectedRoutePath === 'primary' ? 'flash' : 'shield-checkmark'}
-                                        size={11}
-                                        color={selectedRoutePath === 'primary' ? T.ink3 : '#10B981'}
-                                        style={{ marginRight: 4 }}
-                                    />
-                                    <Text style={[ns.routeCurrentText, selectedRoutePath === 'alt' && ns.routeCurrentTextSafe]}>
-                                        {selectedRoutePath === 'primary' ? 'Shortest Path' : 'Safest Path'}
-                                    </Text>
-                                </View>
-
-                                {/* Switch action */}
-                                {selectedRoutePath === 'primary' ? (
-                                    <TouchableOpacity
-                                        style={[ns.routePill, ns.routePillAlt]}
-                                        onPress={() => setSelectedRoutePath('alt')}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Ionicons name="shield-checkmark" size={11} color="#fff" style={{ marginRight: 3 }} />
-                                        <Text style={[ns.routePillText, ns.routePillTextActive]}>Safe Route</Text>
-                                    </TouchableOpacity>
-                                ) : (
-                                    <TouchableOpacity
-                                        style={[ns.routePill, ns.routePillActive]}
-                                        onPress={() => setSelectedRoutePath('primary')}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Ionicons name="flash" size={11} color={T.onPrimary} style={{ marginRight: 3 }} />
-                                        <Text style={[ns.routePillText, ns.routePillTextActive]}>Shortest Path</Text>
-                                    </TouchableOpacity>
-                                )}
-                            </View>
-                        )}
 
                         <View style={ns.cardFooter}>
                             <Text style={ns.stepCounter}>Step {currentStepIdx + 1} of {navInstructions.length}</Text>
                             {!isLiveNav ? (
                                 <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                                    {showSafePath && !isScanAnimating && (
-                                        <TouchableOpacity style={ns.safePathBtn} onPress={triggerSafetyRecalculation}>
-                                            <Ionicons name="shield-checkmark" size={13} color={T.onPrimary} style={{ marginRight: 4 }} />
-                                            <Text style={ns.safePathBtnText}>SAFE PATH</Text>
-                                        </TouchableOpacity>
-                                    )}
                                     {currentStepIdx > 0 && <TouchableOpacity style={ns.navBtn} onPress={() => setCurrentStepIdx(prev => Math.max(prev - 1, 0))}><Ionicons name="chevron-back" size={16} color={T.ink2} /></TouchableOpacity>}
                                     {currentStepIdx < navInstructions.length - 1 && <TouchableOpacity style={ns.navBtn} onPress={() => setCurrentStepIdx(prev => Math.min(prev + 1, navInstructions.length - 1))}><Ionicons name="chevron-forward" size={16} color={T.ink2} /></TouchableOpacity>}
+                                    {/* SAFE PATH — scans on activate, toggles back on tap */}
+                                    <TouchableOpacity
+                                        style={[ns.safePathToggle, selectedRoutePath === 'alt' && ns.safePathToggleActive]}
+                                        onPress={() => {
+                                            if (selectedRoutePath === 'alt') {
+                                                // Already on safe path — switch back to shortest
+                                                setSelectedRoutePath('primary');
+                                            } else {
+                                                // Activate safe path: always scan so popup shows
+                                                triggerSafetyRecalculation();
+                                            }
+                                        }}
+                                        disabled={isScanAnimating}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Ionicons name="shield-checkmark" size={12} color={selectedRoutePath === 'alt' ? '#fff' : T.ink3} style={{ marginRight: 4 }} />
+                                        <Text style={[ns.safePathToggleText, selectedRoutePath === 'alt' && ns.safePathToggleTextActive]}>SAFE PATH</Text>
+                                    </TouchableOpacity>
                                     <TouchableOpacity style={ns.goLiveBtn} onPress={() => setIsLiveNav(true)}><Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} /><Text style={ns.goLiveBtnText}>GO LIVE</Text></TouchableOpacity>
                                 </View>
                             ) : (
@@ -1849,21 +1816,14 @@ const ns = StyleSheet.create({
     navBtn: { width: 32, height: 32, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
     goLiveBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: T.violet, borderWidth: 1, borderColor: `${T.violet}70` },
     goLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+    safePathToggle: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
+    safePathToggleActive: { backgroundColor: '#10B981', borderColor: 'rgba(16,185,129,0.6)' },
+    safePathToggleText: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 0.2 },
+    safePathToggleTextActive: { color: '#fff' },
     endLiveBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: R.pill, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
     endLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
-    safePathBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: '#E25B3A', borderWidth: 1, borderColor: 'rgba(226,91,58,0.6)' },
-    safePathBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.3 },
     warningBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
     warningBadgeText: { fontSize: 11, fontWeight: '600', color: '#E25B3A', letterSpacing: 0.2 },
-    routePillRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
-    routeCurrentLabel: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-    routeCurrentText: { fontSize: 11, fontWeight: '600', color: T.ink3 },
-    routeCurrentTextSafe: { color: '#10B981', fontWeight: '700' },
-    routePill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-    routePillActive: { backgroundColor: T.violet, borderColor: `${T.violet}80` },
-    routePillAlt: { backgroundColor: '#10B981', borderColor: 'rgba(16,185,129,0.6)' },
-    routePillText: { fontSize: 11, fontWeight: '700', color: T.ink3 },
-    routePillTextActive: { color: '#fff' },
 });
 
 // ── Zone Info Sheet styles ───────────────────────────────────────────────────
