@@ -33,6 +33,7 @@ import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 import { incidentService } from '../../../../src/services/incidentService';
 import { chatService } from '../../../../src/services/chatService';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
+import { notificationStore } from '../../../../src/services/notificationStore';
 import { useAuth } from '../../../../src/context/AuthContext';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -621,6 +622,12 @@ export default function ChatRoom() {
                             if (isRealIncident) await incidentService.resolveIncident(incidentId);
                         } catch { /* best-effort */ }
                         await incidentHistory.updateStatus(incidentId, 'RESOLVED');
+                        await notificationStore.add({
+                            type: 'incident_resolved',
+                            title: 'Incident Resolved',
+                            body: `Incident ${incidentId} has been marked as resolved`,
+                            incidentId,
+                        });
                         await SecureStore.deleteItemAsync('resqher_active_sos_v1');
                         await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
                         afterAction();
@@ -642,6 +649,12 @@ export default function ChatRoom() {
                             if (isRealIncident) await incidentService.cancelIncident(incidentId);
                         } catch { /* best-effort */ }
                         await incidentHistory.updateStatus(incidentId, 'CANCELLED');
+                        await notificationStore.add({
+                            type: 'incident_cancelled',
+                            title: 'Incident Closed',
+                            body: `Incident ${incidentId} has been cancelled`,
+                            incidentId,
+                        });
                         await SecureStore.deleteItemAsync('resqher_active_sos_v1');
                         await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
                         afterAction();

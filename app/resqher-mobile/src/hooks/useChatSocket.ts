@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { chatService } from '../services/chatService';
 import { chatStore } from '../services/chatStore';
+import { notificationStore } from '../services/notificationStore';
 import { getAccessToken } from '../services/api';
 import type { Message, Participant, IncidentLocation } from '../types/chat';
 
@@ -107,6 +108,15 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                                 chatStore.save(incidentId, next);
                                 return next;
                             });
+                            // Notify if message is from someone else
+                            if (incoming.sender.id !== selfIdRef.current) {
+                                notificationStore.add({
+                                    type: 'message_received',
+                                    title: 'New Message',
+                                    body: `${incoming.sender.name}: ${incoming.content.slice(0, 60)}`,
+                                    incidentId,
+                                });
+                            }
                             break;
                         }
                         case 'incident.participant.joined':
@@ -114,6 +124,14 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                                 if (prev.find(p => p.id === data.payload.id)) return prev;
                                 return [...prev, data.payload];
                             });
+                            if (data.payload.id !== selfIdRef.current) {
+                                notificationStore.add({
+                                    type: 'volunteer_joined',
+                                    title: 'Responder Joined',
+                                    body: `${data.payload.name || 'A responder'} has joined your incident`,
+                                    incidentId,
+                                });
+                            }
                             break;
                         case 'incident.location.updated':
                             setVictimLocation(data.payload);

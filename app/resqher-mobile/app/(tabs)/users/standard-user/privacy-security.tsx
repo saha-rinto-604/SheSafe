@@ -105,12 +105,11 @@ export default function PrivacySecurityScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const [deletingHistory, setDeletingHistory] = useState(false);
-    const [deletingSafePlaces, setDeletingSafePlaces] = useState(false);
 
     const handleClearSosHistory = () => {
         Alert.alert(
-            'Clear SOS & Incident History',
-            'This will cancel all your active incidents and remove your SOS history from the map. This cannot be undone.',
+            'Clear SOS History',
+            'This will remove your SOS call history from the explorer map. Active incidents will be cancelled. This cannot be undone.',
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -118,34 +117,11 @@ export default function PrivacySecurityScreen() {
                         setDeletingHistory(true);
                         try {
                             await api.delete('/api/incidents/my');
-                            Alert.alert('Done', 'Your SOS & incident history has been cleared.');
+                            Alert.alert('Done', 'Your SOS history has been cleared from the map.');
                         } catch {
                             Alert.alert('Error', 'Failed to clear. Please try again.');
                         } finally {
                             setDeletingHistory(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleDeleteSafePlaces = () => {
-        Alert.alert(
-            'Delete Safe Place Reports',
-            'This will permanently remove all safe place reports you submitted. Green zone markers from your reports will be removed from the map.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete', style: 'destructive', onPress: async () => {
-                        setDeletingSafePlaces(true);
-                        try {
-                            await api.delete('/api/safe-places/my');
-                            Alert.alert('Done', 'Your safe place reports have been deleted.');
-                        } catch {
-                            Alert.alert('Error', 'Failed to delete. Please try again.');
-                        } finally {
-                            setDeletingSafePlaces(false);
                         }
                     },
                 },
@@ -194,29 +170,8 @@ export default function PrivacySecurityScreen() {
                                 }
                             </View>
                             <View style={s.dangerContent}>
-                                <Text style={s.dangerLabel}>Clear SOS &amp; Incident History</Text>
-                                <Text style={s.dangerDesc}>Cancel active incidents and remove your SOS history from the map</Text>
-                            </View>
-                            <Feather name="chevron-right" size={15} color={T.ink4} />
-                        </TouchableOpacity>
-
-                        <View style={s.dangerDivider} />
-
-                        <TouchableOpacity
-                            style={s.dangerRow}
-                            onPress={handleDeleteSafePlaces}
-                            activeOpacity={0.75}
-                            disabled={deletingSafePlaces}
-                        >
-                            <View style={s.dangerIconBox}>
-                                {deletingSafePlaces
-                                    ? <ActivityIndicator size="small" color={T.danger} />
-                                    : <Feather name="map-pin" size={17} color={T.danger} />
-                                }
-                            </View>
-                            <View style={s.dangerContent}>
-                                <Text style={s.dangerLabel}>Delete Safe Place Reports</Text>
-                                <Text style={s.dangerDesc}>Remove all green zone markers you submitted from the map</Text>
+                                <Text style={s.dangerLabel}>Clear SOS History</Text>
+                                <Text style={s.dangerDesc}>Remove your SOS calls from the explorer map</Text>
                             </View>
                             <Feather name="chevron-right" size={15} color={T.ink4} />
                         </TouchableOpacity>
@@ -328,7 +283,6 @@ const s = StyleSheet.create({
     dangerContent: { flex: 1 },
     dangerLabel: { fontSize: 14, fontWeight: '600', color: T.danger },
     dangerDesc: { fontSize: 12, color: T.ink4, marginTop: 2 },
-    dangerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: S.s4 },
 
 });
 

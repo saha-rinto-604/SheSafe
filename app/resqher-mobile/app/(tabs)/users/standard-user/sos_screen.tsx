@@ -38,6 +38,7 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
+import { notificationStore } from '../../../../src/services/notificationStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PremiumBar — dark glassmorphism surface for header + navbar
@@ -550,11 +551,13 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const navigatedRef = useRef(false);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
+    const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
 
     // Load profile picture on screen focus
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
+            notificationStore.getUnreadCount().then(n => setHasUnreadNotif(n > 0));
         }, []),
     );
 
@@ -669,6 +672,12 @@ export default function SOSScreen() {
                         incidentId: id, displayNumber, lat, lng,
                         address: address || '', createdAt, status: 'ACTIVE',
                     });
+                    await notificationStore.add({
+                        type: 'sos_triggered',
+                        title: 'SOS Alert Sent',
+                        body: `Emergency alert triggered at ${address || 'your location'}`,
+                        incidentId: id,
+                    });
                 })
                 .catch(async () => {
                     const id = `temp-${Date.now()}`;
@@ -686,6 +695,12 @@ export default function SOSScreen() {
                         incidentId: id, displayNumber, lat, lng,
                         address: address || '', createdAt, status: 'ACTIVE',
                     });
+                    await notificationStore.add({
+                        type: 'sos_triggered',
+                        title: 'SOS Alert Sent',
+                        body: `Emergency alert triggered at ${address || 'your location'}`,
+                        incidentId: id,
+                    });
                 });
         } else {
             const id = 'sos-new';
@@ -702,6 +717,12 @@ export default function SOSScreen() {
                 await incidentHistory.add({
                     incidentId: id, displayNumber, lat: null, lng: null,
                     address: '', createdAt, status: 'ACTIVE',
+                });
+                await notificationStore.add({
+                    type: 'sos_triggered',
+                    title: 'SOS Alert Sent',
+                    body: 'Emergency alert triggered (location unavailable)',
+                    incidentId: id,
                 });
             })();
         }
@@ -823,7 +844,7 @@ export default function SOSScreen() {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
-                        <View style={s.notifDot} />
+                        {hasUnreadNotif && <View style={s.notifDot} />}
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={s.profileBtn}
