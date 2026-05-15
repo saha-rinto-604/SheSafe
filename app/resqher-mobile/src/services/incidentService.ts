@@ -32,6 +32,23 @@ export const incidentService = {
     return res.data.incident;
   },
 
+  async resolveIncident(id: number | string) {
+    const res = await api.patch(`/api/incidents/${id}/resolve`);
+    return res.data.incident;
+  },
+
+  async getMyIncidents(): Promise<Array<{
+    id: number | string;
+    latitude: number;
+    longitude: number;
+    address: string | null;
+    status: 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
+    created_at: string;
+  }>> {
+    const res = await api.get('/api/incidents/my');
+    return res.data.incidents ?? [];
+  },
+
   async getOne(id: number | string) {
     const res = await api.get(`/api/incidents/${id}`);
     return res.data.incident;

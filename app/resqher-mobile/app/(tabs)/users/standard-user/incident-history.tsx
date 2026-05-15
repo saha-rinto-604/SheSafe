@@ -6,7 +6,7 @@
  * once the API is ready; only DUMMY_INCIDENTS needs to be replaced.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import {
     View,
     Text,
@@ -14,15 +14,12 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
-    Alert,
-    ActivityIndicator,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import api from '../../../../src/services/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type IncidentStatus = 'Active' | 'Resolved' | 'Cancelled';
@@ -153,56 +150,8 @@ function EmptyState() {
 export default function IncidentHistoryScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const [deletingHistory, setDeletingHistory] = useState(false);
-    const [deletingSafePlaces, setDeletingSafePlaces] = useState(false);
 
     const incidents = DUMMY_INCIDENTS; // swap with API data later
-
-    const handleClearSosHistory = () => {
-        Alert.alert(
-            'Clear SOS History',
-            'This will cancel all your active incidents and remove your SOS history from the map. This cannot be undone.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Clear', style: 'destructive', onPress: async () => {
-                        setDeletingHistory(true);
-                        try {
-                            await api.delete('/api/incidents/my');
-                            Alert.alert('Done', 'Your SOS & incident history has been cleared. Zone markers will update shortly.');
-                        } catch {
-                            Alert.alert('Error', 'Failed to clear. Please try again.');
-                        } finally {
-                            setDeletingHistory(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleDeleteSafePlaces = () => {
-        Alert.alert(
-            'Delete Safe Place Reports',
-            'This will permanently remove all safe place reports you submitted. Green zone markers from your reports will be removed from the map.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete', style: 'destructive', onPress: async () => {
-                        setDeletingSafePlaces(true);
-                        try {
-                            await api.delete('/api/safe-places/my');
-                            Alert.alert('Done', 'Your safe place reports have been deleted.');
-                        } catch {
-                            Alert.alert('Error', 'Failed to delete. Please try again.');
-                        } finally {
-                            setDeletingSafePlaces(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
 
     return (
         <AtmosphericShell>
@@ -239,50 +188,6 @@ export default function IncidentHistoryScreen() {
                             <IncidentCard key={incident.id} incident={incident} />
                         ))
                     )}
-
-                    {/* ── Data Management ── */}
-                    <Text style={[s.sectionLabel, { marginTop: 24 }]}>Data Management</Text>
-                    <View style={s.dangerCard}>
-                        <TouchableOpacity
-                            style={s.dangerRow}
-                            onPress={handleClearSosHistory}
-                            activeOpacity={0.75}
-                            disabled={deletingHistory}
-                        >
-                            <View style={s.dangerIconBox}>
-                                {deletingHistory
-                                    ? <ActivityIndicator size="small" color={T.danger} />
-                                    : <Feather name="alert-circle" size={17} color={T.danger} />
-                                }
-                            </View>
-                            <View style={s.dangerContent}>
-                                <Text style={s.dangerLabel}>Clear SOS &amp; Incident History</Text>
-                                <Text style={s.dangerDesc}>Cancel active incidents and remove your SOS history from the map</Text>
-                            </View>
-                            <Feather name="chevron-right" size={15} color={T.ink4} />
-                        </TouchableOpacity>
-
-                        <View style={s.dangerDivider} />
-
-                        <TouchableOpacity
-                            style={s.dangerRow}
-                            onPress={handleDeleteSafePlaces}
-                            activeOpacity={0.75}
-                            disabled={deletingSafePlaces}
-                        >
-                            <View style={s.dangerIconBox}>
-                                {deletingSafePlaces
-                                    ? <ActivityIndicator size="small" color={T.danger} />
-                                    : <Feather name="map-pin" size={17} color={T.danger} />
-                                }
-                            </View>
-                            <View style={s.dangerContent}>
-                                <Text style={s.dangerLabel}>Delete Safe Place Reports</Text>
-                                <Text style={s.dangerDesc}>Remove all green zone markers you submitted from the map</Text>
-                            </View>
-                            <Feather name="chevron-right" size={15} color={T.ink4} />
-                        </TouchableOpacity>
-                    </View>
                 </ScrollView>
             </View>
         </AtmosphericShell>
@@ -413,33 +318,6 @@ const s = StyleSheet.create({
         fontWeight: '600',
         color: T.ink2,
     },
-
-    // Danger / data management
-    dangerCard: {
-        backgroundColor: T.surfaceBulky,
-        borderRadius: R.lg,
-        borderWidth: 1,
-        borderColor: T.lineMid,
-        overflow: 'hidden',
-        marginBottom: 12,
-    },
-    dangerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 14,
-        paddingHorizontal: S.s4,
-        gap: 12,
-    },
-    dangerIconBox: {
-        width: 34, height: 34,
-        borderRadius: R.sm,
-        alignItems: 'center', justifyContent: 'center',
-        backgroundColor: `${T.danger}14`,
-    },
-    dangerContent: { flex: 1 },
-    dangerLabel: { fontSize: 14, fontWeight: '600', color: T.danger },
-    dangerDesc: { fontSize: 12, color: T.ink4, marginTop: 2 },
-    dangerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: S.s4 },
 
     // Empty state
     emptyWrap: {

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { chatService } from '../services/chatService';
+import { chatStore } from '../services/chatStore';
 import { getAccessToken } from '../services/api';
 import type { Message, Participant, IncidentLocation } from '../types/chat';
 
@@ -27,7 +28,8 @@ interface UseChatSocketReturn {
     refreshMessages: () => Promise<void>;
 }
 
-export function useChatSocket(incidentId: string): UseChatSocketReturn {
+// selfId lets the hook optimistically show sent messages before the server echo arrives
+export function useChatSocket(incidentId: string, selfId?: string): UseChatSocketReturn {
     const [messages, setMessages] = useState<Message[]>([]);
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [victimLocation, setVictimLocation] = useState<IncidentLocation | null>(null);
@@ -36,13 +38,18 @@ export function useChatSocket(incidentId: string): UseChatSocketReturn {
     const wsRef = useRef<WebSocket | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const mountedRef = useRef(true);
+    const selfIdRef = useRef(selfId);
+    useEffect(() => { selfIdRef.current = selfId; }, [selfId]);
 
     // ── Fetch messages via REST (initial load + polling fallback) ──
     const refreshMessages = useCallback(async () => {
         try {
             const msgs = await chatService.getMessages(incidentId);
-            if (mountedRef.current) setMessages(msgs);
-        } catch { /* silent */ }
+            if (mountedRef.current) {
+                setMessages(msgs);
+                chatStore.save(incidentId, msgs); // persist for offline re-open
+            }
+        } catch { /* silent — cached messages remain */ }
     }, [incidentId]);
 
     // ── Start polling fallback ──
@@ -78,9 +85,30 @@ export function useChatSocket(incidentId: string): UseChatSocketReturn {
                     if (!mountedRef.current) return;
 
                     switch (data.type) {
-                        case 'chat.message.new':
-                            setMessages(prev => [...prev, data.payload]);
+                        case 'chat.message.new': {
+                            const incoming = data.payload;
+                            setMessages(prev => {
+                                // Deduplicate: drop if real ID already present
+                                if (prev.find(m => m.id === incoming.id)) return prev;
+                                // If this is an echo of our own send, replace the optimistic entry
+                                const sid = selfIdRef.current;
+                                if (sid && incoming.sender.id === sid) {
+                                    const optIdx = prev.findIndex(
+                                        m => m.id.startsWith('opt-') && m.content === incoming.content
+                                    );
+                                    if (optIdx !== -1) {
+                                        const next = [...prev];
+                                        next[optIdx] = incoming;
+                                        chatStore.save(incidentId, next);
+                                        return next;
+                                    }
+                                }
+                                const next = [...prev, incoming];
+                                chatStore.save(incidentId, next);
+                                return next;
+                            });
                             break;
+                        }
                         case 'incident.participant.joined':
                             setParticipants(prev => {
                                 if (prev.find(p => p.id === data.payload.id)) return prev;
@@ -127,8 +155,19 @@ export function useChatSocket(incidentId: string): UseChatSocketReturn {
         content: string,
         type: 'TEXT' | 'IMAGE' | 'AUDIO' = 'TEXT',
     ) => {
-        // Try WS first
+        // Try WS first — add an optimistic entry immediately so the message
+        // appears in the list without waiting for the server echo
         if (wsRef.current?.readyState === WebSocket.OPEN) {
+            const tempId = `opt-${Date.now()}`;
+            const optimistic: Message = {
+                id: tempId,
+                incidentId,
+                sender: { id: selfIdRef.current ?? 'self', name: 'You', role: 'USER' },
+                content,
+                type,
+                timestamp: new Date().toISOString(),
+            };
+            if (mountedRef.current) setMessages(prev => [...prev, optimistic]);
             wsRef.current.send(JSON.stringify({
                 type: 'chat.message.send',
                 payload: { content, message_type: type },
@@ -137,16 +176,28 @@ export function useChatSocket(incidentId: string): UseChatSocketReturn {
         }
 
         // Fallback to REST
-        const msg = await chatService.sendMessage(incidentId, { content, type });
-        if (mountedRef.current) {
-            setMessages(prev => [...prev, msg]);
-        }
+        try {
+            const msg = await chatService.sendMessage(incidentId, { content, type });
+            if (mountedRef.current) {
+                setMessages(prev => {
+                    const next = [...prev, msg];
+                    chatStore.save(incidentId, next);
+                    return next;
+                });
+            }
+        } catch { /* REST fallback failed — backend unreachable */ }
     }, [incidentId]);
 
     // ── Lifecycle ──
     useEffect(() => {
         mountedRef.current = true;
-        refreshMessages(); // Initial load
+
+        // Load cached messages immediately so chat isn't blank on re-open
+        chatStore.load(incidentId).then(cached => {
+            if (mountedRef.current && cached.length > 0) setMessages(cached);
+        });
+
+        refreshMessages(); // Refresh from backend (overwrites cache on success)
         connectWS();       // Try WebSocket
 
         // Handle app state (reconnect on foreground)

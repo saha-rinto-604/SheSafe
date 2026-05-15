@@ -142,4 +142,15 @@ async function cancelAllByUser(userId) {
   return { cancelled: result.affectedRows };
 }
 
-module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser };
+async function findMyIncidents(userId) {
+  return query(
+    `SELECT id, user_id, latitude, longitude, address, status, created_at
+     FROM incidents
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT 30`,
+    [userId]
+  );
+}
+
+module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, findMyIncidents };
