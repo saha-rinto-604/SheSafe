@@ -18,7 +18,7 @@ async function createIncident({ userId, latitude, longitude, address }) {
 }
 
 /**
- * Fetch all non-cancelled incidents (ACTIVE or RESOLVED) with user details.
+ * Fetch all ACTIVE incidents with user details (used for zone map).
  */
 async function getActiveIncidents() {
   return query(
@@ -26,7 +26,7 @@ async function getActiveIncidents() {
             u.first_name, u.last_name
      FROM incidents i
      JOIN users u ON i.user_id = u.id
-     WHERE i.status != 'CANCELLED'
+     WHERE i.status = 'ACTIVE'
      ORDER BY i.created_at DESC`
   );
 }
@@ -35,7 +35,7 @@ async function getActiveIncidents() {
  * Aggregate incidents into geographic zones.
  *
  * Algorithm:
- * 1. Fetch all non-cancelled incidents.
+ * 1. Fetch all ACTIVE incidents.
  * 2. Cluster them using a greedy 500-metre radius approach:
  *    - For each incident, check if it falls within 500m of an existing cluster centre.
  *    - If yes, add it to that cluster. If no, start a new cluster centred on it.

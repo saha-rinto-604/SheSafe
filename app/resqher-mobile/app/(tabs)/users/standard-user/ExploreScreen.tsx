@@ -1572,14 +1572,29 @@ export default function ExploreScreen() {
                                                 <Text style={zi.reporter}>{inc.reporter || 'Anonymous'}</Text>
                                                 <Text style={zi.time}>{inc.time ? new Date(inc.time).toLocaleString() : ''}</Text>
                                             </View>
-                                            <View style={[
-                                                zi.pill,
-                                                inc.status === 'ACTIVE' && zi.pillActive,
-                                                inc.status === 'RESOLVED' && zi.pillResolved,
-                                                inc.status === 'CANCELLED' && zi.pillCancelled,
-                                            ]}>
-                                                <Text style={zi.pillTxt}>{inc.status}</Text>
-                                            </View>
+                                            {inc.status === 'ACTIVE' && inc.id ? (
+                                                <TouchableOpacity
+                                                    style={zi.joinBtn}
+                                                    activeOpacity={0.8}
+                                                    onPress={() => {
+                                                        setZoneSheetOpen(false);
+                                                        router.push(
+                                                            `/(tabs)/users/standard-user/chat_room?incidentId=${inc.id}&joinMode=true` as any
+                                                        );
+                                                    }}
+                                                >
+                                                    <Feather name="message-circle" size={12} color={T.onPrimary} />
+                                                    <Text style={zi.joinBtnTxt}>Join Chat</Text>
+                                                </TouchableOpacity>
+                                            ) : (
+                                                <View style={[
+                                                    zi.pill,
+                                                    inc.status === 'RESOLVED' && zi.pillResolved,
+                                                    inc.status === 'CANCELLED' && zi.pillCancelled,
+                                                ]}>
+                                                    <Text style={zi.pillTxt}>{inc.status}</Text>
+                                                </View>
+                                            )}
                                         </View>
                                     ))
                                 }
@@ -1859,6 +1874,8 @@ const zi = StyleSheet.create({
     pillTxt: { fontSize: 10, fontWeight: '700', color: T.ink, letterSpacing: 0.6 },
     avoidBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 18, marginTop: 12, marginBottom: 24, paddingVertical: 12, borderRadius: R.pill, backgroundColor: T.violet },
     avoidBtnTxt: { fontSize: 13, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+    joinBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: R.pill, backgroundColor: T.violet },
+    joinBtnTxt: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
 });
 
 const lb = StyleSheet.create({

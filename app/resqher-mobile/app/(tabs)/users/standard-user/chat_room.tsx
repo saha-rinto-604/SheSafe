@@ -452,14 +452,17 @@ export default function ChatRoom() {
         userLat,
         userLng,
         userAddress,
+        joinMode,
     } = useLocalSearchParams<{
         incidentId: string;
         autoMessage?: string;
         userLat?: string;
         userLng?: string;
         userAddress?: string;
+        joinMode?: string;
     }>();
     const incidentId = rawIncidentId || 'inc-001';
+    const isJoiner = joinMode === 'true';
     const autoSent = useRef(false);
 
     // Block hardware back during an active SOS session
@@ -844,25 +847,39 @@ export default function ChatRoom() {
 
                             {isLive ? (
                                 <>
-                                    <TouchableOpacity
-                                        style={st.headerMenuRow}
-                                        activeOpacity={0.7}
-                                        onPress={handleResolve}
-                                    >
-                                        <Feather name="check-circle" size={16} color="#34C759" />
-                                        <Text style={[st.headerMenuText, { color: '#34C759' }]}>Mark as Resolved</Text>
-                                    </TouchableOpacity>
+                                    {!isJoiner && (
+                                        <>
+                                            <TouchableOpacity
+                                                style={st.headerMenuRow}
+                                                activeOpacity={0.7}
+                                                onPress={handleResolve}
+                                            >
+                                                <Feather name="check-circle" size={16} color="#34C759" />
+                                                <Text style={[st.headerMenuText, { color: '#34C759' }]}>Mark as Resolved</Text>
+                                            </TouchableOpacity>
 
-                                    <View style={st.headerMenuDivider} />
+                                            <View style={st.headerMenuDivider} />
 
-                                    <TouchableOpacity
-                                        style={st.headerMenuRow}
-                                        activeOpacity={0.7}
-                                        onPress={handleCloseIncident}
-                                    >
-                                        <Feather name="x-circle" size={16} color="#FF453A" />
-                                        <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Close Incident</Text>
-                                    </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={st.headerMenuRow}
+                                                activeOpacity={0.7}
+                                                onPress={handleCloseIncident}
+                                            >
+                                                <Feather name="x-circle" size={16} color="#FF453A" />
+                                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Close Incident</Text>
+                                            </TouchableOpacity>
+                                        </>
+                                    )}
+                                    {isJoiner && (
+                                        <TouchableOpacity
+                                            style={st.headerMenuRow}
+                                            activeOpacity={0.7}
+                                            onPress={() => { setHeaderMenuOpen(false); router.back(); }}
+                                        >
+                                            <Feather name="log-out" size={16} color={T.ink3} />
+                                            <Text style={st.headerMenuText}>Leave Chat</Text>
+                                        </TouchableOpacity>
+                                    )}
                                 </>
                             ) : (
                                 <TouchableOpacity

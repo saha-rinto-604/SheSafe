@@ -106,4 +106,16 @@ export const incidentHistory = {
   },
 
   getDeletedIds,
+
+  async clearAll(): Promise<void> {
+    const idx = await getIndex();
+    for (const n of idx) {
+      await SecureStore.deleteItemAsync(recordKey(n));
+    }
+    await SecureStore.deleteItemAsync(INDEX_KEY);
+    await SecureStore.deleteItemAsync(DELETED_KEY);
+    await SecureStore.deleteItemAsync('resqher_sos_count_v1');
+    await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+    await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+  },
 };

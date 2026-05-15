@@ -21,6 +21,7 @@ import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import api from '../../../../src/services/api';
+import { incidentHistory } from '../../../../src/services/incidentHistory';
 
 // ── Nav item definition ───────────────────────────────────────────────────────
 type NavRoute =
@@ -117,6 +118,7 @@ export default function PrivacySecurityScreen() {
                         setDeletingHistory(true);
                         try {
                             await api.delete('/api/incidents/my');
+                            await incidentHistory.clearAll();
                             Alert.alert('Done', 'Your SOS history has been cleared from the map.');
                         } catch {
                             Alert.alert('Error', 'Failed to clear. Please try again.');
