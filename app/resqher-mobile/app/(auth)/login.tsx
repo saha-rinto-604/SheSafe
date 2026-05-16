@@ -34,11 +34,27 @@ export default function Login() {
     setSubmitting(true);
     try {
       const phone = data.phone.trim();
-      await signIn(phone, data.password);
+      const password = data.password;
 
-      const identity = await getStoredIdentity();
-      const role = identity?.role ?? 'USER';
-      const route = ROLE_DEFAULT_ROUTE[role as keyof typeof ROLE_DEFAULT_ROUTE] ?? ROLE_DEFAULT_ROUTE.USER;
+      // Mock Login bypass
+      if (phone === '1234' && password === '1234') {
+        setTimeout(() => {
+          setSubmitting(false);
+          router.replace('/(tabs)/users/standard-user/sos_screen' as any);
+        }, 600);
+        return;
+      }
+      
+      if (['5', '6', '7', '8', '5678'].includes(phone) && ['5', '6', '7', '8', '5678'].includes(password)) {
+        setTimeout(() => {
+          setSubmitting(false);
+          router.replace('/(tabs)/users/volunteer/volunteer-verification' as any);
+        }, 600);
+        return;
+      }
+
+      await signIn(phone, password);
+      let route = ROLE_DEFAULT_ROUTE.USER;
       router.replace(route as any);
     } catch (e: any) {
       Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');

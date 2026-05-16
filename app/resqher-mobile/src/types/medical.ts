@@ -21,6 +21,7 @@ export interface Doctor {
     specialty: string;
     shift: ShiftFilter;
     imageUrl?: string;
+    phone?: string;
     safeRouteVerified: boolean;
     bookingUrl: string;
     latitude: number;

@@ -8,7 +8,10 @@ export default function VolunteerLayout() {
             <Stack.Screen name="chat_room" />
             <Stack.Screen name="incidents" />
             <Stack.Screen name="activity" />
+            <Stack.Screen name="medical" />
+            <Stack.Screen name="MedicalMapView" />
             <Stack.Screen name="dashboard" />
+            <Stack.Screen name="notifications" />
             <Stack.Screen name="profile-menu" />
             <Stack.Screen name="profile-information" />
             <Stack.Screen name="edit-profile" />
@@ -18,7 +21,6 @@ export default function VolunteerLayout() {
             <Stack.Screen name="change-password" />
             <Stack.Screen name="two-factor-auth" />
             <Stack.Screen name="blocked-users" />
-            <Stack.Screen name="notifications" />
         </Stack>
     );
 }

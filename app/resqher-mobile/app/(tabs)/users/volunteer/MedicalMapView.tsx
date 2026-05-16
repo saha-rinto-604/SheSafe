@@ -55,7 +55,7 @@ const DEFAULT_REGION = {
     longitudeDelta: 0.03,
 };
 
-type MedicalCategoryView = 'specialists' | 'hospital' | 'pharmacy' | 'ambulance';
+type MedicalCategoryView = 'specialists' | 'hospital' | 'pharmacy';
 type ProviderCard = {
     id: string;
     name: string;
@@ -100,8 +100,8 @@ const D = {
 // ── Nav tabs ────────────────────────────────────────────────────────────────
 const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string }[] = [
     { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline' },
-    { id: 'Chat', label: 'Chat', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline' },
-    { id: 'Explore', label: 'Explore', iconActive: 'compass', iconOutline: 'compass-outline' },
+    { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline' },
+    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline' },
     { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline' },
 ];
 
@@ -604,7 +604,7 @@ export default function MedicalMapView() {
         }
     }, []);
 
-    // ── Pin tap handler — auto-trigger safe route ───────────────────────────
+    // ── Pin tap handler — open doctor details ───────────────────────────────
     const handlePinPress = useCallback((providerId: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSelectedPin(providerId);
@@ -618,7 +618,7 @@ export default function MedicalMapView() {
             RNAnimated.timing(calloutOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
 
-    }, [providers, userLoc, calloutY, calloutOpacity]);
+    }, [calloutY, calloutOpacity]);
 
     // ── Close callout ───────────────────────────────────────────────────────
     const closeCallout = useCallback(() => {
@@ -662,7 +662,6 @@ export default function MedicalMapView() {
         });
     }, [getDistanceKm, selectedProvider]);
 
-    // ── Book Now → WebView ──────────────────────────────────────────────────
     const handleDirections = useCallback(() => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -785,13 +784,13 @@ export default function MedicalMapView() {
     // ── Nav press ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
         if (tabId === 'Home') {
-            router.replace('/(tabs)/users/sos_screen' as any);
-        } else if (tabId === 'Chat') {
-            router.push('/(tabs)/users/standard-user/chat_home' as any);
-        } else if (tabId === 'Explore') {
-            router.push('/(tabs)/users/standard-user/ExploreScreen' as any);
+            router.replace('/(tabs)/users/volunteer' as any);
+        } else if (tabId === 'Messages') {
+            router.push('/(tabs)/users/volunteer/messages' as any);
+        } else if (tabId === 'Activity') {
+            router.push('/(tabs)/users/volunteer/activity' as any);
         } else if (tabId === 'Medical') {
-            router.push('/(tabs)/users/standard-user/MedicalDashboard' as any);
+            // Already here
         }
     }, [router]);
 
@@ -930,7 +929,7 @@ export default function MedicalMapView() {
                         {/* Right spacer — matches back button width to center title */}
                         <TouchableOpacity
                             style={st.profileBtn}
-                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu' as any)}
+                            onPress={() => router.push('/(tabs)/users/volunteer/profile-menu' as any)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             accessibilityLabel="Open profile menu"
                             accessibilityRole="button"
@@ -952,7 +951,7 @@ export default function MedicalMapView() {
 
                 {/* ── GPS / Recenter — Right-side floating glass container (SOS standard) ── */}
                 {!showRouteOverview && (
-                    <View style={[st.mapControls, { top: '35%' }]}> 
+                    <View style={[st.mapControls, { top: '35%' }]}>
                         <TouchableOpacity
                             style={st.ctrlBtn}
                             onPress={() => {
@@ -1307,6 +1306,26 @@ const st = StyleSheet.create({
             android: { elevation: 12 },
         }),
     },
+    doctorIconMarker: {
+        padding: 2,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    doctorIconMarkerActive: {
+        backgroundColor: T.violet,
+        borderRadius: 20,
+        padding: 6,
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.6, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 12 },
+        }),
+    },
 
     // ── Callout Bottom Sheet ────────────────────────────────────────────────
     calloutWrap: {
@@ -1361,23 +1380,6 @@ const st = StyleSheet.create({
         fontWeight: '500',
         color: D.muted,
     },
-    bookNowBtnFull: {
-        width: '100%',
-        borderRadius: 12,
-        overflow: 'hidden',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
-        }),
-    },
-    bookNowGradient: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        paddingHorizontal: 14, paddingVertical: 10,
-        borderRadius: 12,
-    },
-    bookNowText: {
-        fontSize: 13, fontWeight: '800', color: T.onPrimary,
-    },
     calloutActionRow: {
         flexDirection: 'row',
         gap: 10,
@@ -1404,6 +1406,40 @@ const st = StyleSheet.create({
     calloutActionPrimary: {
         flex: 1,
     },
+    bookNowBtn: {
+        borderRadius: 12, overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    bookNowBtnFull: {
+        width: '100%',
+        borderRadius: 12,
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    bookNowGradient: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: 14, paddingVertical: 10,
+        borderRadius: 12,
+    },
+    bookNowText: {
+        fontSize: 13, fontWeight: '800', color: T.onPrimary,
+    },
+
+    // ── Safe Route Indicator ────────────────────────────────────────────────
+    safeRouteIndicator: {
+        flexDirection: 'row', alignItems: 'center', gap: 6,
+        paddingHorizontal: S.s4, paddingBottom: 10,
+    },
+    safeRouteText: {
+        fontSize: 10, fontWeight: '600', color: D.safeColor,
+        letterSpacing: 0.2,
+    },
 
     livePanel: {
         position: 'absolute',
@@ -1423,11 +1459,10 @@ const st = StyleSheet.create({
         fontWeight: '700',
         color: D.title,
     },
-    livePanelMetaRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        marginTop: 6,
+    livePanelMeta: {
+        fontSize: 11,
+        color: D.muted,
+        fontWeight: '600',
     },
     liveStepRow: {
         flexDirection: 'row',
@@ -1513,12 +1548,27 @@ const st = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 10,
     },
+    routeOverlayContent: {
+        flex: 1,
+        gap: 4,
+    },
+    routeOverlayLabel: {
+        fontSize: 10,
+        color: D.muted,
+        fontWeight: '600',
+        letterSpacing: 0.5,
+    },
     routeOverlayTitle: {
         fontSize: 16,
         color: D.title,
         fontWeight: '700',
         letterSpacing: -0.3,
         textAlign: 'center',
+    },
+    routeOverlayMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
     },
     routeMetaItem: {
         flexDirection: 'row',
@@ -1529,6 +1579,13 @@ const st = StyleSheet.create({
         fontSize: 11,
         color: T.violet,
         fontWeight: '600',
+    },
+
+    livePanelMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginTop: 6,
     },
 
     // ── Quick Selector Chips ────────────────────────────────────────────────

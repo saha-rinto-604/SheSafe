@@ -1,9 +1,10 @@
 /**
  * incidents.tsx — Volunteer Incident History
- * Mirrors standard-user incident history UI with volunteer-specific fields.
+ * Dual-category tabs: "Assisting" (helped others) vs "My Emergencies" (own SOS).
+ * Uses the same animated sliding-indicator segment pattern as activity.tsx.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     View,
     Text,
@@ -11,57 +12,107 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
+    Animated,
+    LayoutAnimation,
+    Platform,
+    UIManager,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
-import { chatService } from '../../../../src/services/chatService';
+import { type IncidentCategory } from '../../../../src/types/chat';
 
 const MED = {
     muted: '#A09CB2',
     stroke: 'rgba(255,255,255,0.1)',
 } as const;
 
+const SEGMENTS = ['Assisted', 'My Emergencies'] as const;
+type Segment = (typeof SEGMENTS)[number];
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 type IncidentStatus = 'Resolved' | 'Cancelled' | 'Active';
 
 type VolunteerIncident = {
     id: string;
+    category: IncidentCategory;
     incidentNumber: number;
-    victimName: string;
+    /** For Assisting: name of the person helped. For My Emergencies: name of responder. */
+    personName: string;
     location: string;
     occurredAtLabel: string;
     status: IncidentStatus;
 };
 
-// ── Dummy data (replace with API response later) ───────────────────────────────
-const DUMMY_INCIDENTS: VolunteerIncident[] = [
+// ── Mock data ──────────────────────────────────────────────────────────────────
+const ALL_INCIDENTS: VolunteerIncident[] = [
+    // ── ASSISTING (helped others)
+    {
+        id: 'inc-312',
+        category: 'ASSISTED',
+        incidentNumber: 312,
+        personName: 'Sumaiya Hossain',
+        location: 'Gulshan, Dhaka',
+        occurredAtLabel: '12 May 2026 · 10:15 PM',
+        status: 'Active',
+    },
     {
         id: 'inc-204',
+        category: 'ASSISTED',
         incidentNumber: 204,
-        victimName: 'Sarah',
-        location: 'Dhaka',
-        occurredAtLabel: '12 Feb 2026 · 8:40 PM',
+        personName: 'Fatima Rahman',
+        location: 'Mirpur, Dhaka',
+        occurredAtLabel: '12 May 2026 · 8:40 PM',
         status: 'Resolved',
     },
     {
         id: 'inc-198',
+        category: 'ASSISTED',
         incidentNumber: 198,
-        victimName: 'Nadia',
-        location: 'Chattogram',
-        occurredAtLabel: '01 Feb 2026 · 7:10 PM',
+        personName: 'Nadia Akter',
+        location: 'Dhanmondi, Dhaka',
+        occurredAtLabel: '01 May 2026 · 7:10 PM',
         status: 'Cancelled',
     },
     {
         id: 'inc-175',
+        category: 'ASSISTED',
         incidentNumber: 175,
-        victimName: 'Ayesha',
-        location: 'Sylhet',
-        occurredAtLabel: '14 Jan 2026 · 5:05 PM',
+        personName: 'Ayesha Sultana',
+        location: 'Gulshan, Dhaka',
+        occurredAtLabel: '14 Apr 2026 · 5:05 PM',
         status: 'Resolved',
+    },
+
+    // ── MY EMERGENCIES (own SOS)
+    {
+        id: 'inc-301',
+        category: 'MY_EMERGENCY',
+        incidentNumber: 301,
+        personName: 'Kabir Hossain',
+        location: 'Khilkhet, Dhaka',
+        occurredAtLabel: '12 May 2026 · 9:55 PM',
+        status: 'Active',
+    },
+    {
+        id: 'inc-289',
+        category: 'MY_EMERGENCY',
+        incidentNumber: 289,
+        personName: 'Raihan Ahmed',
+        location: 'Mohakhali, Dhaka',
+        occurredAtLabel: '11 May 2026 · 6:30 PM',
+        status: 'Resolved',
+    },
+    {
+        id: 'inc-270',
+        category: 'MY_EMERGENCY',
+        incidentNumber: 270,
+        personName: '—',
+        location: 'Banani, Dhaka',
+        occurredAtLabel: '09 May 2026 · 3:20 PM',
+        status: 'Cancelled',
     },
 ];
 
@@ -72,16 +123,16 @@ function statusStyle(status: IncidentStatus): StatusStyle {
     switch (status) {
         case 'Active':
             return {
-                color: T.accent,
-                bg: `${T.accent}15`,
-                border: `${T.accent}35`,
-                dot: T.accent,
+                color: T.violet,
+                bg: T.violetDim,
+                border: `${T.violet}55`,
+                dot: T.violet,
             };
         case 'Resolved':
             return {
                 color: T.success,
-                bg: T.safeLight,
-                border: `${T.success}35`,
+                bg: 'rgba(16,185,129,0.12)',
+                border: 'rgba(16,185,129,0.35)',
                 dot: T.success,
             };
         case 'Cancelled':
@@ -94,15 +145,32 @@ function statusStyle(status: IncidentStatus): StatusStyle {
     }
 }
 
-// ── IncidentCard component ─────────────────────────────────────────────────────
-function IncidentCard({ incident, onPress }: { incident: VolunteerIncident; onPress: () => void }) {
+// ── IncidentCard ───────────────────────────────────────────────────────────────
+function IncidentCard({
+    incident, isMyEmergency, onPress,
+}: {
+    incident: VolunteerIncident;
+    isMyEmergency: boolean;
+    onPress: () => void;
+}) {
     const ss = statusStyle(incident.status);
+    const personLabel = isMyEmergency ? 'Assisted By' : 'Victim';
+    const isActive = incident.status === 'Active';
+    const activeBorderColor = T.violet;
+
     return (
-        <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={onPress}>
+        <TouchableOpacity
+            style={[
+                s.card,
+                isActive && { borderLeftWidth: 3, borderLeftColor: activeBorderColor },
+            ]}
+            activeOpacity={0.8}
+            onPress={onPress}
+        >
             {/* ── Top row: ID + Status badge ── */}
             <View style={s.cardTopRow}>
                 <View style={s.incidentIdRow}>
-                    <Feather name="alert-circle" size={14} color={T.ink4} />
+                    <Feather name="users" size={14} color={T.ink4} />
                     <Text style={s.incidentId}>Incident #{incident.incidentNumber}</Text>
                 </View>
                 <View style={[s.statusBadge, { backgroundColor: ss.bg, borderColor: ss.border }]}>
@@ -113,11 +181,11 @@ function IncidentCard({ incident, onPress }: { incident: VolunteerIncident; onPr
 
             <View style={s.divider} />
 
-            {/* ── Victim Assisted ── */}
+            {/* ── Person row (Victim or Assisted By) ── */}
             <View style={s.detailRow}>
                 <Feather name="user" size={14} color={T.violet} style={s.detailIcon} />
-                <Text style={s.detailLabel}>Victim</Text>
-                <Text style={s.detailValue}>{incident.victimName}</Text>
+                <Text style={s.detailLabel}>{personLabel}</Text>
+                <Text style={s.detailValue}>{incident.personName}</Text>
             </View>
 
             {/* ── Location ── */}
@@ -134,7 +202,7 @@ function IncidentCard({ incident, onPress }: { incident: VolunteerIncident; onPr
                 <Text style={s.detailValue}>{incident.occurredAtLabel}</Text>
             </View>
 
-            {/* ── Status (text row) ── */}
+            {/* ── Status text row ── */}
             <View style={[s.detailRow, { marginBottom: 0 }]}>
                 <Feather name="info" size={14} color={T.violet} style={s.detailIcon} />
                 <Text style={s.detailLabel}>Status</Text>
@@ -147,63 +215,71 @@ function IncidentCard({ incident, onPress }: { incident: VolunteerIncident; onPr
 }
 
 // ── Empty state ────────────────────────────────────────────────────────────────
-function EmptyState() {
+function EmptyState({ isMyEmergency }: { isMyEmergency: boolean }) {
     return (
         <View style={s.emptyWrap}>
             <View style={s.emptyIconRing}>
-                <Feather name="clock" size={32} color={T.ink4} />
+                <Feather name={isMyEmergency ? 'alert-circle' : 'clock'} size={32} color={T.ink4} />
             </View>
             <Text style={s.emptyTitle}>No incidents yet</Text>
             <Text style={s.emptySubtitle}>
-                Your volunteer incident history will appear here once you assist someone.
+                {isMyEmergency
+                    ? 'Your personal SOS emergencies will appear here.'
+                    : 'Your volunteer incident history will appear here once you assist someone.'}
             </Text>
         </View>
     );
 }
 
 // ── Main screen ────────────────────────────────────────────────────────────────
-function toVolunteerIncident(raw: any): VolunteerIncident {
-    const d = new Date(raw.createdAt ?? raw.created_at);
-    const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-        + ' · ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    let status: IncidentStatus = 'Active';
-    if (raw.status === 'RESOLVED') status = 'Resolved';
-    else if (raw.status === 'CANCELLED') status = 'Cancelled';
-    return {
-        id: String(raw.id),
-        incidentNumber: Number(String(raw.id).replace(/\D/g, '') || 0),
-        victimName: raw.reporter ?? 'Unknown',
-        location: raw.address ?? `${Number(raw.location?.latitude ?? 0).toFixed(4)}, ${Number(raw.location?.longitude ?? 0).toFixed(4)}`,
-        occurredAtLabel: label,
-        status,
-    };
-}
-
 export default function VolunteerIncidents() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-
-    const [incidents, setIncidents] = useState<VolunteerIncident[]>(DUMMY_INCIDENTS);
+    const [segment, setSegment] = useState<Segment>('Assisting');
+    const [segmentWidth, setSegmentWidth] = useState(0);
+    const indicator = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
-        const load = () => {
-            chatService.getActiveIncidents()
-                .then((list) => {
-                    if (list.length > 0) setIncidents(list.map(toVolunteerIncident));
-                })
-                .catch(() => { /* keep dummy data on error */ });
-        };
-        load();
-        const interval = setInterval(load, 30_000);
-        return () => clearInterval(interval);
+        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
+        }
     }, []);
+
+    // Animate sliding indicator
+    useEffect(() => {
+        Animated.timing(indicator, {
+            toValue: segment === 'Assisted' ? 0 : 1,
+            duration: 220,
+            useNativeDriver: true,
+        }).start();
+    }, [indicator, segment]);
+
+    const indicatorStyle = useMemo(() => {
+        const translateX = indicator.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, segmentWidth],
+        });
+        return { transform: [{ translateX }] };
+    }, [indicator, segmentWidth]);
+
+    const onSegmentPress = (next: Segment) => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setSegment(next);
+    };
+
+    const isMyEmergency = segment === 'My Emergencies';
+    const categoryKey: IncidentCategory = isMyEmergency ? 'MY_EMERGENCY' : 'ASSISTED';
+    const incidents = useMemo(
+        () => ALL_INCIDENTS.filter(i => i.category === categoryKey),
+        [categoryKey],
+    );
 
     return (
         <AtmosphericShell>
             <View style={s.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-                {/* ── Glass header ── */}
+                {/* ── Header ── */}
                 <View style={[s.header, { paddingTop: insets.top + 8 }]}>
                     <TouchableOpacity
                         style={s.headerBtn}
@@ -216,32 +292,55 @@ export default function VolunteerIncidents() {
                     <View style={s.headerSpacer} />
                 </View>
 
+                {/* ── Segment tabs — identical to activity.tsx ── */}
+                <View
+                    style={s.segmentWrap}
+                    onLayout={e => setSegmentWidth(e.nativeEvent.layout.width / 2)}
+                >
+                    <Animated.View style={[s.segmentIndicator, indicatorStyle]} />
+                    {SEGMENTS.map(label => (
+                        <TouchableOpacity
+                            key={label}
+                            style={s.segmentBtn}
+                            activeOpacity={0.7}
+                            onPress={() => onSegmentPress(label)}
+                        >
+                            <Text style={[s.segmentText, segment === label && s.segmentTextActive]}>
+                                {label}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
                 {/* ── Content ── */}
                 <ScrollView
                     contentContainerStyle={[
                         s.scroll,
-                        { paddingBottom: insets.bottom + VOLUNTEER_NAV_SCREEN_PADDING },
+                        { paddingBottom: insets.bottom + 24 },
                     ]}
                     showsVerticalScrollIndicator={false}
                 >
                     <Text style={s.sectionLabel}>
                         {incidents.length} {incidents.length === 1 ? 'Incident' : 'Incidents'}
+                        {isMyEmergency ? ' · My Emergencies' : ' · Assisted'}
                     </Text>
 
                     {incidents.length === 0 ? (
-                        <EmptyState />
+                        <EmptyState isMyEmergency={isMyEmergency} />
                     ) : (
                         incidents.map(incident => (
                             <IncidentCard
                                 key={incident.id}
                                 incident={incident}
-                                onPress={() => router.push(`/(tabs)/users/volunteer/chat_room?incidentId=${incident.id}` as any)}
+                                isMyEmergency={isMyEmergency}
+                                onPress={() => router.push(
+                                    `/(tabs)/users/volunteer/chat_room?incidentId=${incident.id}&category=${categoryKey}` as any
+                                )}
                             />
                         ))
                     )}
                 </ScrollView>
 
-                <VolunteerBottomNav activeTab="Incidents" />
             </View>
         </AtmosphericShell>
     );
@@ -280,7 +379,43 @@ const s = StyleSheet.create({
     },
     headerSpacer: { width: 36, height: 36 },
 
-    scroll: { paddingHorizontal: 14, paddingTop: 20 },
+    // ── Segment control — same as activity.tsx ──
+    segmentWrap: {
+        marginHorizontal: 14,
+        marginTop: 16,
+        marginBottom: 14,
+        backgroundColor: T.surfaceBulky,
+        borderRadius: R.pill,
+        borderWidth: 1,
+        borderColor: T.lineMid,
+        flexDirection: 'row',
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    segmentIndicator: {
+        position: 'absolute',
+        top: 4,
+        bottom: 4,
+        left: 4,
+        width: '50%',
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulkyActive,
+        borderWidth: 1,
+        borderColor: `${T.violet}55`,
+    },
+    segmentBtn: {
+        flex: 1,
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    segmentText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: T.ink4,
+    },
+    segmentTextActive: { color: T.ink },
+
+    scroll: { paddingHorizontal: 14, paddingTop: 4 },
 
     sectionLabel: {
         fontSize: 11,
@@ -319,6 +454,7 @@ const s = StyleSheet.create({
         letterSpacing: -0.2,
     },
 
+    // ── Status badge — exact same colors as messages.tsx ──
     statusBadge: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -328,16 +464,8 @@ const s = StyleSheet.create({
         borderRadius: R.pill,
         borderWidth: 1,
     },
-    statusDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-    },
-    statusText: {
-        fontSize: 12,
-        fontWeight: '700',
-        letterSpacing: 0.2,
-    },
+    statusDot: { width: 6, height: 6, borderRadius: 3 },
+    statusText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
 
     divider: {
         height: StyleSheet.hairlineWidth,
@@ -356,7 +484,7 @@ const s = StyleSheet.create({
         fontSize: 12,
         fontWeight: '600',
         color: T.ink4,
-        width: 72,
+        width: 80,
     },
     detailValue: {
         flex: 1,

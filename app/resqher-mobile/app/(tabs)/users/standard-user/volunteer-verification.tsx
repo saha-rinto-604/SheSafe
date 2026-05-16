@@ -28,6 +28,7 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 export const VERIFICATION_KEY = 'resqher_volunteer_verification_v1';
+export const VERIFICATION_ACK_KEY = 'resqher_volunteer_verification_ack_v1';
 
 export type VerificationStatus =
     | 'not_applied'

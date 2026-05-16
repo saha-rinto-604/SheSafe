@@ -1,6 +1,7 @@
 import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
+import { Platform } from 'react-native';
 
 const ACCESS_KEY = 'resqher_access_token';
 const REFRESH_KEY = 'resqher_refresh_token';
@@ -19,8 +20,13 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
 }
 
-// Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
-const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
+// Prefer EXPO_PUBLIC_API_URL. When not set, default to the host loopback
+// appropriate for the platform/emulator:
+// - Android emulator: 10.0.2.2
+// - iOS simulator / web: 127.0.0.1
+const envUrl = process.env.EXPO_PUBLIC_API_URL;
+const defaultHost = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+const BASE_URL = normalizeBaseUrl(envUrl || defaultHost);
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -118,11 +124,11 @@ export const authService = {
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
     try {
-      await api.post('/api/auth/signup', {
-        phoneNumber: phone,
+      await api.post('/api/v1/auth/register/', {
+        phone,
         password,
-        firstName,
-        lastName,
+        first_name: firstName,
+        last_name: lastName,
         role: ROLE_MAP[role] ?? 'standard_user',
       });
     } catch (e) {
@@ -132,10 +138,12 @@ export const authService = {
 
   async login(username: string, password: string) {
     try {
-      const res = await api.post('/api/auth/login', { phoneNumber: username, password });
-      const { accessToken } = res.data || {};
+      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
+      const { access, refresh } = res.data || {};
+      const accessToken = access || res.data?.accessToken;
+      const refreshToken = refresh || accessToken;
       if (!accessToken) throw new Error('Invalid token response');
-      await setTokens(accessToken, accessToken);
+      await setTokens(accessToken, refreshToken);
       return accessToken as string;
     } catch (e) {
       throw friendlyError(e);

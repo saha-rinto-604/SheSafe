@@ -6,11 +6,14 @@ import {
     Pressable,
     StyleSheet,
     Alert,
+    Modal,
     ScrollView,
     StatusBar,
     Image,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
@@ -50,7 +53,6 @@ const MENU_SECTIONS: MenuSection[] = [
         items: [
             { icon: 'check-circle', label: 'Volunteer Verification' },
             { icon: 'clock', label: 'Incident History' },
-            { icon: 'calendar', label: 'Booking History' },
             { icon: 'lock', label: 'Privacy & Security' },
         ],
     },
@@ -72,6 +74,7 @@ export default function ProfileMenuScreen() {
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isVerifiedVolunteer, setIsVerifiedVolunteer] = useState(false);
+    const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
 
     // Reload profile and volunteer status whenever this screen is focused
     useFocusEffect(
@@ -89,17 +92,7 @@ export default function ProfileMenuScreen() {
 
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
-            Alert.alert('Logout', 'Are you sure you want to logout?', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Logout',
-                    style: 'destructive',
-                    onPress: async () => {
-                        await signOut();
-                        router.replace('/(auth)/login');
-                    },
-                },
-            ]);
+            setLogoutConfirmVisible(true);
             return;
         }
 
@@ -123,11 +116,6 @@ export default function ProfileMenuScreen() {
             return;
         }
 
-        if (item.label === 'Booking History') {
-            router.push('/(tabs)/users/standard-user/booking-history' as any);
-            return;
-        }
-
         if (item.label === 'Privacy & Security') {
             router.push('/(tabs)/users/standard-user/privacy-security');
             return;
@@ -136,10 +124,56 @@ export default function ProfileMenuScreen() {
         Alert.alert(item.label, 'This section will be available soon.');
     };
 
+    const closeLogoutConfirm = useCallback(() => {
+        setLogoutConfirmVisible(false);
+    }, []);
+
+    const handleLogout = useCallback(async () => {
+        setLogoutConfirmVisible(false);
+        await signOut();
+        router.replace('/(auth)/login');
+    }, [router, signOut]);
+
     return (
         <AtmosphericShell>
             <View style={[s.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+                <Modal
+                    visible={logoutConfirmVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={closeLogoutConfirm}
+                >
+                    <View style={s.logoutConfirmOverlay}>
+                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.logoutConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeLogoutConfirm} />
+                        <View style={s.logoutConfirmCard}>
+                            <View style={s.logoutConfirmIconWrap}>
+                                <Feather name="log-out" size={24} color={T.danger} />
+                            </View>
+                            <Text style={s.logoutConfirmTitle}>Logout</Text>
+                            <Text style={s.logoutConfirmMessage}>Are you sure you want to logout?</Text>
+                            <View style={s.logoutConfirmActions}>
+                                <TouchableOpacity style={s.logoutConfirmSecondaryBtn} onPress={closeLogoutConfirm} activeOpacity={0.85}>
+                                    <Text style={s.logoutConfirmSecondaryTxt}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={s.logoutConfirmPrimaryBtn} onPress={handleLogout} activeOpacity={0.9}>
+                                    <LinearGradient
+                                        colors={["#D92D20", "#F04444"]}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.logoutConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.logoutConfirmPrimaryTxt}>Logout</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
 
                 {/* ── Header — match Medical header style ── */}
                 <View style={s.header}>
@@ -419,5 +453,96 @@ const s = StyleSheet.create({
     },
     rowLogout: {
         borderColor: `${T.danger}22`,
+    },
+    logoutConfirmOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    logoutConfirmScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    logoutConfirmCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.72)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOpacity: 0.28,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 12 },
+        elevation: 18,
+    },
+    logoutConfirmIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(217,45,32,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(217,45,32,0.28)',
+        marginBottom: 14,
+    },
+    logoutConfirmTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    logoutConfirmMessage: {
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+    },
+    logoutConfirmActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 22,
+    },
+    logoutConfirmSecondaryBtn: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    logoutConfirmSecondaryTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    logoutConfirmPrimaryBtn: {
+        flex: 1,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    logoutConfirmPrimaryFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    logoutConfirmPrimaryTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
 });

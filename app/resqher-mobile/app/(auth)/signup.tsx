@@ -13,22 +13,21 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
-import { UserRole } from '../../src/services/api';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-type Role = UserRole;
+type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
 type FormData = {
   firstName: string; lastName: string;
   phone: string; password: string; confirmPassword: string;
 };
 
 const ROLE_OPTIONS = [
-  { value: 'standard_user' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
-  { value: 'volunteer' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
-  { value: 'law_enforcement' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
+  { value: 'USER' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
+  { value: 'VOLUNTEER' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
+  { value: 'POLICE' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
 ];
 
 // ─── Minimalist Role Tile ─────────────────────────────────────────────────────
@@ -177,9 +176,9 @@ export default function Signup() {
       );
 
       const rolePaths: Record<Role, string> = {
-        standard_user: '/(tabs)/users/standard-user/sos_screen',
-        volunteer: '/(tabs)/users/volunteer/dashboard',
-        law_enforcement: '/(tabs)/users/police/dashboard',
+        USER: '/(tabs)/users/standard-user/sos_screen',
+        VOLUNTEER: '/(tabs)/users/volunteer/dashboard',
+        POLICE: '/(tabs)/users/police/dashboard',
       };
       router.replace(rolePaths[user.role] as any);
     } catch (e: any) {
@@ -264,7 +263,7 @@ export default function Signup() {
                 ))}
               </View>
 
-              {!!role && (role === 'volunteer' || role === 'law_enforcement') && (
+              {!!role && (role === 'VOLUNTEER' || role === 'POLICE') && (
                 <View style={st.infoBox}>
                   <Feather name="info" size={14} color={T.violet} />
                   <Text style={st.infoTxt}>Requires admin verification before full access.</Text>
