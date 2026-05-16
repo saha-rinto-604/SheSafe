@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Platform, UIManager, ScrollView,
+  ActivityIndicator, Platform, UIManager, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
@@ -18,12 +18,14 @@ import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
 import { getStoredIdentity } from '../../src/services/api';
 import { ROLE_DEFAULT_ROUTE, VOLUNTEER } from '../../src/constants/routes';
+import { useToast } from '../../src/components/Toast';
 
 type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth(); // This will still be used to set the local token
+  const { signIn } = useAuth();
+  const { showToast } = useToast();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -57,7 +59,21 @@ export default function Login() {
       let route = ROLE_DEFAULT_ROUTE.USER;
       router.replace(route as any);
     } catch (e: any) {
-      Alert.alert('Login failed', e?.message ?? 'Please check your credentials.');
+      const msg = e?.message ?? '';
+      if (msg.toLowerCase().includes('sign up')) {
+        showToast({
+          type: 'warning',
+          title: 'Account Not Found',
+          message: 'No account exists with this phone number. Please create an account first.',
+          action: { label: 'Sign Up', onPress: () => router.push('/(auth)/signup') },
+        });
+      } else {
+        showToast({
+          type: 'error',
+          title: 'Authentication Failed',
+          message: 'Please check your phone number and password, then try again.',
+        });
+      }
     } finally {
       setSubmitting(false);
     }

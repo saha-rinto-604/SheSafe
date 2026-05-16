@@ -40,10 +40,6 @@ async function getActiveIncidents() {
  *    - For each incident, check if it falls within 500m of an existing cluster centre.
  *    - If yes, add it to that cluster. If no, start a new cluster centred on it.
  * 3. Return zones with centre coords, incident count, and a representative name.
- *
- * NOTE: This clustering is done in JS because MySQL doesn't natively support
- * geographic distance grouping without spatial extensions.  For the expected
- * volume (< a few hundred incidents) this is perfectly adequate.
  */
 const CLUSTER_RADIUS_M = 500;
 const EARTH_RADIUS_M = 6_371_000;
@@ -69,23 +65,20 @@ async function getIncidentZones() {
     const lon = Number(inc.longitude);
     let merged = false;
 
-    // Format incident details for frontend
     const incidentDetail = {
       id: inc.id,
       reporter: `${inc.first_name} ${inc.last_name}`.trim(),
-      time: inc.created_at, // Send ISO string or raw Date
+      time: inc.created_at,
       status: inc.status
     };
 
     for (const cluster of clusters) {
       if (haversineM(lat, lon, cluster.latitude, cluster.longitude) <= CLUSTER_RADIUS_M) {
-        // Weighted average to shift centre towards new point (simple approach)
         const total = cluster.count + 1;
         cluster.latitude = (cluster.latitude * cluster.count + lat) / total;
         cluster.longitude = (cluster.longitude * cluster.count + lon) / total;
         cluster.count = total;
         cluster.incidents.push(incidentDetail);
-        // Keep the first non-null address as zone name
         if (!cluster.address && inc.address) cluster.address = inc.address;
         merged = true;
         break;
@@ -108,7 +101,7 @@ async function getIncidentZones() {
     name: c.address || `Incident Zone ${i + 1}`,
     latitude: c.latitude,
     longitude: c.longitude,
-    radius: 200, // visual display radius in metres
+    radius: 200,
     incidentCount: c.count,
     incidents: c.incidents,
   }));
@@ -136,21 +129,39 @@ async function updateIncidentStatus(id, status) {
 
 async function cancelAllByUser(userId) {
   const result = await query(
-    `UPDATE incidents SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'`,
+    `DELETE FROM incidents WHERE user_id = ?`,
     [userId]
   );
-  return { cancelled: result.affectedRows };
+  return { deleted: result.affectedRows };
 }
 
-async function findMyIncidents(userId) {
+/**
+ * Fetch all incidents created by a specific user.
+ * Returns exact location (lat/lng + address), exact date/time, and status.
+ * Ordered by most recent first.
+ *
+ * Status mapping for the frontend:
+ *   ACTIVE    â†’ SOS is currently active
+ *   RESOLVED  â†’ SOS was resolved/completed
+ *   CANCELLED â†’ SOS was cancelled by the user
+ */
+async function getMyIncidents(userId) {
   return query(
-    `SELECT id, user_id, latitude, longitude, address, status, created_at
-     FROM incidents
-     WHERE user_id = ?
-     ORDER BY created_at DESC
-     LIMIT 30`,
+    `SELECT i.id, i.user_id, i.latitude, i.longitude, i.address,
+            i.status, i.created_at
+     FROM incidents i
+     WHERE i.user_id = ?
+     ORDER BY i.created_at DESC`,
     [userId]
   );
 }
 
-module.exports = { createIncident, getActiveIncidents, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, findMyIncidents };
+module.exports = {
+  createIncident,
+  getActiveIncidents,
+  getIncidentZones,
+  findIncidentById,
+  updateIncidentStatus,
+  cancelAllByUser,
+  getMyIncidents,
+};

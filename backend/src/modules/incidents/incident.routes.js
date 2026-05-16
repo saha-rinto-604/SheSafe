@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticate } = require('../auth/auth.middleware');
+const { authenticate } = require('../../middleware/authenticate');
 const controller = require('./incident.controller');
 
 const router = express.Router();
@@ -13,7 +13,7 @@ router.post('/', controller.report);
 // GET /api/incidents/zones — get aggregated incident zones
 router.get('/zones', controller.getZones);
 
-// GET /api/incidents/my — get current user's incidents
+// GET /api/incidents/my — get all incidents created by the authenticated user
 router.get('/my', controller.getMyIncidents);
 
 // GET /api/incidents/:id — get a single incident by id
@@ -29,3 +29,4 @@ router.patch('/:id/resolve', controller.resolve);
 router.delete('/my', controller.clearMyHistory);
 
 module.exports = router;
+

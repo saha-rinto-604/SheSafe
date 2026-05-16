@@ -42,7 +42,9 @@ function formatNum(n: number): string {
 type StatusCfg = { label: string; pillBg: string; pillBorder: string; textColor: string; borderLeft: string };
 
 function statusCfg(status: IncidentRecord['status']): StatusCfg {
-    switch (status) {
+    // Normalize to uppercase to handle both 'Active' and 'ACTIVE' from different API shapes
+    const s = String(status).toUpperCase() as IncidentRecord['status'];
+    switch (s) {
         case 'ACTIVE':
             return {
                 label: 'ACTIVE',
@@ -60,6 +62,7 @@ function statusCfg(status: IncidentRecord['status']): StatusCfg {
                 borderLeft: '#34C759',
             };
         case 'CANCELLED':
+        default:
             return {
                 label: 'CANCELLED',
                 pillBg: 'rgba(255,69,58,0.10)',
@@ -79,7 +82,7 @@ const IncidentCard = memo(function IncidentCard({
     onPress: () => void;
 }) {
     const cfg = statusCfg(record.status);
-    const isActive = record.status === 'ACTIVE';
+    const isActive = String(record.status).toUpperCase() === 'ACTIVE';
     const resolvedTime = record.resolvedAt ? timeAgo(record.resolvedAt) : null;
 
     return (
@@ -144,8 +147,9 @@ export default function ChatHome() {
                     lat: r.latitude ?? null,
                     lng: r.longitude ?? null,
                     address: r.address ?? '',
-                    createdAt: r.created_at,
-                    status: (r.status as IncidentRecord['status']),
+                    createdAt: r.created_at ?? new Date().toISOString(),
+                    // Normalize status to uppercase ('Active' → 'ACTIVE') for UI consistency
+                    status: (String(r.status).toUpperCase() as IncidentRecord['status']),
                 }));
         } catch {
             // offline or unauthenticated — show local only

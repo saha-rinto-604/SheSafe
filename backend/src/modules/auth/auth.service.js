@@ -4,25 +4,26 @@ const crypto = require('crypto');
 const { jwt: jwtConfig } = require('../../config/env');
 const { httpError } = require('../../utils/httpError');
 const { normalizePhoneNumber, isValidBdPhone } = require('../../utils/phone');
+const { validatePasswordStrength } = require('../../middleware/validate');
 const {
   findRoleByName,
   listRoles,
   findUserByPhone,
+  findUserById,
   createUser,
+  updatePasswordHash,
+  toPublicProfile,
 } = require('../users/user.repository');
 const { query } = require('../../config/db');
 
 const ALLOWED_ROLES = new Set(['standard_user', 'volunteer', 'law_enforcement']);
 
+/**
+ * Transforms a raw DB row into the public user shape for auth responses.
+ * Uses the shared toPublicProfile for consistency with GET /api/users/me.
+ */
 function toPublicUser(user) {
-  return {
-    id: user.id,
-    role: user.role_name,
-    firstName: user.first_name,
-    lastName: user.last_name,
-    phoneNumber: user.phone_number,
-    entryTime: user.entry_time,
-  };
+  return toPublicProfile(user);
 }
 
 function makeToken(user) {
@@ -38,6 +39,7 @@ function makeToken(user) {
 }
 
 async function signup(payload) {
+  console.log('[AUTH] signup attempt:', { phone: payload.phoneNumber, role: payload.role });
   const firstName = String(payload.firstName || '').trim();
   const lastName = String(payload.lastName || '').trim();
   const phoneNumber = normalizePhoneNumber(payload.phoneNumber);
@@ -50,8 +52,10 @@ async function signup(payload) {
   if (!isValidBdPhone(phoneNumber)) {
     throw httpError(400, 'Invalid phone number format.');
   }
-  if (password.length < 8) {
-    throw httpError(400, 'Password must be at least 8 characters.');
+  // Enforce strong password format (matches frontend PasswordStrength rules)
+  const pwError = validatePasswordStrength(password);
+  if (pwError) {
+    throw httpError(400, pwError);
   }
   if (!ALLOWED_ROLES.has(role)) {
     throw httpError(400, 'Invalid role.');
@@ -77,6 +81,7 @@ async function signup(payload) {
   });
 
   const accessToken = makeToken(user);
+  console.log('[AUTH] signup success: user ID =', user.id, 'role =', user.role_name);
   return {
     accessToken,
     user: toPublicUser(user),
@@ -84,6 +89,7 @@ async function signup(payload) {
 }
 
 async function login(payload) {
+  console.log('[AUTH] login attempt:', { phone: payload.phoneNumber });
   const phoneNumber = normalizePhoneNumber(payload.phoneNumber);
   const password = String(payload.password || '');
 
@@ -92,11 +98,13 @@ async function login(payload) {
   }
 
   const user = await findUserByPhone(phoneNumber);
+  console.log('[AUTH] login user found:', user ? { id: user.id, hashLen: user.password_hash?.length } : 'NOT FOUND');
   if (!user) {
     throw httpError(401, 'Invalid credentials. Sign up first.');
   }
 
   const ok = await bcrypt.compare(password, user.password_hash);
+  console.log('[AUTH] login bcrypt result:', ok);
   if (!ok) {
     throw httpError(401, 'Invalid credentials.');
   }
@@ -149,8 +157,9 @@ async function resetPassword(payload) {
   if (!phoneNumber || !otpCode || !newPassword) {
     throw httpError(400, 'Phone number, OTP code, and new password are required.');
   }
-  if (newPassword.length < 8) {
-    throw httpError(400, 'New password must be at least 8 characters.');
+  const pwError = validatePasswordStrength(newPassword);
+  if (pwError) {
+    throw httpError(400, pwError);
   }
 
   const rows = await query(
@@ -173,10 +182,44 @@ async function resetPassword(payload) {
   return { message: 'Password reset successfully.' };
 }
 
+/**
+ * Change password for an authenticated user.
+ * Requires the current password for verification (prevents session hijacking).
+ *
+ * Why require current password:
+ *   Even with a valid JWT, we re-verify the current password to confirm
+ *   the person changing it is the actual account holder, not someone
+ *   who found an unlocked phone.
+ */
+async function changePassword(payload) {
+  const { userId, currentPassword, newPassword } = payload;
+
+  if (!currentPassword || !newPassword) {
+    throw httpError(400, 'Current password and new password are required.');
+  }
+
+  const pwError = validatePasswordStrength(newPassword);
+  if (pwError) {
+    throw httpError(400, pwError);
+  }
+
+  const user = await findUserById(userId);
+  if (!user) throw httpError(404, 'User not found.');
+
+  const ok = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!ok) throw httpError(401, 'Current password is incorrect.');
+
+  const hash = await bcrypt.hash(newPassword, 12);
+  await updatePasswordHash(userId, hash);
+
+  return { message: 'Password changed successfully.' };
+}
+
 module.exports = {
   signup,
   login,
   getRoles,
   requestOtp,
   resetPassword,
+  changePassword,
 };

@@ -45,6 +45,10 @@ async function resolve(req, res, next) {
   }
 }
 
+/**
+ * GET /api/incidents/my — Get all incidents created by the authenticated user.
+ * Returns incidents with exact location, date/time, and status.
+ */
 async function getMyIncidents(req, res, next) {
   try {
     const incidents = await incidentService.getMyIncidents(req.user.id);

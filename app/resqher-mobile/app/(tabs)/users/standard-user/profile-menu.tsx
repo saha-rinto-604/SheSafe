@@ -5,25 +5,22 @@ import {
     TouchableOpacity,
     Pressable,
     StyleSheet,
-    Alert,
     Modal,
     ScrollView,
     StatusBar,
     Image,
+    Platform,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as SecureStore from 'expo-secure-store';
-import { VERIFICATION_KEY } from './volunteer-verification';
 import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
+import api from '../../../../src/services/api';
 
 type MenuItem = {
     label: string;
@@ -53,6 +50,7 @@ const MENU_SECTIONS: MenuSection[] = [
         items: [
             { icon: 'check-circle', label: 'Volunteer Verification' },
             { icon: 'clock', label: 'Incident History' },
+            { icon: 'calendar', label: 'Booking History' },
             { icon: 'lock', label: 'Privacy & Security' },
         ],
     },
@@ -70,29 +68,35 @@ const LOGOUT_ITEM: MenuItem = { icon: 'log-out', label: 'Logout', danger: true }
 export default function ProfileMenuScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { signOut } = useAuth();
+    const { signOut, isSosLive } = useAuth();
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isVerifiedVolunteer, setIsVerifiedVolunteer] = useState(false);
-    const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
+    const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+    const [sosBlockModalVisible, setSosBlockModalVisible] = useState(false);
 
     // Reload profile and volunteer status whenever this screen is focused
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
-            SecureStore.getItemAsync(VERIFICATION_KEY).then(raw => {
-                if (!raw) return;
-                try {
-                    const rec = JSON.parse(raw);
-                    setIsVerifiedVolunteer(rec?.status === 'verified');
-                } catch { /* ignore */ }
-            });
+            api.get('/api/verification')
+                .then(({ data }) => {
+                    setIsVerifiedVolunteer(data?.verification?.status === 'verified');
+                })
+                .catch(() => {
+                    setIsVerifiedVolunteer(false);
+                });
         }, []),
     );
 
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
-            setLogoutConfirmVisible(true);
+            // Check if SOS is active before allowing logout
+            if (isSosLive) {
+                setSosBlockModalVisible(true);
+            } else {
+                setLogoutModalVisible(true);
+            }
             return;
         }
 
@@ -116,64 +120,24 @@ export default function ProfileMenuScreen() {
             return;
         }
 
+        if (item.label === 'Booking History') {
+            router.push('/(tabs)/users/standard-user/booking-history' as any);
+            return;
+        }
+
         if (item.label === 'Privacy & Security') {
             router.push('/(tabs)/users/standard-user/privacy-security');
             return;
         }
 
-        Alert.alert(item.label, 'This section will be available soon.');
+        console.warn('[ProfileMenu] Item not yet available:', item.label);
     };
 
-    const closeLogoutConfirm = useCallback(() => {
-        setLogoutConfirmVisible(false);
-    }, []);
-
-    const handleLogout = useCallback(async () => {
-        setLogoutConfirmVisible(false);
-        await signOut();
-        router.replace('/(auth)/login');
-    }, [router, signOut]);
-
     return (
+        <>
         <AtmosphericShell>
             <View style={[s.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-
-                <Modal
-                    visible={logoutConfirmVisible}
-                    transparent
-                    animationType="fade"
-                    statusBarTranslucent
-                    onRequestClose={closeLogoutConfirm}
-                >
-                    <View style={s.logoutConfirmOverlay}>
-                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
-                        <View style={s.logoutConfirmScrim} pointerEvents="none" />
-                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeLogoutConfirm} />
-                        <View style={s.logoutConfirmCard}>
-                            <View style={s.logoutConfirmIconWrap}>
-                                <Feather name="log-out" size={24} color={T.danger} />
-                            </View>
-                            <Text style={s.logoutConfirmTitle}>Logout</Text>
-                            <Text style={s.logoutConfirmMessage}>Are you sure you want to logout?</Text>
-                            <View style={s.logoutConfirmActions}>
-                                <TouchableOpacity style={s.logoutConfirmSecondaryBtn} onPress={closeLogoutConfirm} activeOpacity={0.85}>
-                                    <Text style={s.logoutConfirmSecondaryTxt}>Cancel</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={s.logoutConfirmPrimaryBtn} onPress={handleLogout} activeOpacity={0.9}>
-                                    <LinearGradient
-                                        colors={["#D92D20", "#F04444"]}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 1 }}
-                                        style={s.logoutConfirmPrimaryFill}
-                                    >
-                                        <Text style={s.logoutConfirmPrimaryTxt}>Logout</Text>
-                                    </LinearGradient>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    </View>
-                </Modal>
 
                 {/* ── Header — match Medical header style ── */}
                 <View style={s.header}>
@@ -275,6 +239,67 @@ export default function ProfileMenuScreen() {
                 </ScrollView>
             </View>
         </AtmosphericShell>
+
+        {/* ── Logout Confirmation Modal ─────────────────────────────── */}
+        <Modal visible={logoutModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutModalVisible(false)}>
+            <View style={s.modalOverlay}>
+                <View style={s.modalCard}>
+                    <View style={s.modalIconWrap}>
+                        <Feather name="log-out" size={26} color={T.danger} />
+                    </View>
+                    <Text style={s.modalTitle}>Logout?</Text>
+                    <Text style={s.modalBody}>Are you sure you want to log out of ResQher?</Text>
+                    <TouchableOpacity
+                        style={s.modalBtnPrimary}
+                        onPress={() => setLogoutModalVisible(false)}
+                        activeOpacity={0.82}
+                    >
+                        <Text style={s.modalBtnPrimaryText}>Stay Logged In</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={s.modalBtnSecondary}
+                        onPress={async () => {
+                            setLogoutModalVisible(false);
+                            await signOut();
+                            router.replace('/(auth)/login');
+                        }}
+                        activeOpacity={0.75}
+                    >
+                        <Text style={s.modalBtnSecondaryText}>Yes, Logout</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+
+        {/* ── SOS Active — Logout Blocked Modal ────────────────────── */}
+        <Modal visible={sosBlockModalVisible} transparent animationType="fade" onRequestClose={() => setSosBlockModalVisible(false)}>
+            <View style={s.modalOverlay}>
+                <View style={s.modalCard}>
+                    <View style={[s.modalIconWrap, s.modalIconWrapWarning]}>
+                        <Feather name="alert-triangle" size={26} color={T.accent} />
+                    </View>
+                    <Text style={s.modalTitle}>Cannot Logout</Text>
+                    <Text style={s.modalBody}>
+                        You have an active SOS emergency. Please resolve your incident from the SOS screen before logging out.
+                    </Text>
+                    <TouchableOpacity
+                        style={s.modalBtnPrimary}
+                        onPress={() => setSosBlockModalVisible(false)}
+                        activeOpacity={0.82}
+                    >
+                        <Text style={s.modalBtnPrimaryText}>Keep SOS Active</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={s.modalBtnSecondary}
+                        onPress={() => { setSosBlockModalVisible(false); router.back(); }}
+                        activeOpacity={0.75}
+                    >
+                        <Text style={s.modalBtnSecondaryText}>Go Back to SOS</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    </>
     );
 }
 
@@ -454,95 +479,66 @@ const s = StyleSheet.create({
     rowLogout: {
         borderColor: `${T.danger}22`,
     },
-    logoutConfirmOverlay: {
-        ...StyleSheet.absoluteFillObject,
+
+    // ── Themed Modals ──────────────────────────────────────────────────────
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.72)',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 22,
-        backgroundColor: 'rgba(4,6,12,0.45)',
+        paddingHorizontal: 24,
     },
-    logoutConfirmScrim: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,8,18,0.52)',
-    },
-    logoutConfirmCard: {
+    modalCard: {
         width: '100%',
-        maxWidth: 360,
-        borderRadius: 28,
-        paddingHorizontal: 22,
-        paddingTop: 22,
-        paddingBottom: 18,
-        backgroundColor: 'rgba(24,16,40,0.72)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        overflow: 'hidden',
-        shadowColor: '#000',
-        shadowOpacity: 0.28,
-        shadowRadius: 24,
-        shadowOffset: { width: 0, height: 12 },
-        elevation: 18,
-    },
-    logoutConfirmIconWrap: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(217,45,32,0.14)',
-        borderWidth: 1,
-        borderColor: 'rgba(217,45,32,0.28)',
-        marginBottom: 14,
-    },
-    logoutConfirmTitle: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: T.ink,
-        letterSpacing: -0.3,
-    },
-    logoutConfirmMessage: {
-        marginTop: 8,
-        fontSize: 14,
-        lineHeight: 20,
-        color: T.ink2,
-        fontWeight: '500',
-    },
-    logoutConfirmActions: {
-        flexDirection: 'row',
-        gap: 10,
-        marginTop: 22,
-    },
-    logoutConfirmSecondaryBtn: {
-        flex: 1,
-        minHeight: 48,
-        borderRadius: R.pill,
         backgroundColor: T.surfaceBulky,
+        borderRadius: 24,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.12)',
+        padding: 28,
         alignItems: 'center',
-        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 28, shadowOffset: { width: 0, height: 10 } },
+            android: { elevation: 18 },
+        }),
     },
-    logoutConfirmSecondaryTxt: {
-        color: T.ink3,
-        fontSize: 14,
-        fontWeight: '800',
-        letterSpacing: 0.5,
+    modalIconWrap: {
+        width: 64, height: 64, borderRadius: 32,
+        backgroundColor: T.dangerBg,
+        borderWidth: 1.5, borderColor: T.dangerBorder,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 18,
     },
-    logoutConfirmPrimaryBtn: {
-        flex: 1,
-        borderRadius: R.pill,
-        overflow: 'hidden',
-        minHeight: 48,
+    modalIconWrapWarning: {
+        backgroundColor: 'rgba(245,158,11,0.12)',
+        borderColor: 'rgba(245,158,11,0.30)',
     },
-    logoutConfirmPrimaryFill: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
+    modalTitle: {
+        fontSize: 20, fontWeight: '800' as const, color: T.ink,
+        letterSpacing: -0.3, marginBottom: 10, textAlign: 'center' as const,
     },
-    logoutConfirmPrimaryTxt: {
-        color: T.onPrimary,
-        fontSize: 14,
-        fontWeight: '900',
-        letterSpacing: 0.6,
-        textTransform: 'uppercase',
+    modalBody: {
+        fontSize: 14, fontWeight: '400' as const, color: T.ink3,
+        lineHeight: 21, textAlign: 'center' as const, marginBottom: 26,
+    },
+    modalBtnPrimary: {
+        width: '100%', height: 52,
+        backgroundColor: T.violet,
+        borderRadius: 14,
+        alignItems: 'center' as const, justifyContent: 'center' as const,
+        marginBottom: 12,
+        ...Platform.select({
+            ios: { shadowColor: T.violet, shadowOpacity: 0.38, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 6 },
+        }),
+    },
+    modalBtnPrimaryText: {
+        fontSize: 16, fontWeight: '700' as const, color: T.onPrimary, letterSpacing: 0.2,
+    },
+    modalBtnSecondary: {
+        width: '100%', height: 48,
+        alignItems: 'center' as const, justifyContent: 'center' as const,
+    },
+    modalBtnSecondaryText: {
+        fontSize: 15, fontWeight: '600' as const, color: T.ink4,
     },
 });

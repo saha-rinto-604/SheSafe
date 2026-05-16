@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Platform, LayoutAnimation,
+  ActivityIndicator, Platform, LayoutAnimation,
   UIManager, Animated, Easing, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
@@ -13,21 +13,24 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
+import type { UserRole } from '../../src/services/api';
+import { useToast } from '../../src/components/Toast';
+import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
+type Role = UserRole;
 type FormData = {
   firstName: string; lastName: string;
   phone: string; password: string; confirmPassword: string;
 };
 
 const ROLE_OPTIONS = [
-  { value: 'USER' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
-  { value: 'VOLUNTEER' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
-  { value: 'POLICE' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
+  { value: 'standard_user' as Role, label: 'Standard User', description: 'Personal safety & SOS alerts.', icon: 'user' as const },
+  { value: 'volunteer' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
+  { value: 'law_enforcement' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
 ];
 
 // ─── Minimalist Role Tile ─────────────────────────────────────────────────────
@@ -122,83 +125,23 @@ function StepProgress({ step }: { step: 1 | 2 | 3 }) {
   );
 }
 
-// ─── Signup ────────────────────────────────────────────────────────────────────
-export default function Signup() {
-  const router = useRouter();
-  const { signUp } = useAuth();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [role, setRole] = useState<Role | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [focused, setFocused] = useState<string | null>(null);
-
-  const { control, handleSubmit, watch, formState: { errors }, trigger } = useForm<FormData>({
-    defaultValues: { firstName: '', lastName: '', phone: '', password: '', confirmPassword: '' },
-  });
-  const pw = watch('password');
-  const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
-
-  const goStep = (s: 1 | 2 | 3) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setStep(s);
-  };
-
-  const goNext = async () => {
-    if (step === 1) {
-      if (!role) { Alert.alert('Required', 'Please select an account type.'); return; }
-      goStep(2);
-    } else if (step === 2) {
-      const valid = await trigger(['firstName', 'lastName', 'phone']);
-      if (valid) goStep(3);
-    }
-  };
-
-  const goBack = () => {
-    if (step === 2) goStep(1);
-    else if (step === 3) goStep(2);
-    else router.back();
-  };
-
-  const phoneRules = {
-    required: 'Phone is required',
-    validate: (v: string) => /^01[3-9]\d{8}$/.test(v.trim()) || 'Invalid format',
-  };
-
-  const onSubmit = async (data: FormData) => {
-    if (!role) { Alert.alert('Required', 'Please select an account type.'); goStep(1); return; }
-    setSubmitting(true);
-    try {
-      const user = await signUp(
-        data.phone.trim(),
-        data.password,
-        data.firstName,
-        data.lastName,
-        role
-      );
-
-      const rolePaths: Record<Role, string> = {
-        USER: '/(tabs)/users/standard-user/sos_screen',
-        VOLUNTEER: '/(tabs)/users/volunteer/dashboard',
-        POLICE: '/(tabs)/users/police/dashboard',
-      };
-      router.replace(rolePaths[user.role] as any);
-    } catch (e: any) {
-      Alert.alert('Signup failed', e?.message ?? 'Unable to create account.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // Reusable inline field
-  const Field = ({
-    name, placeholder, icon, secure, keyboard, rules,
-  }: {
-    name: keyof FormData;
-    placeholder: string;
-    icon: keyof typeof Feather.glyphMap;
-    secure?: boolean;
-    keyboard?: any;
-    rules?: object;
-  }) => (
+// ─── Stable Form Field (defined outside Signup to prevent remount on re-render) ─
+function FormField({
+  name, placeholder, icon, secure, keyboard, rules,
+  control, errors, focused, setFocused,
+}: {
+  name: keyof FormData;
+  placeholder: string;
+  icon: keyof typeof Feather.glyphMap;
+  secure?: boolean;
+  keyboard?: any;
+  rules?: object;
+  control: any;
+  errors: any;
+  focused: string | null;
+  setFocused: (v: string | null) => void;
+}) {
+  return (
     <Controller
       control={control}
       name={name}
@@ -225,6 +168,105 @@ export default function Signup() {
       )}
     />
   );
+}
+
+// ─── Signup ────────────────────────────────────────────────────────────────────
+export default function Signup() {
+  const router = useRouter();
+  const { signUp } = useAuth();
+  const { showToast } = useToast();
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [role, setRole] = useState<Role | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [focused, setFocused] = useState<string | null>(null);
+
+  const { control, handleSubmit, watch, formState: { errors }, trigger } = useForm<FormData>({
+    defaultValues: { firstName: '', lastName: '', phone: '', password: '', confirmPassword: '' },
+  });
+  const pw = watch('password');
+  const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
+
+  const goStep = (s: 1 | 2 | 3) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setStep(s);
+  };
+
+  const goNext = async () => {
+    if (step === 1) {
+      if (!role) { showToast({ type: 'warning', title: 'Role Required', message: 'Please select an account type to continue.' }); return; }
+      goStep(2);
+    } else if (step === 2) {
+      const valid = await trigger(['firstName', 'lastName', 'phone']);
+      if (valid) goStep(3);
+    }
+  };
+
+  const goBack = () => {
+    if (step === 2) goStep(1);
+    else if (step === 3) goStep(2);
+    else router.back();
+  };
+
+  const phoneRules = {
+    required: 'Phone is required',
+    validate: (v: string) => /^01[3-9]\d{8}$/.test(v.trim()) || 'Invalid format',
+  };
+
+  const onSubmit = async (data: FormData) => {
+    if (!role) {
+      showToast({ type: 'warning', title: 'Role Required', message: 'Please select an account type to continue.' });
+      goStep(1);
+      return;
+    }
+    // Enforce strong password format
+    if (!isStrongPassword(data.password)) {
+      showToast({
+        type: 'error',
+        title: 'Weak Password',
+        message: 'Password does not meet security requirements. Please include a mix of uppercase, numbers, and special characters.',
+        duration: 5000,
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await signUp(
+        data.phone.trim(),
+        data.password,
+        data.firstName,
+        data.lastName,
+        role
+      );
+
+      showToast({ type: 'success', title: 'Welcome to ResQher!', message: 'Your account has been created successfully.' });
+
+      const rolePaths: Record<string, string> = {
+        USER: '/(tabs)/users/standard-user/sos_screen',
+        VOLUNTEER: '/(tabs)/users/volunteer',
+        POLICE: '/(tabs)/users/police/dashboard',
+      };
+      router.replace(rolePaths[result.role] as any);
+    } catch (e: any) {
+      const msg = e?.message ?? '';
+      if (msg.toLowerCase().includes('already registered')) {
+        showToast({
+          type: 'warning',
+          title: 'Phone Already Registered',
+          message: 'An account with this phone number already exists. Please sign in instead.',
+          action: { label: 'Sign In', onPress: () => router.push('/(auth)/login') },
+        });
+      } else {
+        showToast({
+          type: 'error',
+          title: 'Registration Failed',
+          message: msg || 'Unable to create your account. Please try again.',
+        });
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
 
   const STEP_TITLES = {
     1: { title: 'Join ResQher', subtitle: 'Select how you want to use the app.' },
@@ -263,7 +305,7 @@ export default function Signup() {
                 ))}
               </View>
 
-              {!!role && (role === 'VOLUNTEER' || role === 'POLICE') && (
+              {!!role && (role === 'volunteer' || role === 'law_enforcement') && (
                 <View style={st.infoBox}>
                   <Feather name="info" size={14} color={T.violet} />
                   <Text style={st.infoTxt}>Requires admin verification before full access.</Text>
@@ -350,7 +392,7 @@ export default function Signup() {
                 </View>
               </View>
 
-              <Field name="phone" placeholder="Phone number" icon="phone" keyboard="phone-pad" rules={phoneRules} />
+              <FormField name="phone" placeholder="Phone number" icon="phone" keyboard="phone-pad" rules={phoneRules} control={control} errors={errors} focused={focused} setFocused={setFocused} />
 
               <TouchableOpacity
                 style={st.btn}
@@ -370,8 +412,9 @@ export default function Signup() {
           {/* ─── STEP 3: Security ──────────────────────── */}
           {step === 3 && (
             <>
-              <Field name="password" placeholder="Password" icon="lock" secure rules={{ required: 'Required', minLength: { value: 8, message: 'Min 8 characters' } }} />
-              <Field name="confirmPassword" placeholder="Confirm password" icon="shield" secure rules={{ required: 'Required', validate: (v: string) => v === pw || 'Passwords do not match' }} />
+              <FormField name="password" placeholder="Password" icon="lock" secure rules={{ required: 'Required' }} control={control} errors={errors} focused={focused} setFocused={setFocused} />
+              <PasswordStrength password={pw} />
+              <FormField name="confirmPassword" placeholder="Confirm password" icon="shield" secure rules={{ required: 'Required', validate: (v: string) => v === pw || 'Passwords do not match' }} control={control} errors={errors} focused={focused} setFocused={setFocused} />
 
               <TouchableOpacity
                 disabled={submitting}

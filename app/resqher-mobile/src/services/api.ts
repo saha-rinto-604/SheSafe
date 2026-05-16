@@ -1,7 +1,8 @@
 import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
-import { Platform } from 'react-native';
+
+export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
 
 const ACCESS_KEY = 'resqher_access_token';
 const REFRESH_KEY = 'resqher_refresh_token';
@@ -20,13 +21,8 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
 }
 
-// Prefer EXPO_PUBLIC_API_URL. When not set, default to the host loopback
-// appropriate for the platform/emulator:
-// - Android emulator: 10.0.2.2
-// - iOS simulator / web: 127.0.0.1
-const envUrl = process.env.EXPO_PUBLIC_API_URL;
-const defaultHost = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
-const BASE_URL = normalizeBaseUrl(envUrl || defaultHost);
+// Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
+const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -68,8 +64,9 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
   try { return JSON.parse(raw) as StoredIdentity; } catch { return null; }
 }
 
-// Attach token automatically
+// Attach token automatically + debug logger
 api.interceptors.request.use(async (config) => {
+  console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.data ? JSON.stringify(config.data).substring(0, 120) : '');
   const token = await getAccessToken();
   if (token) {
     config.headers = config.headers ?? {};
@@ -124,13 +121,18 @@ export const authService = {
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
     try {
-      await api.post('/api/v1/auth/register/', {
-        phone,
+      const res = await api.post('/api/auth/signup', {
+        phoneNumber: phone,
         password,
-        first_name: firstName,
-        last_name: lastName,
+        firstName,
+        lastName,
         role: ROLE_MAP[role] ?? 'standard_user',
       });
+      const { accessToken } = res.data || {};
+      if (accessToken) {
+        await setTokens(accessToken, accessToken);
+      }
+      return res.data;
     } catch (e) {
       throw friendlyError(e);
     }
@@ -138,12 +140,10 @@ export const authService = {
 
   async login(username: string, password: string) {
     try {
-      const res = await api.post('/api/v1/auth/login/', { phone: username, password });
-      const { access, refresh } = res.data || {};
-      const accessToken = access || res.data?.accessToken;
-      const refreshToken = refresh || accessToken;
+      const res = await api.post('/api/auth/login', { phoneNumber: username, password });
+      const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
-      await setTokens(accessToken, refreshToken);
+      await setTokens(accessToken, accessToken);
       return accessToken as string;
     } catch (e) {
       throw friendlyError(e);

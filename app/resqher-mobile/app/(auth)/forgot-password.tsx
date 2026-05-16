@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Platform, ScrollView,
+  ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -17,6 +17,8 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { authService } from '../../src/services/api';
+import { useToast } from '../../src/components/Toast';
+import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 
 // Simple shared input field
 function Field({
@@ -61,6 +63,7 @@ function Field({
 
 export default function ForgotPassword() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [step, setStep] = useState<1 | 2>(1);
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
@@ -71,19 +74,26 @@ export default function ForgotPassword() {
 
   const handleRequestOtp = async () => {
     const trimmed = phone.trim();
-    if (!trimmed) { Alert.alert('Phone required', 'Please enter your registered phone number.'); return; }
+    if (!trimmed) {
+      showToast({ type: 'warning', title: 'Phone Required', message: 'Please enter your registered phone number.' });
+      return;
+    }
     setLoading(true);
     try {
       const res = await authService.forgotPassword(trimmed);
-      // In production the OTP is delivered via SMS; for dev it's returned in response
       if (res?.otpCode) {
-        Alert.alert('OTP Sent', `Your OTP is: ${res.otpCode}\n(In production this would be sent via SMS.)`);
+        showToast({
+          type: 'info',
+          title: 'OTP Generated',
+          message: `Your verification code is: ${res.otpCode}`,
+          duration: 8000,
+        });
       } else {
-        Alert.alert('OTP Sent', 'Check your registered phone number for the OTP.');
+        showToast({ type: 'success', title: 'OTP Sent', message: 'Check your registered phone for the verification code.' });
       }
       setStep(2);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to send OTP. Please try again.');
+      showToast({ type: 'error', title: 'Request Failed', message: e?.message ?? 'Unable to send OTP. Please verify your phone number.' });
     } finally {
       setLoading(false);
     }
@@ -91,17 +101,37 @@ export default function ForgotPassword() {
 
   const handleResetPassword = async () => {
     const trimmedOtp = otp.trim();
-    if (!trimmedOtp || trimmedOtp.length !== 6) { Alert.alert('Invalid OTP', 'Please enter the 6-digit OTP.'); return; }
-    if (newPassword.length < 8) { Alert.alert('Weak password', 'Password must be at least 8 characters.'); return; }
-    if (newPassword !== confirmPassword) { Alert.alert('Mismatch', 'Passwords do not match.'); return; }
+    if (!trimmedOtp || trimmedOtp.length !== 6) {
+      showToast({ type: 'warning', title: 'Invalid OTP', message: 'Please enter the 6-digit verification code.' });
+      return;
+    }
+    if (!isStrongPassword(newPassword)) {
+      showToast({
+        type: 'error',
+        title: 'Weak Password',
+        message: 'Password does not meet security requirements. Please include uppercase, numbers, and special characters.',
+        duration: 5000,
+      });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast({ type: 'warning', title: 'Password Mismatch', message: 'The passwords you entered do not match. Please try again.' });
+      return;
+    }
     setLoading(true);
     try {
       await authService.resetPassword(phone.trim(), trimmedOtp, newPassword);
-      Alert.alert('Success', 'Your password has been reset. Please sign in.', [
-        { text: 'Sign In', onPress: () => router.replace('/(auth)/login' as any) },
-      ]);
+      showToast({
+        type: 'success',
+        title: 'Password Reset Complete',
+        message: 'Your password has been updated. Please sign in with your new credentials.',
+        action: { label: 'Sign In', onPress: () => router.replace('/(auth)/login' as any) },
+        duration: 6000,
+      });
+      // Navigate after a short delay so the toast is visible
+      setTimeout(() => router.replace('/(auth)/login' as any), 2000);
     } catch (e: any) {
-      Alert.alert('Reset failed', e?.message ?? 'Invalid or expired OTP.');
+      showToast({ type: 'error', title: 'Reset Failed', message: e?.message ?? 'Invalid or expired OTP. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -179,7 +209,7 @@ export default function ForgotPassword() {
               />
               <Field
                 icon="lock"
-                placeholder="New password (min 8 chars)"
+                placeholder="New password"
                 value={newPassword}
                 onChangeText={setNewPassword}
                 secureTextEntry
@@ -187,6 +217,7 @@ export default function ForgotPassword() {
                 onFocus={() => setFocused('pw')}
                 onBlur={() => setFocused(null)}
               />
+              <PasswordStrength password={newPassword} />
               <Field
                 icon="lock"
                 placeholder="Confirm new password"

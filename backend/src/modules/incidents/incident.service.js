@@ -1,5 +1,12 @@
 const { httpError } = require('../../utils/httpError');
-const { createIncident, getIncidentZones, findIncidentById, updateIncidentStatus, cancelAllByUser, findMyIncidents } = require('./incident.repository');
+const {
+  createIncident,
+  getIncidentZones,
+  findIncidentById,
+  updateIncidentStatus,
+  cancelAllByUser,
+  getMyIncidents: getMyIncidentsRepo,
+} = require('./incident.repository');
 
 /**
  * Report a new incident (triggered by SOS).
@@ -46,10 +53,6 @@ async function cancelIncident(userId, incidentId) {
   return updateIncidentStatus(incidentId, 'CANCELLED');
 }
 
-async function clearMyHistory(userId) {
-  return cancelAllByUser(userId);
-}
-
 async function resolveIncident(userId, incidentId) {
   const incident = await findIncidentById(incidentId);
   if (!incident) throw httpError(404, 'Incident not found.');
@@ -60,8 +63,46 @@ async function resolveIncident(userId, incidentId) {
   return updateIncidentStatus(incidentId, 'RESOLVED');
 }
 
-async function getMyIncidents(userId) {
-  return findMyIncidents(userId);
+async function clearMyHistory(userId) {
+  return cancelAllByUser(userId);
 }
 
-module.exports = { reportIncident, getZones, getOne, cancelIncident, clearMyHistory, resolveIncident, getMyIncidents };
+/**
+ * Get all incidents created by the authenticated user.
+ * Transforms raw DB rows into the shape expected by the frontend IncidentCard:
+ *   { id, incidentNumber, latitude, longitude, location, occurredAt, occurredAtLabel, status }
+ *
+ * Status mapping:
+ *   ACTIVE    → 'Active'   (SOS is on)
+ *   RESOLVED  → 'Resolved' (SOS completed)
+ *   CANCELLED → 'Cancelled' (user cancelled)
+ */
+async function getMyIncidents(userId) {
+  const rows = await getMyIncidentsRepo(userId);
+  return rows.map((row) => {
+    const statusMap = { ACTIVE: 'Active', RESOLVED: 'Resolved', CANCELLED: 'Cancelled' };
+    return {
+      id: String(row.id),
+      incidentNumber: Number(row.id),
+      latitude: Number(row.latitude),
+      longitude: Number(row.longitude),
+      location: row.address || `${Number(row.latitude).toFixed(4)}, ${Number(row.longitude).toFixed(4)}`,
+      occurredAt: row.created_at,
+      occurredAtLabel: new Date(row.created_at).toLocaleString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true,
+      }),
+      status: statusMap[row.status] || row.status,
+    };
+  });
+}
+
+module.exports = {
+  reportIncident,
+  getZones,
+  getOne,
+  cancelIncident,
+  resolveIncident,
+  clearMyHistory,
+  getMyIncidents,
+};
