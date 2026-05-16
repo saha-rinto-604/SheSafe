@@ -9,7 +9,9 @@ export default function VolunteerLayout() {
             <Stack.Screen name="incidents" />
             <Stack.Screen name="activity" />
             <Stack.Screen name="medical" />
+            <Stack.Screen name="MedicalMapView" />
             <Stack.Screen name="dashboard" />
+            <Stack.Screen name="notifications" />
             <Stack.Screen name="profile-menu" />
             <Stack.Screen name="profile-information" />
             <Stack.Screen name="edit-profile" />

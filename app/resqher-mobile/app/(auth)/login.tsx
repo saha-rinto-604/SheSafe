@@ -7,6 +7,8 @@ import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as SecureStore from 'expo-secure-store';
+import { VERIFICATION_ACK_KEY, VERIFICATION_KEY } from '../(tabs)/users/standard-user/volunteer-verification';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -39,10 +41,25 @@ export default function Login() {
     } finally {
       setSubmitting(false);
 
-      // We manually tell the app to navigate to the volunteer home after a short delay
-      setTimeout(() => {
-        router.replace('/(tabs)/users/volunteer' as any);
-        console.log("Mock Login Successful: Redirecting to Volunteer Home");
+      // We manually tell the app to navigate to the standard-user SOS after a short delay
+      setTimeout(async () => {
+        // For testing: always start from the initial verification flow by clearing any saved state
+        try {
+          await SecureStore.deleteItemAsync(VERIFICATION_KEY);
+          await SecureStore.deleteItemAsync(VERIFICATION_ACK_KEY);
+        } catch {}
+
+        // Heuristic for mock: if phone or password includes 'vol' treat as volunteer account
+        const isVolunteerMock = (data.phone || '').toLowerCase().includes('vol') || (data.password || '').toLowerCase().includes('vol');
+        if (isVolunteerMock) {
+          // Send volunteers into the volunteer verification flow
+          router.replace('/(tabs)/users/volunteer/volunteer-verification' as any);
+          console.log('Mock Login: detected volunteer — navigating to Volunteer Verification (forced)');
+        } else {
+          // Standard users go straight to their home
+          router.replace('/(tabs)/users/standard-user' as any);
+          console.log('Mock Login: standard user — navigating to Standard Home (forced)');
+        }
       }, 1000);
     }
   };

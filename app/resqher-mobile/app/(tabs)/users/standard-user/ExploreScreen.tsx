@@ -7,7 +7,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
-    TextInput, Keyboard, Pressable, Modal, ScrollView, Image, PanResponder,
+    TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
@@ -1836,105 +1836,111 @@ export default function ExploreScreen() {
                                 </TouchableOpacity>
                             </View>
 
-                            <View style={s.placeSheetSection}>
-                                {placeSheetMode === 'incidents' ? (
-                                    <>
-                                        <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
-                                        {placeIncidents.length === 0 ? (
-                                            <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
-                                        ) : (
-                                            placeIncidents.map(inc => (
-                                                <View key={inc.id} style={s.placeIncidentRow}>
-                                                    <View style={s.placeIncidentInfo}>
-                                                        <Text style={s.placeIncidentName}>{inc.reporter}</Text>
-                                                        <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                            <KeyboardAvoidingView
+                                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                                keyboardVerticalOffset={insets.top + 56}
+                                style={s.safePlaceKeyboardAvoiding}
+                            >
+                                <View style={s.placeSheetSection}>
+                                    {placeSheetMode === 'incidents' ? (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
+                                            {placeIncidents.length === 0 ? (
+                                                <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
+                                            ) : (
+                                                placeIncidents.map(inc => (
+                                                    <View key={inc.id} style={s.placeIncidentRow}>
+                                                        <View style={s.placeIncidentInfo}>
+                                                            <Text style={s.placeIncidentName}>{inc.reporter}</Text>
+                                                            <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                                                        </View>
+                                                        <View style={[
+                                                            s.placeIncidentPill,
+                                                            inc.status === 'ACTIVE' && s.placeIncidentPillActive,
+                                                            inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
+                                                            inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
+                                                        ]}>
+                                                            <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                                        </View>
                                                     </View>
-                                                    <View style={[
-                                                        s.placeIncidentPill,
-                                                        inc.status === 'ACTIVE' && s.placeIncidentPillActive,
-                                                        inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
-                                                        inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
-                                                    ]}>
-                                                        <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                                ))
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
+                                            {safePlaceSubmitState === 'success' ? (
+                                                <RNAnimated.View
+                                                    style={[
+                                                        s.safePlaceSuccessWrap,
+                                                        {
+                                                            opacity: safePlaceSuccessAnim,
+                                                            transform: [{
+                                                                translateY: safePlaceSuccessAnim.interpolate({
+                                                                    inputRange: [0, 1],
+                                                                    outputRange: [10, 0],
+                                                                }),
+                                                            }],
+                                                        },
+                                                    ]}
+                                                >
+                                                    <View style={s.safePlaceSuccessIcon}>
+                                                        <Ionicons name="checkmark" size={18} color={T.onPrimary} />
                                                     </View>
-                                                </View>
-                                            ))
-                                        )}
-                                    </>
-                                ) : (
-                                    <>
-                                        <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
-                                        {safePlaceSubmitState === 'success' ? (
-                                            <RNAnimated.View
-                                                style={[
-                                                    s.safePlaceSuccessWrap,
-                                                    {
-                                                        opacity: safePlaceSuccessAnim,
-                                                        transform: [{
-                                                            translateY: safePlaceSuccessAnim.interpolate({
-                                                                inputRange: [0, 1],
-                                                                outputRange: [10, 0],
-                                                            }),
-                                                        }],
-                                                    },
-                                                ]}
-                                            >
-                                                <View style={s.safePlaceSuccessIcon}>
-                                                    <Ionicons name="checkmark" size={18} color={T.onPrimary} />
-                                                </View>
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={s.safePlaceSuccessTitle}>Sent to admin</Text>
-                                                    <Text style={s.safePlaceSuccessSubtitle}>
-                                                        Your safe place request was sent to admin for confirmation.
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={s.safePlaceSuccessTitle}>Sent to admin</Text>
+                                                        <Text style={s.safePlaceSuccessSubtitle}>
+                                                            Your safe place request was sent to admin for confirmation.
+                                                        </Text>
+                                                    </View>
+                                                </RNAnimated.View>
+                                            ) : (
+                                                <>
+                                                    <Text style={s.safePlaceQuestion}>
+                                                        Why is this place safe? (Describe briefly)
                                                     </Text>
-                                                </View>
-                                            </RNAnimated.View>
-                                        ) : (
-                                            <>
-                                                <Text style={s.safePlaceQuestion}>
-                                                    Why is this place safe? (Describe briefly)
-                                                </Text>
-                                                <TextInput
-                                                    value={safePlaceAnswer}
-                                                    onChangeText={(v) => {
-                                                        setSafePlaceAnswer(v);
-                                                        if (safePlaceError) setSafePlaceError(null);
-                                                    }}
-                                                    placeholder="Type your answer…"
-                                                    placeholderTextColor={T.ink4}
-                                                    multiline
-                                                    textAlignVertical="top"
-                                                    style={s.safePlaceInput}
-                                                    selectionColor={T.violet}
-                                                />
-                                                {!!safePlaceError && (
-                                                    <Text style={s.safePlaceError}>{safePlaceError}</Text>
-                                                )}
-                                                <View style={s.safePlaceActions}>
-                                                    <TouchableOpacity
-                                                        style={[s.safePlaceBtn, s.safePlaceBtnSecondary]}
-                                                        onPress={cancelAddSafePlace}
-                                                        activeOpacity={0.8}
-                                                    >
-                                                        <Text style={s.safePlaceBtnTextSecondary}>Cancel</Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                        style={[
-                                                            s.safePlaceBtn,
-                                                            s.safePlaceBtnPrimary,
-                                                            safePlaceAnswer.trim().length === 0 && s.safePlaceBtnPrimaryDisabled,
-                                                        ]}
-                                                        onPress={safePlaceAnswer.trim().length === 0 ? undefined : submitAddSafePlace}
-                                                        activeOpacity={safePlaceAnswer.trim().length === 0 ? 1 : 0.8}
-                                                    >
-                                                        <Text style={s.safePlaceBtnTextPrimary}>Submit</Text>
-                                                    </TouchableOpacity>
-                                                </View>
-                                            </>
-                                        )}
-                                    </>
-                                )}
-                            </View>
+                                                    <TextInput
+                                                        value={safePlaceAnswer}
+                                                        onChangeText={(v) => {
+                                                            setSafePlaceAnswer(v);
+                                                            if (safePlaceError) setSafePlaceError(null);
+                                                        }}
+                                                        placeholder="Type your answer…"
+                                                        placeholderTextColor={T.ink4}
+                                                        multiline
+                                                        textAlignVertical="top"
+                                                        style={s.safePlaceInput}
+                                                        selectionColor={T.violet}
+                                                    />
+                                                    {!!safePlaceError && (
+                                                        <Text style={s.safePlaceError}>{safePlaceError}</Text>
+                                                    )}
+                                                    <View style={s.safePlaceActions}>
+                                                        <TouchableOpacity
+                                                            style={[s.safePlaceBtn, s.safePlaceBtnCancel]}
+                                                            onPress={cancelAddSafePlace}
+                                                            activeOpacity={0.8}
+                                                        >
+                                                            <Text style={s.safePlaceBtnTextCancel}>Cancel</Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={[
+                                                                s.safePlaceBtn,
+                                                                s.safePlaceBtnSecondary,
+                                                                safePlaceAnswer.trim().length === 0 && s.safePlaceBtnPrimaryDisabled,
+                                                            ]}
+                                                            onPress={safePlaceAnswer.trim().length === 0 ? undefined : submitAddSafePlace}
+                                                            activeOpacity={safePlaceAnswer.trim().length === 0 ? 1 : 0.8}
+                                                        >
+                                                            <Text style={s.safePlaceBtnTextSecondary}>Submit</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                </>
+                                            )}
+                                        </>
+                                    )}
+                                </View>
+                            </KeyboardAvoidingView>
                         </RNAnimated.View>
                     </>
                 )}
@@ -2515,7 +2521,11 @@ const s = StyleSheet.create({
     },
     safePlaceBtnSecondary: {
         backgroundColor: T.surfaceBulky,
-        borderColor: 'rgba(255,255,255,0.14)',
+        borderColor: `${T.violet}45`,
+    },
+    safePlaceBtnCancel: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
     },
     safePlaceBtnPrimary: {
         backgroundColor: T.violet,
@@ -2528,7 +2538,13 @@ const s = StyleSheet.create({
     safePlaceBtnTextSecondary: {
         fontSize: 12,
         fontWeight: '800',
-        color: T.ink,
+        color: T.violet,
+        letterSpacing: 0.2,
+    },
+    safePlaceBtnTextCancel: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: T.danger,
         letterSpacing: 0.2,
     },
     safePlaceBtnTextPrimary: {
@@ -2536,6 +2552,9 @@ const s = StyleSheet.create({
         fontWeight: '800',
         color: T.onPrimary,
         letterSpacing: 0.2,
+    },
+    safePlaceKeyboardAvoiding: {
+        width: '100%',
     },
     placeSheetSection: {
         paddingHorizontal: 18,

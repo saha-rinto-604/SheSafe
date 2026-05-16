@@ -35,25 +35,25 @@ type Incident = {
 // ── Dummy data (replace with API response later) ───────────────────────────────
 const DUMMY_INCIDENTS: Incident[] = [
     {
-        id: 'inc-204',
+        id: 'inc-001',
+        incidentNumber: 175,
+        location: 'Sylhet',
+        occurredAtLabel: '14 Jan 2026',
+        status: 'Active',
+    },
+    {
+        id: 'inc-002',
         incidentNumber: 204,
         location: 'Dhaka',
         occurredAtLabel: '12 Feb 2026',
         status: 'Resolved',
     },
     {
-        id: 'inc-198',
+        id: 'inc-003',
         incidentNumber: 198,
         location: 'Chattogram',
         occurredAtLabel: '01 Feb 2026',
         status: 'Cancelled',
-    },
-    {
-        id: 'inc-175',
-        incidentNumber: 175,
-        location: 'Sylhet',
-        occurredAtLabel: '14 Jan 2026',
-        status: 'Active',
     },
 ];
 
@@ -64,10 +64,10 @@ function statusStyle(status: IncidentStatus): StatusStyle {
     switch (status) {
         case 'Active':
             return {
-                color: T.accent,
-                bg: `${T.accent}15`,
-                border: `${T.accent}35`,
-                dot: T.accent,
+                color: T.violet,
+                bg: `${T.violet}15`,
+                border: `${T.violet}35`,
+                dot: T.violet,
             };
         case 'Resolved':
             return {
@@ -87,10 +87,10 @@ function statusStyle(status: IncidentStatus): StatusStyle {
 }
 
 // ── IncidentCard component ─────────────────────────────────────────────────────
-function IncidentCard({ incident }: { incident: Incident }) {
+function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () => void }) {
     const ss = statusStyle(incident.status);
     return (
-        <View style={s.card}>
+        <TouchableOpacity style={s.card} activeOpacity={0.85} onPress={onPress}>
             {/* ── Top row: ID + Status badge ── */}
             <View style={s.cardTopRow}>
                 <View style={s.incidentIdRow}>
@@ -127,7 +127,7 @@ function IncidentCard({ incident }: { incident: Incident }) {
                     {incident.status}
                 </Text>
             </View>
-        </View>
+        </TouchableOpacity>
     );
 }
 
@@ -188,7 +188,11 @@ export default function IncidentHistoryScreen() {
                         <EmptyState />
                     ) : (
                         incidents.map(incident => (
-                            <IncidentCard key={incident.id} incident={incident} />
+                            <IncidentCard
+                                key={incident.id}
+                                incident={incident}
+                                onPress={() => router.push(`/(tabs)/users/standard-user/chat_room?incidentId=${incident.id}` as any)}
+                            />
                         ))
                     )}
                 </ScrollView>

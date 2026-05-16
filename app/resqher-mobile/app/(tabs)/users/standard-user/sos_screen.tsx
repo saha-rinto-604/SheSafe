@@ -1,5 +1,7 @@
 /**
- * Re-exports the canonical SOS screen from the parent users/ group.
- * This avoids duplicating the SOS screen logic per role.
+ * Re-export the shared SOS screen for standard-user role.
+ * This keeps behaviour identical to the main SOS implementation.
  */
-export { default } from '../sos_screen';
+import SOSScreen from '../sos_screen';
+
+export default SOSScreen;

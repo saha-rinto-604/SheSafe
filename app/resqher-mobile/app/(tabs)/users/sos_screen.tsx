@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle, Image,
+    Modal, ScrollView, ViewStyle, Image, TextInput,
 } from 'react-native';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
@@ -23,7 +23,7 @@ import Animated, {
     interpolate, Extrapolation,
 } from 'react-native-reanimated';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -95,6 +95,75 @@ const DEFAULT_REGION = {
     latitude: 23.8103, longitude: 90.4125,
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
+
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const SAFE_PLACE_LOCATION = { latitude: 23.7924, longitude: 90.4072, name: 'United International University' };
+const NOTUNBAZAR_LOC = { latitude: 23.8067, longitude: 90.4199 };
+const MOCK_SAFE_PLACE_ROUTE = [
+    NOTUNBAZAR_LOC,
+    { latitude: 23.8057, longitude: 90.4186 },
+    { latitude: 23.8044, longitude: 90.4164 },
+    { latitude: 23.8031, longitude: 90.4144 },
+    { latitude: 23.8014, longitude: 90.4126 },
+    { latitude: 23.7994, longitude: 90.4106 },
+    { latitude: 23.7975, longitude: 90.4089 },
+    SAFE_PLACE_LOCATION,
+];
+
+const REVIEW_VOLUNTEERS = [
+    { id: 'rv-1', name: 'Amin Rahman', avatarUri: 'https://i.pravatar.cc/150?img=15&u=rv-1' },
+    { id: 'rv-2', name: 'Nusrat Chowdhury', avatarUri: 'https://i.pravatar.cc/150?img=32&u=rv-2' },
+    { id: 'rv-3', name: 'Jamal Ahmed', avatarUri: 'https://i.pravatar.cc/150?img=12&u=rv-3' },
+];
+
+function haversineDistance(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
+    const toRad = (deg: number) => deg * Math.PI / 180;
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const dLat = toRad(b.latitude - a.latitude);
+    const dLng = toRad(b.longitude - a.longitude);
+    const radius = 6371000;
+    const hav = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * radius * Math.asin(Math.sqrt(hav));
+}
+
+function decodePolyline(encoded: string) {
+    const coords: { latitude: number; longitude: number }[] = [];
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+
+    while (index < encoded.length) {
+        let shift = 0;
+        let result = 0;
+        let byte = 0;
+
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+
+        const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lat += deltaLat;
+
+        shift = 0;
+        result = 0;
+
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+
+        const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lng += deltaLng;
+
+        coords.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+
+    return coords;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Nav tab definitions — Ionicons
@@ -395,6 +464,36 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
     );
 });
 
+type SosLiveButtonStage = 'requesting' | 'responding';
+
+const SosLiveButton = memo(function SosLiveButton({
+    stage,
+    animatedStyle,
+}: {
+    stage: SosLiveButtonStage;
+    animatedStyle?: any;
+}) {
+    return (
+        <RNAnimated.View style={animatedStyle}>
+            <View style={[s.sosBtn, s.sosBtnEmg]}>
+                <View style={s.sosBtnDangerFill}>
+                    <Ionicons
+                        name={stage === 'responding' ? 'pulse' : 'location-sharp'}
+                        size={stage === 'responding' ? 22 : 24}
+                        color={T.onDanger}
+                    />
+                    <Text style={[s.sosTxt, stage === 'responding' && s.sosTxtCompact]}>
+                        {stage === 'responding' ? 'LIVE' : 'SOS'}
+                    </Text>
+                    <Text style={[s.sosSubTxt, stage === 'responding' && s.sosSubTxtCompact]}>
+                        {stage === 'responding' ? 'VOLUNTEER ACCEPTED' : 'SHARING LOCATION'}
+                    </Text>
+                </View>
+            </View>
+        </RNAnimated.View>
+    );
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Side Drawer — Feather icons
 // ─────────────────────────────────────────────────────────────────────────────
@@ -539,13 +638,27 @@ export default function SOSScreen() {
     const [activeTab, setActiveTab] = useState('Home');
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(0);
+    const [isEmergencyLive, setIsEmergencyLive] = useState(false);
+    const [sosStage, setSosStage] = useState<'idle' | 'requesting' | 'responding'>('idle');
+    const sosTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sosTransitionAnim = useRef(new RNAnimated.Value(0)).current;
     const [cancelDuration, setCancelDuration] = useState(CANCEL_DURATION_DEFAULT);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
     const [address, setAddress] = useState('');
+    const [showSafePlace, setShowSafePlace] = useState(false);
+    const [safePlaceCoords, setSafePlaceCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [safePlaceDistance, setSafePlaceDistance] = useState<number | null>(null);
+    const [safePlaceLoading, setSafePlaceLoading] = useState(false);
+    const [stopConfirmVisible, setStopConfirmVisible] = useState(false);
+    const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewRating, setReviewRating] = useState(5);
+    const [reviewFeedback, setReviewFeedback] = useState('');
+    const [reviewQueue, setReviewQueue] = useState(REVIEW_VOLUNTEERS);
+    const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
+    const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const isEmergencyLive = sosActive && cancelCountdown === 0;
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -638,14 +751,31 @@ export default function SOSScreen() {
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
-        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-    }, [cancelDuration]);
+        setSosActive(true);
+        setSosStage('requesting');
+        setIsEmergencyLive(false);
+        sosTransitionAnim.setValue(0);
+        setLocationStatus('sharing');
+        setCancelCountdown(cancelDuration);
+
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
+        sosTransitionRef.current = setTimeout(() => {
+            setIsEmergencyLive(true);
+            setSosStage('responding');
+            RNAnimated.timing(sosTransitionAnim, {
+                toValue: 1,
+                duration: 380,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+        }, 5000);
+    }, [cancelDuration, sosTransitionAnim]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
         cancelTimerRef.current = setInterval(() => {
             setCancelCountdown(prev => {
-                if (prev <= 1) { clearInterval(cancelTimerRef.current!); return 0; }
+                if (prev <= 1) { clearInterval(cancelTimerRef.current!); setIsEmergencyLive(true); return 0; }
                 return prev - 1;
             });
         }, 1000);
@@ -656,15 +786,139 @@ export default function SOSScreen() {
     const cancelSOS = useCallback(() => {
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
+        setIsEmergencyLive(false);
+        setSosStage('idle');
+        sosTransitionAnim.setValue(0);
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-    }, []);
+    }, [sosTransitionAnim]);
+
+    const handleSafePlaceToggle = useCallback(() => {
+        setShowSafePlace(prev => {
+            const next = !prev;
+            if (prev && !next && userLoc) {
+                setTimeout(() => {
+                    mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600);
+                }, 200);
+            }
+            return next;
+        });
+    }, [userLoc]);
+
+    useEffect(() => {
+        let aborted = false;
+
+        const fetchSafePlaceRoute = async () => {
+            if (!showSafePlace) {
+                setSafePlaceCoords([]);
+                setSafePlaceDistance(null);
+                setSafePlaceLoading(false);
+                return;
+            }
+
+            setSafePlaceLoading(true);
+            try {
+                let coords = MOCK_SAFE_PLACE_ROUTE;
+
+                if (GOOGLE_MAPS_API_KEY) {
+                    const origin = `${NOTUNBAZAR_LOC.latitude},${NOTUNBAZAR_LOC.longitude}`;
+                    const destination = `${SAFE_PLACE_LOCATION.latitude},${SAFE_PLACE_LOCATION.longitude}`;
+                    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=walking&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    const encoded = data?.routes?.[0]?.overview_polyline?.points;
+                    const decoded = encoded ? decodePolyline(encoded) : [];
+                    if (decoded.length > 1) {
+                        coords = decoded;
+                    }
+                }
+
+                if (!aborted) {
+                    setSafePlaceCoords(coords);
+                    setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
+                    mapRef.current?.fitToCoordinates(coords, {
+                        edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
+                        animated: true,
+                    });
+                }
+            } catch {
+                if (!aborted) {
+                    setSafePlaceCoords(MOCK_SAFE_PLACE_ROUTE);
+                    setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
+                }
+            } finally {
+                if (!aborted) setSafePlaceLoading(false);
+            }
+        };
+
+        fetchSafePlaceRoute();
+        return () => { aborted = true; };
+    }, [showSafePlace, userLoc]);
 
     const confirmStop = useCallback(() => {
-        Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [
-            { text: 'Keep Active', style: 'cancel' },
-            { text: 'Stop Alert', style: 'destructive', onPress: cancelSOS },
-        ]);
+        setStopConfirmVisible(true);
+    }, []);
+
+    const closeStopConfirm = useCallback(() => {
+        setStopConfirmVisible(false);
+    }, []);
+
+    const handleStopAlert = useCallback(() => {
+        setStopConfirmVisible(false);
+        cancelSOS();
     }, [cancelSOS]);
+
+    const resetReviewFlow = useCallback(() => {
+        setReviewVisible(false);
+        setReviewQueue(REVIEW_VOLUNTEERS);
+        setReviewFeedback('');
+        setReviewRating(5);
+        setReviewRemovingId(null);
+        reviewExitAnim.setValue(0);
+    }, [reviewExitAnim]);
+
+    const openReviewPopup = useCallback(() => {
+        if (!reviewQueue.length) {
+            cancelSOS();
+            return;
+        }
+        setReviewVisible(true);
+    }, [cancelSOS, reviewQueue.length]);
+
+    const closeReviewPopup = useCallback(() => {
+        setReviewVisible(false);
+    }, []);
+
+    const submitVolunteerReview = useCallback(() => {
+        const currentVolunteer = reviewQueue[0];
+        if (!currentVolunteer) {
+            resetReviewFlow();
+            cancelSOS();
+            return;
+        }
+
+        setReviewRemovingId(currentVolunteer.id);
+        RNAnimated.timing(reviewExitAnim, {
+            toValue: 1,
+            duration: 240,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            const nextQueue = reviewQueue.slice(1);
+
+            if (!nextQueue.length) {
+                resetReviewFlow();
+                cancelSOS();
+                return;
+            }
+
+            setReviewQueue(nextQueue);
+            setReviewFeedback('');
+            setReviewRating(5);
+            setReviewRemovingId(null);
+            reviewExitAnim.setValue(0);
+        });
+    }, [cancelSOS, resetReviewFlow, reviewExitAnim, reviewQueue]);
 
     const goToMyLoc = () => {
         if (userLoc) mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600);
@@ -673,10 +927,10 @@ export default function SOSScreen() {
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
     // SOS overlay placement: below map center (thumb-reachable) and clamped
-    const targetCenterY = height * 0.62;
+    const targetCenterY = height * 0.56; // slightly higher for thumb reach and nav clearance
     const headerSafeTop = insets.top + 120;
     const bottomSafe = navBottom + NAV_HEIGHT + 18;
-    const extraBelowWrap = 76; // status pill + spacing
+    const extraBelowWrap = 120; // increase reserved space below SOS wrap (pill + buttons)
     const maxTop = Math.max(headerSafeTop, height - bottomSafe - (SOS_WRAP_SIZE + extraBelowWrap));
     const sosTop = Math.min(Math.max(targetCenterY - SOS_WRAP_SIZE / 2, headerSafeTop), maxTop);
 
@@ -709,7 +963,148 @@ export default function SOSScreen() {
                         <LiveBeacon />
                     </Marker>
                 )}
+
+                {showSafePlace && safePlaceCoords.length > 1 && (
+                    <>
+                        <Polyline
+                            coordinates={safePlaceCoords}
+                            strokeColor={T.violet}
+                            strokeWidth={4}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                        <Marker coordinate={safePlaceCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                            <View style={s.safePlaceMarkerWrap}>
+                                <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerStart, { borderColor: T.violet }]}> 
+                                    <Ionicons name="person" size={18} color={T.violet} />
+                                </View>
+                            </View>
+                        </Marker>
+                        <Marker coordinate={safePlaceCoords[safePlaceCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
+                            <View style={s.safePlaceMarkerWrap}>
+                                <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerEnd, { borderColor: T.success }]}> 
+                                    <Ionicons name="shield" size={16} color={T.success} />
+                                </View>
+                            </View>
+                        </Marker>
+                    </>
+                )}
             </MapView>
+
+            <Modal
+                visible={stopConfirmVisible}
+                transparent
+                animationType="fade"
+                statusBarTranslucent
+                onRequestClose={closeStopConfirm}
+            >
+                <View style={s.stopConfirmOverlay}>
+                    <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                    <View style={s.stopConfirmScrim} pointerEvents="none" />
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeStopConfirm} />
+                    <View style={s.stopConfirmCard}>
+                        <View style={s.stopConfirmIconWrap}>
+                            <Feather name="alert-triangle" size={24} color={T.danger} />
+                        </View>
+                        <Text style={s.stopConfirmTitle}>Stop Emergency Alert?</Text>
+                        <Text style={s.stopConfirmMessage}>Your location will no longer be shared.</Text>
+                        <View style={s.stopConfirmActions}>
+                            <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={closeStopConfirm} activeOpacity={0.85}>
+                                <Text style={s.stopConfirmSecondaryTxt}>Keep Active</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={handleStopAlert} activeOpacity={0.9}>
+                                <LinearGradient
+                                    colors={["#D92D20", "#F04444"]}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={s.stopConfirmPrimaryFill}
+                                >
+                                    <Text style={s.stopConfirmPrimaryTxt}>Stop Alert</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={reviewVisible}
+                transparent
+                animationType="fade"
+                statusBarTranslucent
+                onRequestClose={closeReviewPopup}
+            >
+                <View style={s.reviewOverlay}>
+                    <BlurView intensity={32} tint="dark" style={StyleSheet.absoluteFill} />
+                    <View style={s.reviewScrim} pointerEvents="none" />
+                    <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeReviewPopup} />
+                    <View style={s.reviewCard}>
+                        <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                        <View style={s.reviewAvatarRow}>
+                            {reviewQueue.map((volunteer, index) => {
+                                const isCurrent = index === 0;
+                                const isRemoving = volunteer.id === reviewRemovingId;
+                                const animatedStyle = isRemoving ? {
+                                    opacity: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                                    transform: [{ translateY: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) }],
+                                } : undefined;
+
+                                return (
+                                    <RNAnimated.View
+                                        key={volunteer.id}
+                                        style={[
+                                            s.reviewAvatarWrap,
+                                            isCurrent && s.reviewAvatarWrapCurrent,
+                                            isRemoving && s.reviewAvatarWrapRemoving,
+                                            animatedStyle,
+                                        ]}
+                                    >
+                                        <Image source={{ uri: volunteer.avatarUri }} style={s.reviewAvatarImg} />
+                                    </RNAnimated.View>
+                                );
+                            })}
+                        </View>
+                        <Text style={s.reviewSelectedName} numberOfLines={1}>
+                            {reviewQueue[0]?.name ?? 'Volunteer'}
+                        </Text>
+                        <Text style={s.reviewSelectedMeta} numberOfLines={1}>
+                            {reviewQueue.length} volunteer{reviewQueue.length === 1 ? '' : 's'} participated
+                        </Text>
+
+                        <TextInput
+                            value={reviewFeedback}
+                            onChangeText={setReviewFeedback}
+                            placeholder="Write your feedback here..."
+                            placeholderTextColor={T.ink4}
+                            multiline
+                            textAlignVertical="top"
+                            style={s.reviewInput}
+                        />
+
+                        <View style={s.reviewStarsRow}>
+                            {[1, 2, 3, 4, 5].map(star => {
+                                const active = star <= reviewRating;
+                                return (
+                                    <TouchableOpacity key={star} onPress={() => setReviewRating(star)} activeOpacity={0.8}>
+                                        <Ionicons name={active ? 'star' : 'star-outline'} size={24} color={active ? '#FBBF24' : T.ink4} />
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+
+                        <TouchableOpacity style={s.reviewSubmitBtn} onPress={submitVolunteerReview} activeOpacity={0.9}>
+                            <LinearGradient
+                                colors={[T.violet, '#7C3AED']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={s.reviewSubmitFill}
+                            >
+                                <Text style={s.reviewSubmitText}>Submit Review</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
 
             {locationStatus === 'idle' && <PulseRadar />}
 
@@ -756,7 +1151,7 @@ export default function SOSScreen() {
             {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
             <View style={{ marginTop: 12 }} />
 
-            {/* ── Map controls — High contrast GPS/Recenter ───────────────── */}
+            {/* ── Map controls — High contrast GPS/Recenter + Safe Place toggle ── */}
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
                 <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
                     <View style={[s.gpsDot, {
@@ -773,58 +1168,88 @@ export default function SOSScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* ── SOS Section ─────────────────────────────────────────────── */}
-            <View
-                pointerEvents="box-none"
-                style={[s.sosSection, { top: sosTop }]}
-            >
-                <View style={s.sosWrap}>
-                    {sosActive && cancelCountdown > 0 ? (
-                        <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
-                            <View style={s.cancelBtn}>
-                                <Text style={s.cancelLabel}>CANCEL</Text>
-                                <Text style={s.cancelCount}>{cancelCountdown}s</Text>
-                                <Text style={s.cancelSub}>Tap to cancel</Text>
+            {/* ── SOS Section — hidden when safe place is active ───────────── */}
+            {!showSafePlace && (
+                <View
+                    pointerEvents="box-none"
+                    style={[s.sosSection, { top: sosTop }]}
+                >
+                    <View style={s.sosWrap}>
+                                    {sosStage === 'idle' ? (
+                                        <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
+                                    ) : (
+                                        <SosLiveButton
+                                            stage={sosStage === 'responding' ? 'responding' : 'requesting'}
+                                            animatedStyle={{
+                                                transform: [
+                                                    {
+                                                        translateY: sosTransitionAnim.interpolate({
+                                                            inputRange: [0, 1],
+                                                            outputRange: [0, 38],
+                                                        }),
+                                                    },
+                                                ],
+                                            }}
+                                        />
+                                    )}
+
+                                    {sosActive && pulseAnims.map(({ scale, op }, i) => (
+                                        <RNAnimated.View
+                                            key={i}
+                                            pointerEvents="none"
+                                            style={[
+                                                s.pulseRing,
+                                                {
+                                                    transform: [{ scale }],
+                                                    opacity: op,
+                                                    borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
+                                                },
+                                            ]}
+                                        />
+                                    ))}
+
+                                    {/* action buttons rendered below the status pill */}
+                                </View>
+
+                        {sosStage === 'idle' ? (
+                            <View style={s.statusPill}>
+                                <Text style={s.pillTxt} numberOfLines={1}>
+                                    {holdPhase === 'idle'
+                                        ? 'Press and hold for 2 sec'
+                                        : holdPhase === 'holding'
+                                            ? 'Holding...'
+                                            : 'Release'
+                                    }
+                                </Text>
                             </View>
-                        </TouchableOpacity>
-                    ) : isEmergencyLive ? (
-                        <LiveSOSButton onPress={confirmStop} />
-                    ) : (
-                        <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
-                    )}
+                        ) : sosStage === 'requesting' ? (
+                            <View style={s.statusPill}>
+                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                <Text style={[s.pillTxt, s.pillTxtLive]} numberOfLines={1}>
+                                    Sharing your location...
+                                </Text>
+                            </View>
+                        ) : (
+                            <View style={[s.statusPill, s.statusPillLive]}>
+                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                <Text style={[s.pillTxt, s.pillTxtLive]} numberOfLines={1}>
+                                    Volunteer Responding • Sharing your location...
+                                </Text>
+                            </View>
+                        )}
 
-                    {sosActive && pulseAnims.map(({ scale, op }, i) => (
-                        <RNAnimated.View key={i} pointerEvents="none" style={[s.pulseRing, {
-                            transform: [{ scale }], opacity: op,
-                            borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
-                        }]} />
-                    ))}
+                        {sosStage === 'responding' && (
+                            <View style={s.reviewActionRow}>
+                                <TouchableOpacity style={[s.reviewActionBtn, s.reviewActionCancel]} onPress={confirmStop} activeOpacity={0.85}>
+                                    <Text style={[s.reviewActionBtnText, s.reviewActionCancelText]}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[s.reviewActionBtn, s.reviewActionResolve]} onPress={openReviewPopup} activeOpacity={0.85}>
+                                    <Text style={[s.reviewActionBtnText, s.reviewActionResolveText]}>Resolve</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
                 </View>
-
-                {!sosActive && (
-                    <View style={s.statusPill}>
-                        <Text style={s.pillTxt}>
-                            {holdPhase === 'idle'
-                                ? 'Press and hold for 2 sec'
-                                : holdPhase === 'holding'
-                                    ? 'Holding...'
-                                    : 'Release'
-                            }
-                        </Text>
-                    </View>
-                )}
-                {sosActive && (
-                    <View style={[s.statusPill, isEmergencyLive && s.statusPillLive]}>
-                        <View style={[s.pillDot, { backgroundColor: T.danger }]} />
-                        <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]}>
-                            {cancelCountdown > 0
-                                ? `Alert triggered · Cancel in ${cancelCountdown}s`
-                                : 'Sharing your location'
-                            }
-                        </Text>
-                    </View>
-                )}
-            </View>
+            )}
 
             {/* ── Bottom Navbar ─────────────────────────────────────────── */}
             <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
@@ -951,6 +1376,22 @@ const s = StyleSheet.create({
 
     markerOut: { width: 26, height: 26, borderRadius: 13, backgroundColor: T.brandGlow, alignItems: 'center', justifyContent: 'center' },
     markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
+    safePlaceMarkerWrap: { alignItems: 'center', justifyContent: 'center' },
+    safePlaceMarkerIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: T.surface,
+        borderWidth: 2,
+    },
+    safePlaceMarkerStart: {
+        backgroundColor: T.surface,
+    },
+    safePlaceMarkerEnd: {
+        backgroundColor: T.surface,
+    },
 
     sosSection: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
     sosWrap: { width: SOS_WRAP_SIZE, height: SOS_WRAP_SIZE, alignItems: 'center', justifyContent: 'center' },
@@ -987,6 +1428,8 @@ const s = StyleSheet.create({
 
     sosTxt: { color: T.onPrimary, fontSize: 38, fontWeight: '900', letterSpacing: 1.5 },
     sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
+    sosTxtCompact: { fontSize: 34 },
+    sosSubTxtCompact: { fontSize: 10.5 },
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
@@ -1002,11 +1445,18 @@ const s = StyleSheet.create({
     cancelSub: { color: T.ink4, fontSize: 12, fontWeight: '700', marginTop: 3 },
 
     statusPill: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
+        position: 'absolute',
+        bottom: -48,
+        alignSelf: 'center',
+        width: 360,
+        gap: 6,
         backgroundColor: T.surfaceBulky,
-        borderRadius: R.full,
-        paddingHorizontal: 16, paddingVertical: 8, marginTop: 22,
+        borderRadius: 18,
+        paddingHorizontal: 12, paddingVertical: 9,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
@@ -1069,6 +1519,244 @@ const s = StyleSheet.create({
     },
 
     drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
+    stopConfirmOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    stopConfirmScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    stopConfirmCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.72)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    stopConfirmIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(217,45,32,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(217,45,32,0.28)',
+        marginBottom: 14,
+    },
+    stopConfirmTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    stopConfirmMessage: {
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+    },
+    stopConfirmActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 22,
+    },
+    stopConfirmSecondaryBtn: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    stopConfirmSecondaryTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    stopConfirmPrimaryBtn: {
+        flex: 1,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    stopConfirmPrimaryFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    stopConfirmPrimaryTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+    reviewOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    reviewScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    reviewCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 26,
+        padding: 24,
+        backgroundColor: 'rgba(24,16,40,0.96)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    reviewEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: T.ink4,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        alignSelf: 'center',
+    },
+    reviewAvatarRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        marginTop: 16,
+        marginBottom: 12,
+        minHeight: 74,
+    },
+    reviewAvatarWrap: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.18)',
+        overflow: 'hidden',
+        backgroundColor: T.violetDim,
+    },
+    reviewAvatarWrapCurrent: {
+        width: 68,
+        height: 68,
+        borderRadius: 34,
+        borderColor: `${T.violet}55`,
+    },
+    reviewAvatarWrapRemoving: {
+        borderColor: `${T.danger}55`,
+    },
+    reviewAvatarImg: {
+        width: '100%',
+        height: '100%',
+    },
+    reviewSelectedName: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: T.ink,
+        textAlign: 'center',
+        letterSpacing: -0.2,
+    },
+    reviewSelectedMeta: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.ink3,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    reviewInput: {
+        minHeight: 96,
+        marginTop: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+        backgroundColor: T.surfaceBulky,
+        color: T.ink,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+    reviewStarsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 8,
+        marginTop: 14,
+    },
+    reviewSubmitBtn: {
+        marginTop: 18,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    reviewSubmitFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    reviewSubmitText: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+    reviewActionRow: {
+        position: 'absolute',
+        bottom: -98,
+        flexDirection: 'row',
+        gap: 10,
+        width: 340,
+        justifyContent: 'center',
+    },
+    reviewActionBtn: {
+        flex: 1,
+        minHeight: 44,
+        borderRadius: R.pill,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+    },
+    reviewActionCancel: {
+        backgroundColor: T.dangerBg,
+        borderColor: T.dangerBorder,
+    },
+    reviewActionResolve: {
+        backgroundColor: T.safeLight,
+        borderColor: `${T.success}40`,
+    },
+    reviewActionBtnText: {
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
+    reviewActionCancelText: { color: T.dangerText },
+    reviewActionResolveText: { color: T.success },
     drawer: {
         position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
         backgroundColor: T.surface,

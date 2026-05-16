@@ -14,7 +14,7 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
-    Dimensions, Platform, ScrollView, ViewStyle, Image,
+    Dimensions, Platform, ScrollView, ViewStyle, Image, Alert, Linking,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
@@ -32,22 +32,53 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import {
-    DOCTORS, HOSPITALS, AMBULANCES, DIAGNOSTICS, PHARMACIES,
-    RED_ZONES, DEMO_SAFE_ROUTE,
+    DOCTORS, HOSPITALS, PHARMACIES, AMBULANCES,
+    RED_ZONES,
     SPECIALIST_CHIPS, AMBULANCE_CHIPS, GENERIC_CHIPS,
 } from '../../../../src/data/medicalMockData';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
 
 const { width, height } = Dimensions.get('window');
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 const NAV_HEIGHT = 58;
 const NAV_BOT_OFFSET = 14;
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;
 
+const KHILKHET_ORIGIN = { latitude: 23.8249, longitude: 90.4234 };
+const JAMUNA_FUTURE_PARK = { latitude: 23.813334, longitude: 90.424164 };
 const DEFAULT_REGION = {
-    latitude: 23.8103, longitude: 90.4125,
-    latitudeDelta: 0.03, longitudeDelta: 0.03,
+    latitude: KHILKHET_ORIGIN.latitude,
+    longitude: KHILKHET_ORIGIN.longitude,
+    latitudeDelta: 0.03,
+    longitudeDelta: 0.03,
+};
+
+type MedicalCategoryView = 'specialists' | 'hospital' | 'pharmacy' | 'ambulance';
+type ProviderCard = {
+    id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+    rating: number;
+    affiliation?: string;
+    address?: string;
+    degree?: string;
+    specialty?: string;
+    hospital?: string;
+    shift?: ShiftFilter;
+    phone?: string;
+    hotline?: string;
+    type: MedicalCategoryView;
+};
+
+type LatLng = { latitude: number; longitude: number };
+type NavStep = {
+    instruction: string;
+    distance: string;
+    maneuver?: string;
+    endLocation?: LatLng;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -194,24 +225,74 @@ const QuickChipRow = memo(function QuickChipRow({
     );
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Helper — generate a simple safe route between two points
-// ═══════════════════════════════════════════════════════════════════════════════
-function generateSafeRoute(
-    from: { latitude: number; longitude: number },
-    to: { latitude: number; longitude: number },
-): { latitude: number; longitude: number }[] {
-    // Simple multi-point route with slight offset to simulate avoidance
-    const midLat = (from.latitude + to.latitude) / 2;
-    const midLng = (from.longitude + to.longitude) / 2;
-    const offset = 0.003; // small detour
-    return [
-        from,
-        { latitude: from.latitude - 0.002, longitude: from.longitude + offset },
-        { latitude: midLat, longitude: midLng + offset * 0.5 },
-        { latitude: to.latitude + 0.002, longitude: to.longitude - offset * 0.5 },
-        to,
-    ];
+function decodePolyline(encoded: string): LatLng[] {
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+    const coordinates: LatLng[] = [];
+
+    while (index < encoded.length) {
+        let result = 0;
+        let shift = 0;
+        let byte = 0;
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lat += deltaLat;
+
+        result = 0;
+        shift = 0;
+        do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lng += deltaLng;
+
+        coordinates.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+
+    return coordinates;
+}
+
+const stripHtml = (html: string): string => html.replace(/<[^>]*>/g, '');
+
+function haversineDistance(a: LatLng, b: LatLng): number {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const earthRadiusM = 6_371_000;
+    const dLat = toRad(b.latitude - a.latitude);
+    const dLon = toRad(b.longitude - a.longitude);
+    const lat1 = toRad(a.latitude);
+    const lat2 = toRad(b.latitude);
+    const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * earthRadiusM * Math.asin(Math.sqrt(h));
+}
+
+function getManeuverIcon(maneuver?: string): React.ComponentProps<typeof Ionicons>['name'] {
+    if (!maneuver) return 'arrow-up';
+    const m = maneuver.toLowerCase();
+    if (m.includes('uturn')) return 'return-up-back';
+    if (m.includes('left')) return 'arrow-back';
+    if (m.includes('right')) return 'arrow-forward';
+    if (m.includes('merge')) return 'git-merge';
+    if (m.includes('roundabout')) return 'sync';
+    if (m.includes('fork')) return 'git-branch';
+    return 'arrow-up';
+}
+
+function formatDuration(seconds: number | null): string | null {
+    if (seconds === null || seconds === undefined) return null;
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'}`;
+    const hrs = Math.floor(mins / 60);
+    const rem = mins % 60;
+    return rem > 0 ? `${hrs} hr ${rem} min` : `${hrs} hr`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -221,19 +302,33 @@ export default function MedicalMapView() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const params = useLocalSearchParams<{ category?: string; shift?: string }>();
-    const category = (params.category ?? 'specialists') as MedicalCategory;
+    const rawCategory = (params.category ?? 'specialists') as MedicalCategory;
+    const category: MedicalCategory = (rawCategory === 'specialists' || rawCategory === 'hospital' || rawCategory === 'pharmacy' || rawCategory === 'ambulance')
+        ? rawCategory
+        : 'specialists';
     const shift = (params.shift ?? 'now') as ShiftFilter;
 
     const mapRef = useRef<MapView>(null);
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
-    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
+    const [mapReady, setMapReady] = useState(false);
     const [selectedChip, setSelectedChip] = useState('all');
     const [selectedPin, setSelectedPin] = useState<string | null>(null);
     const [showCallout, setShowCallout] = useState(false);
     const [safeRoute, setSafeRoute] = useState<{ latitude: number; longitude: number }[] | null>(null);
-    const [returnFromWebView, setReturnFromWebView] = useState(false);
+    const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
+    const [currentStepIdx, setCurrentStepIdx] = useState(0);
+    const [routeEta, setRouteEta] = useState<string | null>(null);
+    const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
+    const [isRouting, setIsRouting] = useState(false);
+    const [isLiveNav, setIsLiveNav] = useState(false);
+    const [locationPermitted, setLocationPermitted] = useState(false);
+    const [showRouteOverview, setShowRouteOverview] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+    const lastRerouteOriginRef = useRef<LatLng | null>(null);
+    const routeOverlaySlideY = useRef(new RNAnimated.Value(0)).current;
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -248,71 +343,92 @@ export default function MedicalMapView() {
 
     // ── Contextual chips ────────────────────────────────────────────────────
     const chips = useMemo(() => {
-        switch (category) {
-            case 'specialists': return SPECIALIST_CHIPS;
-            case 'ambulance': return AMBULANCE_CHIPS;
-            default: return GENERIC_CHIPS;
-        }
+        if (category === 'specialists') return SPECIALIST_CHIPS;
+        if (category === 'ambulance') return AMBULANCE_CHIPS;
+        return GENERIC_CHIPS;
     }, [category]);
 
+    useEffect(() => {
+        if (category !== 'specialists' && selectedChip !== 'all') {
+            setSelectedChip('all');
+        }
+    }, [category, selectedChip]);
+
     // ── Provider pins data ──────────────────────────────────────────────────
-    const providers = useMemo(() => {
+    const providers = useMemo<ProviderCard[]>(() => {
         switch (category) {
             case 'specialists': {
-                let docs = DOCTORS.filter(d => d.shift === shift);
-                if (selectedChip !== 'all') {
-                    docs = docs.filter(d => d.specialty === selectedChip);
-                }
-                return docs.map(d => ({
-                    id: d.id, name: d.name,
-                    latitude: d.latitude, longitude: d.longitude,
-                    rating: d.rating ?? 0,
-                    affiliation: d.affiliation ?? d.hospital,
-                    bookingUrl: d.bookingUrl,
-                    icon: 'medkit' as const,
-                }));
+                const doctor = DOCTORS[0];
+                return [
+                    {
+                        id: 'jamuna-doctor',
+                        name: doctor?.name ?? 'Dr. Sarah Ahmed',
+                        latitude: JAMUNA_FUTURE_PARK.latitude,
+                        longitude: JAMUNA_FUTURE_PARK.longitude,
+                        rating: doctor?.rating ?? 4.8,
+                        affiliation: doctor?.affiliation ?? 'Jamuna Future Park Area',
+                        degree: doctor?.degree ?? 'MBBS, FCPS',
+                        specialty: doctor?.specialty ?? 'Cardiologist',
+                        hospital: doctor?.hospital ?? 'Jamuna Future Park Medical Wing',
+                        shift,
+                        phone: doctor?.phone ?? '01XXXXXXXXX',
+                        type: 'specialists',
+                    },
+                ];
             }
             case 'hospital':
-                return HOSPITALS.map(h => ({
-                    id: h.id, name: h.name,
-                    latitude: h.latitude, longitude: h.longitude,
-                    rating: h.rating ?? 0,
-                    affiliation: h.affiliation ?? '',
-                    bookingUrl: h.bookingUrl,
-                    icon: 'business' as const,
-                }));
+                {
+                    const hospital = HOSPITALS[0];
+                    return hospital
+                        ? [
+                            {
+                                id: 'jamuna-hospital',
+                                name: hospital.name,
+                                latitude: JAMUNA_FUTURE_PARK.latitude,
+                                longitude: JAMUNA_FUTURE_PARK.longitude,
+                                rating: hospital.rating ?? 0,
+                                affiliation: hospital.affiliation ?? '',
+                                address: hospital.address,
+                                type: 'hospital',
+                            },
+                        ]
+                        : [];
+                }
             case 'ambulance': {
                 let ambs = [...AMBULANCES];
                 if (selectedChip !== 'all') {
                     ambs = ambs.filter(a => a.type === selectedChip);
                 }
                 return ambs.map(a => ({
-                    id: a.id, name: a.providerName,
-                    latitude: a.latitude, longitude: a.longitude,
+                    id: a.id,
+                    name: a.affiliation ?? a.providerName,
+                    latitude: JAMUNA_FUTURE_PARK.latitude,
+                    longitude: JAMUNA_FUTURE_PARK.longitude,
                     rating: a.rating ?? 0,
                     affiliation: a.affiliation ?? '',
-                    bookingUrl: '',
-                    icon: 'car' as const,
+                    address: a.affiliation ?? '',
+                    hotline: a.contactNumber ?? '999 / 017XXXXXXXX',
+                    type: 'ambulance',
                 }));
             }
-            case 'diagnostics':
-                return DIAGNOSTICS.map(d => ({
-                    id: d.id, name: d.name,
-                    latitude: d.latitude, longitude: d.longitude,
-                    rating: d.rating ?? 0,
-                    affiliation: d.affiliation ?? '',
-                    bookingUrl: d.bookingUrl,
-                    icon: 'flask' as const,
-                }));
             case 'pharmacy':
-                return PHARMACIES.map(p => ({
-                    id: p.id, name: p.name,
-                    latitude: p.latitude, longitude: p.longitude,
-                    rating: p.rating ?? 0,
-                    affiliation: p.affiliation ?? '',
-                    bookingUrl: '',
-                    icon: 'bandage' as const,
-                }));
+                {
+                    const pharmacy = PHARMACIES[0];
+                    return pharmacy
+                        ? [
+                            {
+                                id: 'jamuna-pharmacy',
+                                name: pharmacy.name,
+                                latitude: JAMUNA_FUTURE_PARK.latitude,
+                                longitude: JAMUNA_FUTURE_PARK.longitude,
+                                rating: pharmacy.rating ?? 0,
+                                affiliation: pharmacy.affiliation ?? '',
+                                address: pharmacy.address,
+                                type: 'pharmacy',
+                            },
+                        ]
+                        : [];
+                }
             default:
                 return [];
         }
@@ -330,7 +446,6 @@ export default function MedicalMapView() {
             case 'specialists': return 'Specialists';
             case 'hospital': return 'Hospitals';
             case 'ambulance': return 'Ambulance';
-            case 'diagnostics': return 'Diagnostics';
             case 'pharmacy': return 'Pharmacy';
             default: return 'Medical';
         }
@@ -338,18 +453,155 @@ export default function MedicalMapView() {
 
     // ── Get user location ───────────────────────────────────────────────────
     useEffect(() => {
+        setTimeout(() => {
+            mapRef.current?.animateToRegion(
+                { ...KHILKHET_ORIGIN, latitudeDelta: 0.02, longitudeDelta: 0.02 }, 800
+            );
+        }, 600);
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') return;
-            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const loc = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-            setUserLoc(loc);
-            setTimeout(() => {
-                mapRef.current?.animateToRegion(
-                    { ...loc, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 800
-                );
-            }, 600);
+            if (!mounted) return;
+            if (status !== 'granted') {
+                setLocationPermitted(false);
+                return;
+            }
+
+            setLocationPermitted(true);
+
+            const position = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+            });
+
+            if (!mounted) return;
+            setUserLoc({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                heading: position.coords.heading ?? undefined,
+            });
         })();
+
+        return () => {
+            mounted = false;
+            if (locationSubRef.current) {
+                locationSubRef.current.remove();
+                locationSubRef.current = null;
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!isLiveNav || !locationPermitted) {
+            if (locationSubRef.current) {
+                locationSubRef.current.remove();
+                locationSubRef.current = null;
+            }
+            return;
+        }
+
+        (async () => {
+            locationSubRef.current = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: 2000,
+                    distanceInterval: 5,
+                },
+                (loc) => {
+                    setUserLoc({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                        heading: loc.coords.heading ?? undefined,
+                    });
+                },
+            );
+        })();
+
+        return () => {
+            if (locationSubRef.current) {
+                locationSubRef.current.remove();
+                locationSubRef.current = null;
+            }
+        };
+    }, [isLiveNav, locationPermitted]);
+
+    useEffect(() => {
+        if (!mapReady || !providers.length) return;
+        const coords = [KHILKHET_ORIGIN, ...providers.map(p => ({ latitude: p.latitude, longitude: p.longitude }))];
+        mapRef.current?.fitToCoordinates(coords, {
+            edgePadding: { top: 140, right: 80, bottom: 360, left: 80 },
+            animated: true,
+        });
+    }, [mapReady, providers]);
+
+    const buildLiveRoute = useCallback(async (
+        origin: LatLng,
+        destination: LatLng,
+        fitMap = true,
+    ) => {
+        if (!GOOGLE_MAPS_API_KEY) {
+            Alert.alert('Missing Maps API key', 'Directions API key is not configured.');
+            return;
+        }
+
+        setIsRouting(true);
+        const originParam = `${origin.latitude},${origin.longitude}`;
+        const destinationParam = `${destination.latitude},${destination.longitude}`;
+        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originParam}&destination=${destinationParam}&mode=driving&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
+
+        try {
+            const res = await fetch(directionsUrl);
+            const data = await res.json();
+            const route = data?.routes?.[0];
+
+            if (!route) {
+                Alert.alert('Route unavailable', 'No route found for this doctor right now.');
+                return;
+            }
+
+            const routeCoords = decodePolyline(route.overview_polyline?.points ?? '');
+            if (!routeCoords.length) {
+                Alert.alert('Route unavailable', 'Could not decode route path.');
+                return;
+            }
+
+            setSafeRoute(routeCoords);
+
+            const steps = route?.legs?.[0]?.steps ?? [];
+            const instructions: NavStep[] = steps.map((step: any) => ({
+                instruction: stripHtml(step.html_instructions ?? ''),
+                distance: step.distance?.text ?? '',
+                maneuver: step.maneuver,
+                endLocation: step.end_location
+                    ? {
+                        latitude: step.end_location.lat,
+                        longitude: step.end_location.lng,
+                    }
+                    : undefined,
+            }));
+            setNavInstructions(instructions);
+            setCurrentStepIdx(0);
+            const durSec = route?.legs?.[0]?.duration?.value ?? null;
+            const distM = route?.legs?.[0]?.distance?.value ?? null;
+            setRouteEta(formatDuration(durSec));
+            setRouteDistanceKm(distM ? +(distM / 1000).toFixed(1) : null);
+
+            if (fitMap && routeCoords.length > 1) {
+                mapRef.current?.fitToCoordinates(routeCoords, {
+                    edgePadding: { top: 120, right: 60, bottom: 360, left: 60 },
+                    animated: true,
+                });
+            }
+
+            lastRerouteOriginRef.current = origin;
+        } catch {
+            Alert.alert('Route error', 'Unable to fetch live route right now.');
+        } finally {
+            setIsRouting(false);
+        }
     }, []);
 
     // ── Pin tap handler — auto-trigger safe route ───────────────────────────
@@ -366,18 +618,6 @@ export default function MedicalMapView() {
             RNAnimated.timing(calloutOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
 
-        // Auto-trigger safe route
-        const provider = providers.find(p => p.id === providerId);
-        if (provider && userLoc) {
-            const route = generateSafeRoute(userLoc, { latitude: provider.latitude, longitude: provider.longitude });
-            setSafeRoute(route);
-
-            // Zoom to show both user and provider
-            mapRef.current?.fitToCoordinates(
-                [userLoc, { latitude: provider.latitude, longitude: provider.longitude }],
-                { edgePadding: { top: 120, right: 60, bottom: 360, left: 60 }, animated: true }
-            );
-        }
     }, [providers, userLoc, calloutY, calloutOpacity]);
 
     // ── Close callout ───────────────────────────────────────────────────────
@@ -388,23 +628,159 @@ export default function MedicalMapView() {
         ]).start(() => {
             setShowCallout(false);
             setSelectedPin(null);
-            setSafeRoute(null);
         });
     }, [calloutY, calloutOpacity]);
 
+    const hideCalloutKeepRoute = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(calloutY, { toValue: 400, duration: 240, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(calloutOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => {
+            setShowCallout(false);
+        });
+    }, [calloutY, calloutOpacity]);
+
+    const getDistanceKm = useCallback((from: { latitude: number; longitude: number }, to: { latitude: number; longitude: number }) => {
+        const toRad = (value: number) => (value * Math.PI) / 180;
+        const earthRadiusKm = 6371;
+        const dLat = toRad(to.latitude - from.latitude);
+        const dLng = toRad(to.longitude - from.longitude);
+        const lat1 = toRad(from.latitude);
+        const lat2 = toRad(to.latitude);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return earthRadiusKm * c;
+    }, []);
+
+    const selectedDistanceKm = useMemo(() => {
+        if (!selectedProvider) return null;
+        return getDistanceKm(KHILKHET_ORIGIN, {
+            latitude: selectedProvider.latitude,
+            longitude: selectedProvider.longitude,
+        });
+    }, [getDistanceKm, selectedProvider]);
+
     // ── Book Now → WebView ──────────────────────────────────────────────────
-    const handleBookNow = useCallback(() => {
+    const handleDirections = useCallback(() => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        router.push({
-            pathname: '/(tabs)/users/standard-user/HospitalBookingWebView',
-            params: {
-                bookingUrl: selectedProvider.bookingUrl,
-                hospitalName: selectedProvider.name,
-                returnToMap: 'true',
+
+        const destination = {
+            latitude: selectedProvider.latitude,
+            longitude: selectedProvider.longitude,
+        };
+
+        hideCalloutKeepRoute();
+        setIsLiveNav(false);
+        setShowRouteOverview(true);
+
+        // Animate route overview header in
+        routeOverlaySlideY.setValue(-100);
+        RNAnimated.spring(routeOverlaySlideY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 80,
+            friction: 12,
+        }).start();
+
+        buildLiveRoute(KHILKHET_ORIGIN, destination, true);
+    }, [buildLiveRoute, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY]);
+
+    const handleCallHotline = useCallback(async () => {
+        if (!selectedProvider?.hotline) return;
+        const hotline = selectedProvider.hotline.replace(/\s/g, '');
+        const url = `tel:${hotline}`;
+        try {
+            const supported = await Linking.canOpenURL(url);
+            if (!supported) {
+                Alert.alert('Call failed', 'This device cannot place a call right now.');
+                return;
+            }
+            await Linking.openURL(url);
+        } catch {
+            Alert.alert('Call failed', 'Unable to start a call right now.');
+        }
+    }, [selectedProvider]);
+
+    const closeRouteOverview = useCallback(() => {
+        RNAnimated.timing(routeOverlaySlideY, {
+            toValue: -100,
+            duration: 260,
+            easing: Easing.in(Easing.ease),
+            useNativeDriver: true,
+        }).start(() => {
+            setShowRouteOverview(false);
+            setSafeRoute(null);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
+        });
+    }, [routeOverlaySlideY]);
+
+    const handleStartLive = useCallback(() => {
+        if (!selectedProvider) return;
+        if (!locationPermitted || !userLoc) {
+            Alert.alert('Location required', 'Enable location access to use Live Mode.');
+            return;
+        }
+
+        setIsLiveNav(true);
+        buildLiveRoute(
+            { latitude: userLoc.latitude, longitude: userLoc.longitude },
+            { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
+            false,
+        );
+    }, [buildLiveRoute, locationPermitted, selectedProvider, userLoc]);
+
+    const handleExitLive = useCallback(() => {
+        setIsLiveNav(false);
+        setCurrentStepIdx(0);
+    }, []);
+
+    useEffect(() => {
+        if (!isLiveNav || !userLoc) return;
+        mapRef.current?.animateCamera(
+            {
+                center: { latitude: userLoc.latitude, longitude: userLoc.longitude },
+                pitch: 45,
+                heading: userLoc.heading ?? 0,
+                zoom: 19,
             },
-        } as any);
-    }, [selectedProvider, router]);
+            { duration: 900 },
+        );
+    }, [isLiveNav, userLoc]);
+
+    useEffect(() => {
+        if (!isLiveNav || !selectedProvider || !userLoc || isRouting) return;
+
+        if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
+            const currentStep = navInstructions[currentStepIdx];
+            if (currentStep.endLocation) {
+                const dist = haversineDistance(userLoc, currentStep.endLocation);
+                if (dist <= 25) {
+                    setCurrentStepIdx(prev => prev + 1);
+                }
+            }
+        }
+
+        const lastOrigin = lastRerouteOriginRef.current;
+        if (lastOrigin && haversineDistance(lastOrigin, userLoc) < 50) return;
+
+        buildLiveRoute(
+            { latitude: userLoc.latitude, longitude: userLoc.longitude },
+            { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
+            false,
+        );
+    }, [
+        buildLiveRoute,
+        currentStepIdx,
+        isLiveNav,
+        isRouting,
+        navInstructions,
+        selectedProvider,
+        userLoc,
+    ]);
 
     // ── Nav press ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
@@ -436,29 +812,55 @@ export default function MedicalMapView() {
                     style={StyleSheet.absoluteFillObject}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
-                    showsUserLocation
+                    showsUserLocation={false}
                     showsMyLocationButton={false}
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
+                    onMapReady={() => setMapReady(true)}
                     onPress={() => {
                         if (showCallout) closeCallout();
                     }}
                 >
+                    <Marker coordinate={KHILKHET_ORIGIN} tracksViewChanges={false}>
+                        <View style={st.originMarker}>
+                            <Ionicons name="bus" size={14} color={T.onPrimary} />
+                        </View>
+                    </Marker>
+
+                    {isLiveNav && userLoc && (
+                        <Marker
+                            coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
+                            tracksViewChanges={false}
+                        >
+                            <View style={st.liveUserMarker}>
+                                <Ionicons name="navigate" size={14} color={T.onPrimary} />
+                            </View>
+                        </Marker>
+                    )}
+
                     {/* Provider Pins */}
                     {providers.map(p => (
                         <Marker
                             key={p.id}
                             coordinate={{ latitude: p.latitude, longitude: p.longitude }}
                             onPress={() => handlePinPress(p.id)}
-                            tracksViewChanges={false}
+                            tracksViewChanges
                         >
                             <View style={[
                                 st.pinContainer,
                                 selectedPin === p.id && st.pinContainerActive,
                             ]}>
                                 <Ionicons
-                                    name={p.icon as any}
+                                    name={
+                                        p.type === 'specialists'
+                                            ? 'medkit'
+                                            : p.type === 'hospital'
+                                                ? 'business'
+                                                : p.type === 'ambulance'
+                                                    ? 'car'
+                                                    : 'bandage'
+                                    }
                                     size={18}
                                     color={selectedPin === p.id ? '#FFFFFF' : T.violet}
                                 />
@@ -484,116 +886,257 @@ export default function MedicalMapView() {
                             coordinates={safeRoute}
                             strokeColor={T.violet}
                             strokeWidth={5}
-                            lineDashPattern={[0]}
                             lineJoin="round"
                             lineCap="round"
                         />
                     )}
                 </MapView>
 
+                {/* ── Route Overview Header (Floating Capsule) ── */}
+                {showRouteOverview && (
+                    <RNAnimated.View style={[st.routeOverlayWrap, { top: insets.top + 8, transform: [{ translateY: routeOverlaySlideY }] }]}>
+                        <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={st.routeOverlayTint} pointerEvents="none" />
+                        <View style={st.routeOverlayInner}>
+                            <TouchableOpacity
+                                style={st.routeOverlayCloseBtn}
+                                onPress={closeRouteOverview}
+                                activeOpacity={0.7}
+                                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                            >
+                                <Ionicons name="close" size={20} color={D.title} />
+                            </TouchableOpacity>
+
+                            <Text style={st.routeOverlayTitle}>Route Overview</Text>
+                        </View>
+                    </RNAnimated.View>
+                )}
+
                 {/* ── Top Header ── */}
-                <View style={[st.topBar, { top: insets.top + 8 }]}>
-                    <TouchableOpacity
-                        style={st.headerBtn}
-                        onPress={handleBack}
-                        activeOpacity={0.7}
-                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    >
-                        <Feather name="chevron-left" size={22} color={D.title} />
-                    </TouchableOpacity>
-                    <View style={st.headerTitleArea}>
-                        <Text style={st.headerTitle}>{screenTitle}</Text>
-                        <Text style={st.headerSubtitle}>Map Discovery</Text>
+                {!showRouteOverview && (
+                    <View style={[st.topBar, { top: insets.top + 8 }]}>
+                        <TouchableOpacity
+                            style={st.headerBtn}
+                            onPress={handleBack}
+                            activeOpacity={0.7}
+                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        >
+                            <Feather name="chevron-left" size={22} color={D.title} />
+                        </TouchableOpacity>
+                        <View style={st.headerTitleArea}>
+                            <Text style={st.headerTitle}>{screenTitle}</Text>
+                            <Text style={st.headerSubtitle}>Map Discovery</Text>
+                        </View>
+                        {/* Right spacer — matches back button width to center title */}
+                        <TouchableOpacity
+                            style={st.profileBtn}
+                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu' as any)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel="Open profile menu"
+                            accessibilityRole="button"
+                        >
+                            {profile?.photoUri ? (
+                                <Image source={{ uri: profile.photoUri }} style={st.profileAvatar} />
+                            ) : (
+                                <Image
+                                    source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
+                                    style={st.profileAvatar}
+                                />
+                            )}
+                        </TouchableOpacity>
                     </View>
-                    {/* Right spacer — matches back button width to center title */}
-                    <TouchableOpacity
-                        style={st.profileBtn}
-                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu' as any)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Open profile menu"
-                        accessibilityRole="button"
-                    >
-                        {profile?.photoUri ? (
-                            <Image source={{ uri: profile.photoUri }} style={st.profileAvatar} />
-                        ) : (
-                            <Image
-                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                style={st.profileAvatar}
-                            />
-                        )}
-                    </TouchableOpacity>
-                </View>
+                )}
 
                 {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
                 <View style={{ marginTop: 12 }} />
 
                 {/* ── GPS / Recenter — Right-side floating glass container (SOS standard) ── */}
-                <View style={[st.mapControls, { top: '35%' }]}>
-                    <TouchableOpacity
-                        style={st.ctrlBtn}
-                        onPress={() => {
-                            if (userLoc) {
-                                mapRef.current?.animateToRegion(
-                                    { ...userLoc, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 600
-                                );
-                            }
-                        }}
-                        activeOpacity={0.7}
-                        accessibilityLabel="Recenter map"
-                        accessibilityRole="button"
-                    >
-                        <Ionicons name="locate-outline" size={22} color={T.violet} />
-                    </TouchableOpacity>
-                </View>
+                {!showRouteOverview && (
+                    <View style={[st.mapControls, { top: '35%' }]}> 
+                        <TouchableOpacity
+                            style={st.ctrlBtn}
+                            onPress={() => {
+                                if (userLoc) {
+                                    mapRef.current?.animateToRegion(
+                                        { ...userLoc, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 600
+                                    );
+                                }
+                            }}
+                            activeOpacity={0.7}
+                            accessibilityLabel="Recenter map"
+                            accessibilityRole="button"
+                        >
+                            <Ionicons name="locate-outline" size={22} color={T.violet} />
+                        </TouchableOpacity>
+                    </View>
+                )}
 
                 {/* ── Results Count Badge — 12px below header for breathing room ── */}
-                <View style={[st.resultsBadge, { top: insets.top + 8 + 58 + 12 }]}>
-                    <Text style={st.resultsBadgeText}>
-                        {providers.length} {providers.length === 1 ? 'result' : 'results'}
-                    </Text>
-                </View>
+                {!showRouteOverview && (
+                    <View style={[st.resultsBadge, { top: insets.top + 8 + 58 + 12 }]}>
+                        <Text style={st.resultsBadgeText}>
+                            {providers.length} {providers.length === 1 ? 'result' : 'results'}
+                        </Text>
+                    </View>
+                )}
+
+                {safeRoute && selectedProvider && (
+                    <View style={[st.livePanel, { bottom: navBottom + NAV_HEIGHT + (category === 'specialists' ? 80 : 12) }]}>
+                        <Text style={st.livePanelTitle}>Route to {selectedProvider.name}</Text>
+                        {(routeEta || routeDistanceKm != null) ? (
+                            <View style={st.livePanelMetaRow}>
+                                {routeEta && (
+                                    <View style={st.routeMetaItem}>
+                                        <Ionicons name="time-outline" size={14} color={T.violet} />
+                                        <Text style={st.routeMetaText}>{routeEta}</Text>
+                                    </View>
+                                )}
+                                {routeDistanceKm != null && (
+                                    <View style={st.routeMetaItem}>
+                                        <Ionicons name="location-outline" size={14} color={T.violet} />
+                                        <Text style={st.routeMetaText}>{routeDistanceKm} km</Text>
+                                    </View>
+                                )}
+                            </View>
+                        ) : null}
+                        {navInstructions.length > 0 ? (
+                            <View style={st.liveStepRow}>
+                                <Ionicons
+                                    name={getManeuverIcon(navInstructions[currentStepIdx]?.maneuver)}
+                                    size={16}
+                                    color={T.violet}
+                                />
+                                <Text style={st.liveStepText} numberOfLines={2}>
+                                    {navInstructions[currentStepIdx]?.instruction || 'Continue on the route'}
+                                </Text>
+                            </View>
+                        ) : null}
+                        <View style={st.liveActionsRow}>
+                            {!isLiveNav ? (
+                                <TouchableOpacity
+                                    style={st.liveActionBtn}
+                                    onPress={handleStartLive}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 6 }} />
+                                    <Text style={st.liveActionText}>GO LIVE</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <TouchableOpacity
+                                    style={[st.liveActionBtn, st.liveActionExit]}
+                                    onPress={handleExitLive}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="close-circle" size={14} color={T.onPrimary} />
+                                    <Text style={st.liveActionText}>Exit Live Mode</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                )}
 
                 {/* ── Callout Bottom Sheet ── */}
                 {showCallout && selectedProvider && (
-                    <RNAnimated.View style={[
-                        st.calloutWrap,
-                        { bottom: navBottom + NAV_HEIGHT + 80 },
-                        { opacity: calloutOpacity, transform: [{ translateY: calloutY }] },
-                    ]}>
-                        <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-                        <View style={st.calloutTint} pointerEvents="none" />
-                        <View style={st.calloutGrabberWrap}>
-                            <View style={st.calloutGrabber} />
-                        </View>
-                        <View style={st.calloutContent}>
-                            {/* Left — Info */}
-                            <View style={st.calloutInfo}>
-                                <View style={st.calloutIconWrap}>
-                                    <Ionicons name={selectedProvider.icon as any} size={22} color={T.violet} />
-                                </View>
-                                <View style={st.calloutTextWrap}>
+                    <>
+                        <TouchableOpacity
+                            style={st.calloutBackdrop}
+                            onPress={closeCallout}
+                            activeOpacity={1}
+                        />
+                        <RNAnimated.View style={[
+                            st.calloutWrap,
+                            { bottom: navBottom + NAV_HEIGHT + 80 },
+                            { opacity: calloutOpacity, transform: [{ translateY: calloutY }] },
+                        ]}>
+                            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={st.calloutTint} pointerEvents="none" />
+                            <View style={st.calloutGrabberWrap}>
+                                <View style={st.calloutGrabber} />
+                            </View>
+                            <View style={st.calloutContentStack}>
+                                <View style={st.calloutTextWrapFull}>
                                     <Text style={st.calloutName} numberOfLines={1}>
                                         {selectedProvider.name}
                                     </Text>
-                                    <View style={st.calloutMetaRow}>
-                                        <Ionicons name="star" size={12} color="#F59E0B" />
-                                        <Text style={st.calloutRating}>
-                                            {selectedProvider.rating.toFixed(1)}
-                                        </Text>
-                                    </View>
-                                    {selectedProvider.affiliation ? (
-                                        <Text style={st.calloutAffiliation} numberOfLines={1}>
-                                            {selectedProvider.affiliation}
-                                        </Text>
-                                    ) : null}
+                                    {selectedProvider.type === 'specialists' ? (
+                                        <>
+                                            <Text style={st.calloutAffiliation} numberOfLines={1}>
+                                                {selectedProvider.specialty}
+                                            </Text>
+                                            <Text style={st.calloutMetaText} numberOfLines={1}>
+                                                {selectedProvider.degree}
+                                            </Text>
+                                            <Text style={st.calloutMetaText} numberOfLines={1}>
+                                                {selectedProvider.hospital}
+                                            </Text>
+                                            <Text style={st.calloutMetaText} numberOfLines={1}>
+                                                Shift: {selectedProvider.shift}
+                                            </Text>
+                                            <Text style={st.calloutMetaText}>
+                                                Phone: {selectedProvider.phone ?? '01XXXXXXXXX'}
+                                            </Text>
+                                        </>
+                                    ) : selectedProvider.type === 'ambulance' ? (
+                                        <>
+                                            <Text style={st.calloutAffiliation} numberOfLines={2}>
+                                                {selectedProvider.name}
+                                            </Text>
+                                            <Text style={st.calloutMetaLabel}>Ambulance Hotline:</Text>
+                                            <Text style={st.calloutMetaText}>
+                                                {selectedProvider.hotline ?? '999 / 017XXXXXXXX'}
+                                            </Text>
+                                            {selectedDistanceKm !== null ? (
+                                                <Text style={st.calloutMetaText}>
+                                                    Distance: {selectedDistanceKm.toFixed(1)} km
+                                                </Text>
+                                            ) : null}
+                                        </>
+                                    ) : (
+                                        <>
+                                            {selectedProvider.address ? (
+                                                <Text style={st.calloutAffiliation} numberOfLines={2}>
+                                                    {selectedProvider.address}
+                                                </Text>
+                                            ) : null}
+                                            {selectedDistanceKm !== null ? (
+                                                <Text style={st.calloutMetaText}>
+                                                    Distance: {selectedDistanceKm.toFixed(1)} km
+                                                </Text>
+                                            ) : null}
+                                        </>
+                                    )}
                                 </View>
-                            </View>
-                            {/* Right — Actions */}
-                            <View style={st.calloutActions}>
-                                {selectedProvider.bookingUrl ? (
+
+                                {selectedProvider.type === 'ambulance' ? (
+                                    <View style={st.calloutActionRow}>
+                                        <TouchableOpacity
+                                            style={st.calloutActionBtn}
+                                            onPress={handleCallHotline}
+                                            activeOpacity={0.85}
+                                        >
+                                            <Ionicons name="call" size={14} color={T.violet} />
+                                            <Text style={st.calloutActionText}>Call</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[st.bookNowBtnFull, st.calloutActionPrimary]}
+                                            onPress={handleDirections}
+                                            activeOpacity={0.85}
+                                        >
+                                            <LinearGradient
+                                                colors={G.navActive.colors}
+                                                start={G.navActive.start}
+                                                end={G.navActive.end}
+                                                style={st.bookNowGradient}
+                                            >
+                                                <Text style={st.bookNowText}>Direction</Text>
+                                                <Ionicons name="navigate" size={14} color={T.onPrimary} />
+                                            </LinearGradient>
+                                        </TouchableOpacity>
+                                    </View>
+                                ) : (
                                     <TouchableOpacity
-                                        style={st.bookNowBtn}
-                                        onPress={handleBookNow}
+                                        style={st.bookNowBtnFull}
+                                        onPress={handleDirections}
                                         activeOpacity={0.85}
                                     >
                                         <LinearGradient
@@ -602,46 +1145,26 @@ export default function MedicalMapView() {
                                             end={G.navActive.end}
                                             style={st.bookNowGradient}
                                         >
-                                            <Text style={st.bookNowText}>Book Now</Text>
-                                            <Ionicons name="arrow-forward" size={14} color={T.onPrimary} />
+                                            <Text style={st.bookNowText}>Directions</Text>
+                                            <Ionicons name="navigate" size={14} color={T.onPrimary} />
                                         </LinearGradient>
                                     </TouchableOpacity>
-                                ) : (
-                                    <TouchableOpacity
-                                        style={st.callBtn}
-                                        onPress={() => Haptics.selectionAsync()}
-                                        activeOpacity={0.85}
-                                    >
-                                        <Ionicons name="call" size={18} color={T.onPrimary} />
-                                    </TouchableOpacity>
                                 )}
-                                <TouchableOpacity
-                                    style={st.dismissBtn}
-                                    onPress={closeCallout}
-                                    activeOpacity={0.7}
-                                >
-                                    <Ionicons name="close" size={16} color={D.muted} />
-                                </TouchableOpacity>
                             </View>
-                        </View>
-                        {/* Safe Route Indicator */}
-                        {safeRoute && (
-                            <View style={st.safeRouteIndicator}>
-                                <Ionicons name="shield-checkmark" size={14} color={D.safeColor} />
-                                <Text style={st.safeRouteText}>Safe route calculated • Avoids red zones</Text>
-                            </View>
-                        )}
-                    </RNAnimated.View>
+                        </RNAnimated.View>
+                    </>
                 )}
 
                 {/* ── Quick Selector Chips ── */}
-                <View style={[st.chipContainer, { bottom: navBottom + NAV_HEIGHT + 12 }]}>
-                    <QuickChipRow
-                        chips={chips}
-                        selected={selectedChip}
-                        onSelect={setSelectedChip}
-                    />
-                </View>
+                {(category === 'specialists' || category === 'ambulance') && (
+                    <View style={[st.chipContainer, { bottom: navBottom + NAV_HEIGHT + 12 }]}>
+                        <QuickChipRow
+                            chips={chips}
+                            selected={selectedChip}
+                            onSelect={setSelectedChip}
+                        />
+                    </View>
+                )}
 
                 {/* ── Bottom Navbar ── */}
                 <View style={[st.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
@@ -746,6 +1269,26 @@ const st = StyleSheet.create({
     },
 
     // ── Pin ─────────────────────────────────────────────────────────────────
+    originMarker: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: T.violet,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+    },
+    liveUserMarker: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: '#2563EB',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+    },
     pinContainer: {
         width: 38, height: 38, borderRadius: 19,
         backgroundColor: D.cardFill,
@@ -776,43 +1319,52 @@ const st = StyleSheet.create({
             android: { elevation: 10 },
         }),
     },
+    calloutBackdrop: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 220,
+    },
     calloutTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
     calloutGrabberWrap: { alignItems: 'center', paddingTop: 10 },
     calloutGrabber: {
         width: 42, height: 4, borderRadius: 2,
         backgroundColor: T.lineBold, opacity: 0.75,
     },
-    calloutContent: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: 12, paddingBottom: 14,
+    calloutContentStack: {
+        paddingHorizontal: S.s4,
+        paddingTop: 12,
+        paddingBottom: 16,
         gap: S.s3,
     },
-    calloutInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.s3 },
-    calloutIconWrap: {
-        width: 46, height: 46, borderRadius: 23,
-        backgroundColor: `${T.violet}18`,
-        borderWidth: 1, borderColor: `${T.violet}30`,
-        alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    calloutTextWrapFull: {
+        width: '100%',
+        gap: 4,
     },
-    calloutTextWrap: { flex: 1, gap: 2 },
     calloutName: {
         fontSize: 15, fontWeight: '700', color: D.title,
         letterSpacing: -0.1,
     },
-    calloutMetaRow: {
-        flexDirection: 'row', alignItems: 'center', gap: 4,
-    },
-    calloutRating: {
-        fontSize: 12, fontWeight: '700', color: '#F59E0B',
-    },
     calloutAffiliation: {
         fontSize: 11, fontWeight: '500', color: D.muted,
     },
-    calloutActions: {
-        flexDirection: 'row', alignItems: 'center', gap: 8,
+    calloutMetaLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: D.subtitle,
+        marginTop: 2,
     },
-    bookNowBtn: {
-        borderRadius: 12, overflow: 'hidden',
+    calloutMetaText: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: D.muted,
+    },
+    bookNowBtnFull: {
+        width: '100%',
+        borderRadius: 12,
+        overflow: 'hidden',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 6 },
@@ -826,30 +1378,157 @@ const st = StyleSheet.create({
     bookNowText: {
         fontSize: 13, fontWeight: '800', color: T.onPrimary,
     },
-    callBtn: {
-        width: 42, height: 42, borderRadius: 21,
-        backgroundColor: T.success,
-        alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#10B981', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 4 },
-        }),
+    calloutActionRow: {
+        flexDirection: 'row',
+        gap: 10,
+        width: '100%',
     },
-    dismissBtn: {
-        width: 30, height: 30, borderRadius: 15,
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderWidth: 1, borderColor: D.hairline,
-        alignItems: 'center', justifyContent: 'center',
+    calloutActionBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: `${T.violet}40`,
+    },
+    calloutActionText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: T.violet,
+    },
+    calloutActionPrimary: {
+        flex: 1,
     },
 
-    // ── Safe Route Indicator ────────────────────────────────────────────────
-    safeRouteIndicator: {
-        flexDirection: 'row', alignItems: 'center', gap: 6,
-        paddingHorizontal: S.s4, paddingBottom: 10,
+    livePanel: {
+        position: 'absolute',
+        left: 14,
+        right: 14,
+        backgroundColor: 'rgba(22,15,44,0.92)',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        zIndex: 230,
+        gap: 6,
     },
-    safeRouteText: {
-        fontSize: 10, fontWeight: '600', color: D.safeColor,
+    livePanelTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: D.title,
+    },
+    livePanelMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginTop: 6,
+    },
+    liveStepRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 8,
+    },
+    liveStepText: {
+        flex: 1,
+        fontSize: 11,
+        color: D.subtitle,
+        fontWeight: '600',
+        lineHeight: 16,
+    },
+    liveActionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+    },
+    liveActionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        height: 32,
+        borderRadius: R.pill,
+        backgroundColor: T.violet,
+        borderWidth: 1,
+        borderColor: `${T.violet}70`,
+    },
+    liveActionExit: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    liveActionText: {
+        color: T.onPrimary,
+        fontSize: 11,
+        fontWeight: '700',
         letterSpacing: 0.2,
+    },
+
+    // ── Route Overview Header (Floating Capsule) ──────────────────────────
+    routeOverlayWrap: {
+        position: 'absolute',
+        left: 14,
+        right: 14,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        backgroundColor: 'rgba(30,21,58,0.65)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        zIndex: 320,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+            android: { elevation: 8 },
+        }),
+    },
+    routeOverlayTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: T.surfaceOverlay,
+    },
+    routeOverlayInner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 12,
+        paddingHorizontal: S.s3,
+        paddingVertical: 12,
+        minHeight: 52,
+        position: 'relative',
+    },
+    routeOverlayCloseBtn: {
+        position: 'absolute',
+        left: S.s3,
+        width: 36,
+        height: 36,
+        borderRadius: R.hBtn,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10,
+    },
+    routeOverlayTitle: {
+        fontSize: 16,
+        color: D.title,
+        fontWeight: '700',
+        letterSpacing: -0.3,
+        textAlign: 'center',
+    },
+    routeMetaItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    routeMetaText: {
+        fontSize: 11,
+        color: T.violet,
+        fontWeight: '600',
     },
 
     // ── Quick Selector Chips ────────────────────────────────────────────────

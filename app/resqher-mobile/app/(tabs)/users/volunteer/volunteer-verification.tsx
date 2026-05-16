@@ -25,10 +25,10 @@ import * as ImagePicker from 'expo-image-picker';
 import * as SecureStore from 'expo-secure-store';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import { useAuth } from '../../../../src/context/AuthContext';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 export const VERIFICATION_KEY = 'resqher_volunteer_verification_v1';
-export const VERIFICATION_ACK_KEY = 'resqher_volunteer_verification_ack_v1';
 
 export type VerificationStatus =
     | 'not_applied'
@@ -167,6 +167,7 @@ function UploadRow({
 export default function VolunteerVerificationScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { signOut } = useAuth();
 
     const [record, setRecord] = useState<VerificationRecord>(INITIAL_RECORD);
     const [viewState, setViewState] = useState<'loading' | 'initial' | 'form' | 'status'>('loading');
@@ -206,14 +207,25 @@ export default function VolunteerVerificationScreen() {
         setViewState('form');
     };
 
+    const handleBackToIntro = async () => {
+        setIdCardUri(undefined);
+        setSelfieUri(undefined);
+        setCertUri(undefined);
+        await persist(INITIAL_RECORD);
+        setViewState('initial');
+    };
+
+    const handleGoToVolunteerHome = () => {
+        router.replace('/(tabs)/users/volunteer');
+    };
+
+    const handleLogout = async () => {
+        await signOut();
+        router.replace('/(auth)/login');
+    };
+
     const handleSubmit = async () => {
-        if (!idCardUri || !selfieUri) {
-            Alert.alert(
-                'Documents required',
-                'Please upload your ID Card and a Selfie holding your ID before submitting.',
-            );
-            return;
-        }
+        // For now: allow submit even without documents and show admin modal immediately.
         setSubmitting(true);
         const pendingRecord: VerificationRecord = {
             status: 'pending',
@@ -313,13 +325,19 @@ export default function VolunteerVerificationScreen() {
 
                 {/* ── Header ─────────────────────────────────────────────── */}
                 <View style={[s.header, { paddingTop: insets.top + 8 }]}>
-                    <TouchableOpacity
-                        style={s.headerBtn}
-                        onPress={() => router.back()}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                        <Feather name="chevron-left" size={22} color={T.ink} />
-                    </TouchableOpacity>
+                    {viewState === 'form' ? (
+                        <TouchableOpacity
+                            style={s.headerBtn}
+                            onPress={handleBackToIntro}
+                            activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Back to verification intro"
+                        >
+                            <Feather name="arrow-left" size={18} color={T.ink} />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={s.headerSpacer} />
+                    )}
                     <Text style={s.headerTitle}>Volunteer Verification</Text>
                     <View style={s.headerSpacer} />
                 </View>
@@ -429,14 +447,15 @@ export default function VolunteerVerificationScreen() {
                                 </Text>
                             )}
 
-                            {/* Submit */}
+                            {/* Submit: always visible purple; handler validates required fields */}
                             <TouchableOpacity
-                                style={[s.primaryBtn, !canSubmit && s.primaryBtnDisabled]}
-                                onPress={canSubmit && !submitting ? handleSubmit : undefined}
-                                activeOpacity={canSubmit ? 0.8 : 1}
+                                style={s.primaryBtn}
+                                onPress={submitting ? undefined : handleSubmit}
+                                activeOpacity={0.8}
+                                disabled={submitting}
                             >
-                                <Feather name="send" size={17} color={canSubmit ? T.onPrimary : T.disabledText} />
-                                <Text style={[s.primaryBtnText, !canSubmit && s.primaryBtnTextDisabled]}>
+                                <Feather name="send" size={17} color={T.onPrimary} />
+                                <Text style={s.primaryBtnText}>
                                     {submitting ? 'Submitting…' : 'Submit Verification Request'}
                                 </Text>
                             </TouchableOpacity>
@@ -471,22 +490,42 @@ export default function VolunteerVerificationScreen() {
 
                                 {/* Pending message */}
                                 {record.status === 'pending' && (
-                                    <Section title="What happens next">
-                                        <View style={s.infoRow}>
-                                            <Feather name="clock" size={15} color={T.accent} />
-                                            <Text style={s.infoText}>
-                                                Your documents are being reviewed. This usually takes
-                                                24–48 hours.
-                                            </Text>
-                                        </View>
-                                        <Divider />
-                                        <View style={s.infoRow}>
-                                            <Feather name="bell" size={15} color={T.violet} />
-                                            <Text style={s.infoText}>
-                                                You will be notified once verification is complete.
-                                            </Text>
-                                        </View>
-                                    </Section>
+                                    <>
+                                        <Section title="What happens next">
+                                            <View style={s.infoRow}>
+                                                <Feather name="clock" size={15} color={T.accent} />
+                                                <Text style={s.infoText}>
+                                                    Your documents are being reviewed. This usually takes
+                                                    24–48 hours.
+                                                </Text>
+                                            </View>
+                                            <Divider />
+                                            <View style={s.infoRow}>
+                                                <Feather name="bell" size={15} color={T.violet} />
+                                                <Text style={s.infoText}>
+                                                    You will be notified once verification is complete.
+                                                </Text>
+                                            </View>
+                                        </Section>
+
+                                        <TouchableOpacity
+                                            style={s.primaryBtn}
+                                            onPress={handleGoToVolunteerHome}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Feather name="home" size={17} color={T.onPrimary} />
+                                            <Text style={s.primaryBtnText}>OK</Text>
+                                        </TouchableOpacity>
+
+                                        <TouchableOpacity
+                                            style={[s.primaryBtn, s.logoutBtn]}
+                                            onPress={handleLogout}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Feather name="log-out" size={17} color={T.danger} />
+                                            <Text style={[s.primaryBtnText, s.logoutBtnText]}>Logout</Text>
+                                        </TouchableOpacity>
+                                    </>
                                 )}
 
                                 {/* Verified message */}
@@ -652,6 +691,14 @@ const s = StyleSheet.create({
         borderRadius: R.md, paddingVertical: 15,
         marginBottom: 12,
     },
+    logoutBtn: {
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: `${T.danger}22`,
+    },
+    logoutBtnText: {
+        color: T.danger,
+    },
     primaryBtnDisabled: {
         backgroundColor: T.disabled,
     },
@@ -810,6 +857,103 @@ const s = StyleSheet.create({
         flex: 1,
         fontSize: 13, fontWeight: '500',
         color: T.dangerText, lineHeight: 18,
+    },
+    verificationGateOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    verificationGateScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    verificationGateCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.76)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    verificationGateIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(138,56,246,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.28)',
+        marginBottom: 14,
+    },
+    verificationGateTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    verificationGateMessage: {
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+    },
+    verificationGateEta: {
+        marginTop: 10,
+        fontSize: 12,
+        lineHeight: 18,
+        color: T.ink3,
+        fontWeight: '700',
+    },
+    verificationGateActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 22,
+    },
+    verificationGateOkBtn: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    verificationGateOkTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    verificationGateLogoutBtn: {
+        flex: 1,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    verificationGateLogoutFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    verificationGateLogoutTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
 });
 

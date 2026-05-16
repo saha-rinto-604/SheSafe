@@ -114,10 +114,14 @@ export default function MedicalDashboard() {
     const [selectedCategory, setSelectedCategory] = useState<MedicalCategory>('specialists');
     const [selectedShift, setSelectedShift] = useState<ShiftFilter>('now');
 
+    const medicalCategories = CATEGORIES.filter(cat =>
+        cat.id === 'specialists' || cat.id === 'hospital' || cat.id === 'pharmacy' || cat.id === 'ambulance'
+    );
+
     const handleFind = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push({
-            pathname: '/(tabs)/users/standard-user/MedicalMapView',
+            pathname: '/(tabs)/users/volunteer/MedicalMapView',
             params: { category: selectedCategory, shift: selectedShift },
         } as any);
     }, [selectedCategory, selectedShift, router]);
@@ -149,50 +153,52 @@ export default function MedicalDashboard() {
                         <TouchableOpacity
                             style={st.headerBtn}
                             activeOpacity={0.7}
-                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/standard-user/notifications'); }}
+                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
                         >
                             <Feather name="bell" size={18} color={D.subtitle} />
                         </TouchableOpacity>
                     </View>
 
                     {/* ── Shift Filter ── */}
-                    <View style={st.filterSection}>
-                        <Text style={st.sectionLabel}>WORKLOAD / SHIFT</Text>
-                        <View style={st.filterRow}>
-                            {SHIFTS.map(shift => (
-                                <TouchableOpacity
-                                    key={shift.id}
-                                    style={[
-                                        st.filterPill,
-                                        selectedShift === shift.id && st.filterPillActive,
-                                    ]}
-                                    onPress={() => {
-                                        Haptics.selectionAsync();
-                                        setSelectedShift(shift.id);
-                                    }}
-                                    activeOpacity={0.7}
-                                >
-                                    <Ionicons
-                                        name={shift.icon as any}
-                                        size={14}
-                                        color={selectedShift === shift.id ? T.violet : D.muted}
-                                    />
-                                    <Text style={[
-                                        st.filterPillText,
-                                        selectedShift === shift.id && st.filterPillTextActive,
-                                    ]}>
-                                        {shift.label}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
+                    {selectedCategory === 'specialists' && (
+                        <View style={st.filterSection}>
+                            <Text style={st.sectionLabel}>WORKLOAD / SHIFT</Text>
+                            <View style={st.filterRow}>
+                                {SHIFTS.map(shift => (
+                                    <TouchableOpacity
+                                        key={shift.id}
+                                        style={[
+                                            st.filterPill,
+                                            selectedShift === shift.id && st.filterPillActive,
+                                        ]}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setSelectedShift(shift.id);
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons
+                                            name={shift.icon as any}
+                                            size={14}
+                                            color={selectedShift === shift.id ? T.violet : D.muted}
+                                        />
+                                        <Text style={[
+                                            st.filterPillText,
+                                            selectedShift === shift.id && st.filterPillTextActive,
+                                        ]}>
+                                            {shift.label}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
                         </View>
-                    </View>
+                    )}
 
                     {/* ── Category Grid ── */}
                     <View style={st.gridSection}>
                         <Text style={st.sectionLabel}>SELECT CATEGORY</Text>
                         <View style={st.grid}>
-                            {CATEGORIES.map(cat => (
+                            {medicalCategories.map(cat => (
                                 <CategoryCard
                                     key={cat.id}
                                     item={cat}

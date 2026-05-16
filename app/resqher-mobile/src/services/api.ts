@@ -1,5 +1,6 @@
 import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const ACCESS_KEY = 'resqher_access_token';
 const REFRESH_KEY = 'resqher_refresh_token';
@@ -9,8 +10,13 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
 }
 
-// Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
-const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
+// Prefer EXPO_PUBLIC_API_URL. When not set, default to the host loopback
+// appropriate for the platform/emulator:
+// - Android emulator: 10.0.2.2
+// - iOS simulator / web: 127.0.0.1
+const envUrl = process.env.EXPO_PUBLIC_API_URL;
+const defaultHost = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+const BASE_URL = normalizeBaseUrl(envUrl || defaultHost);
 
 const api = axios.create({
   baseURL: BASE_URL,

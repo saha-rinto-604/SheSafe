@@ -7,7 +7,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
-    TextInput, Keyboard, Pressable, Modal, ScrollView, Image, PanResponder,
+    TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
     BackHandler,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
@@ -24,9 +24,10 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import SafePlaceButton from '../../../../components/SafePlaceButton';
+import { useAuth } from '../../../../src/context/AuthContext';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { loadVerificationRecord, type VerificationRecord } from '../standard-user/volunteer-verification';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -61,6 +62,12 @@ type SosRequest = {
     locationLabel: string;
     latitude: number;
     longitude: number;
+};
+
+type ReviewVolunteer = {
+    id: string;
+    name: string;
+    avatarUri: string;
 };
 
 const MOCK_SOS_REQUESTS: SosRequest[] = [
@@ -156,10 +163,11 @@ const MOCK_SOS_REQUESTS: SosRequest[] = [
     },
 ];
 
-// Mock safe place (United International University)
-const SAFE_PLACE_LOCATION = { latitude: 23.7924, longitude: 90.4072, name: 'United International University' };
-// Mock volunteer location (Notunbazar) for safe-place route demo
-const NOTUNBAZAR_LOC = { latitude: 23.8067, longitude: 90.4199 };
+const REVIEW_VOLUNTEERS: ReviewVolunteer[] = [
+    { id: 'rv-1', name: 'John Doe', avatarUri: 'https://i.pravatar.cc/150?img=12&u=rv-1' },
+    { id: 'rv-2', name: 'Amin Rahman', avatarUri: 'https://i.pravatar.cc/150?img=15&u=rv-2' },
+    { id: 'rv-3', name: 'Nusrat Jahan', avatarUri: 'https://i.pravatar.cc/150?img=32&u=rv-3' },
+];
 
 const EARTH_RADIUS_M = 6_371_000;
 
@@ -671,15 +679,47 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
     );
 });
 
+type SosLiveButtonStage = 'requesting' | 'responding';
+
+const SosLiveButton = memo(function SosLiveButton({
+    stage,
+    animatedStyle,
+}: {
+    stage: SosLiveButtonStage;
+    animatedStyle?: any;
+}) {
+    return (
+        <RNAnimated.View style={animatedStyle}>
+            <View style={[s.sosBtn, s.sosBtnEmg]}>
+                <View style={s.sosBtnDangerFill}>
+                    <Ionicons
+                        name={stage === 'responding' ? 'pulse' : 'location-sharp'}
+                        size={stage === 'responding' ? 22 : 24}
+                        color={T.onDanger}
+                    />
+                    <Text style={[s.sosTxt, stage === 'responding' && s.sosTxtCompact]}>
+                        {stage === 'responding' ? 'LIVE' : 'SOS'}
+                    </Text>
+                    <Text style={[s.sosSubTxt, stage === 'responding' && s.sosSubTxtCompact]}>
+                        {stage === 'responding' ? 'VOLUNTEER ACCEPTED' : 'SHARING LOCATION'}
+                    </Text>
+                </View>
+            </View>
+        </RNAnimated.View>
+    );
+});
+
 // ── Volunteer Home Screen ────────────────────────────────────────────────────
 export default function VolunteerHome() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const mapRef = useRef<MapView>(null);
+    const { signOut } = useAuth();
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
+    const [locationRetryKey, setLocationRetryKey] = useState(0);
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('driving');
     const [isLiveNav, setIsLiveNav] = useState(false);
@@ -690,6 +730,10 @@ export default function VolunteerHome() {
     const [showLocationCard, setShowLocationCard] = useState(false);
     const [sosPanelOpen, setSosPanelOpen] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [verificationRecord, setVerificationRecord] = useState<VerificationRecord | null>(null);
+    const [verificationGateAcknowledged, setVerificationGateAcknowledged] = useState(false);
+    const [verificationGateVisible, setVerificationGateVisible] = useState(false);
+    const verificationNavRef = useRef(false);
     const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
     const [recentPlaces, setRecentPlaces] = useState<PlaceSuggestion[]>([]);
     const [placeIncidents, setPlaceIncidents] = useState<PlaceIncident[]>([]);
@@ -703,7 +747,17 @@ export default function VolunteerHome() {
     const [sosActive, setSosActive] = useState(false);
     const [cancelCountdown, setCancelCountdown] = useState(CANCEL_DURATION_DEFAULT);
     const [isEmergencyLive, setIsEmergencyLive] = useState(false);
+    const [sosStage, setSosStage] = useState<'idle' | 'requesting' | 'responding'>('idle');
+    const [stopConfirmVisible, setStopConfirmVisible] = useState(false);
+    const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>(REVIEW_VOLUNTEERS);
+    const [reviewFeedback, setReviewFeedback] = useState('');
+    const [reviewRating, setReviewRating] = useState(5);
+    const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const sosTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const sosTransitionAnim = useRef(new RNAnimated.Value(0)).current;
+    const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
     const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
     const safePlaceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [directionsMode, setDirectionsMode] = useState(false);
@@ -729,6 +783,8 @@ export default function VolunteerHome() {
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
     const [showSafePlace, setShowSafePlace] = useState(false);
+    const [locationErrorVisible, setLocationErrorVisible] = useState(false);
+    const [locationErrorMessage, setLocationErrorMessage] = useState<string | null>(null);
     const [safePlaceCoords, setSafePlaceCoords] = useState<LatLng[]>([]);
     const [safePlaceDistance, setSafePlaceDistance] = useState<number | null>(null);
     const [safePlaceLoading, setSafePlaceLoading] = useState(false);
@@ -742,9 +798,45 @@ export default function VolunteerHome() {
     // Load profile picture on screen focus
     useFocusEffect(
         useCallback(() => {
-            getUserProfile().then(setProfile);
-        }, []),
+            let isActive = true;
+
+            Promise.all([getUserProfile(), loadVerificationRecord()]).then(([nextProfile, nextVerification]) => {
+                if (!isActive) return;
+
+                setProfile(nextProfile);
+                setVerificationRecord(nextVerification);
+
+                // If user hasn't applied or has a draft, take them to the verification flow
+                if ((nextVerification.status === 'not_applied' || nextVerification.status === 'draft') && !verificationNavRef.current) {
+                    verificationNavRef.current = true;
+                    router.push('/(tabs)/users/volunteer/volunteer-verification');
+                    return;
+                }
+
+                // For the current verification flow test, do not show the home gate.
+                // The admin popup is shown on the verification screen, and OK should
+                // return directly here without a second modal.
+                setVerificationGateVisible(false);
+            });
+
+            return () => {
+                isActive = false;
+            };
+        }, [verificationGateAcknowledged]),
     );
+
+    const dismissVerificationGate = useCallback(() => {
+        setVerificationGateAcknowledged(true);
+        setVerificationGateVisible(false);
+    }, []);
+
+    const handleVerificationLogout = useCallback(async () => {
+        setVerificationGateVisible(false);
+        await signOut();
+        router.replace('/(auth)/login');
+    }, [router, signOut]);
+
+    const needsVolunteerVerification = verificationRecord?.status !== 'verified';
 
     // Animation values
     const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
@@ -774,8 +866,23 @@ export default function VolunteerHome() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true);
+        setSosStage('requesting');
+        setIsEmergencyLive(false);
+        sosTransitionAnim.setValue(0);
         setLocationStatus('sharing');
         setCancelCountdown(CANCEL_DURATION_DEFAULT);
+
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
+        sosTransitionRef.current = setTimeout(() => {
+            setIsEmergencyLive(true);
+            setSosStage('responding');
+            RNAnimated.timing(sosTransitionAnim, {
+                toValue: 1,
+                duration: 380,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+        }, 5000);
     }, []);
 
     const cancelSOS = useCallback(() => {
@@ -784,15 +891,76 @@ export default function VolunteerHome() {
         setLocationStatus('ready');
         setHoldPhase('idle');
         setIsEmergencyLive(false);
+        setSosStage('idle');
+        sosTransitionAnim.setValue(0);
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
     }, []);
 
     const confirmStop = useCallback(() => {
-        Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [
-            { text: 'Keep Active', style: 'cancel' },
-            { text: 'Stop Alert', style: 'destructive', onPress: cancelSOS },
-        ]);
+        setStopConfirmVisible(true);
+    }, []);
+
+    const closeStopConfirm = useCallback(() => {
+        setStopConfirmVisible(false);
+    }, []);
+
+    const handleStopAlert = useCallback(() => {
+        setStopConfirmVisible(false);
+        cancelSOS();
     }, [cancelSOS]);
+
+    const resetReviewFlow = useCallback(() => {
+        setReviewVisible(false);
+        setReviewQueue(REVIEW_VOLUNTEERS);
+        setReviewFeedback('');
+        setReviewRating(5);
+        setReviewRemovingId(null);
+        reviewExitAnim.setValue(0);
+    }, [reviewExitAnim]);
+
+    const openReviewPopup = useCallback(() => {
+        if (!reviewQueue.length) {
+            cancelSOS();
+            return;
+        }
+        setReviewVisible(true);
+    }, [cancelSOS, reviewQueue.length]);
+
+    const closeReviewPopup = useCallback(() => {
+        setReviewVisible(false);
+    }, []);
+
+    const submitVolunteerReview = useCallback(() => {
+        const currentVolunteer = reviewQueue[0];
+        if (!currentVolunteer) {
+            resetReviewFlow();
+            cancelSOS();
+            return;
+        }
+
+        setReviewRemovingId(currentVolunteer.id);
+        RNAnimated.timing(reviewExitAnim, {
+            toValue: 1,
+            duration: 240,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            const nextQueue = reviewQueue.slice(1);
+
+            if (!nextQueue.length) {
+                resetReviewFlow();
+                cancelSOS();
+                return;
+            }
+
+            setReviewQueue(nextQueue);
+            setReviewFeedback('');
+            setReviewRating(5);
+            setReviewRemovingId(null);
+            reviewExitAnim.setValue(0);
+        });
+    }, [cancelSOS, resetReviewFlow, reviewExitAnim, reviewQueue]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -828,45 +996,59 @@ export default function VolunteerHome() {
     // Location
     useEffect(() => {
         (async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('Location required', 'Please grant location access.');
-                return;
-            }
-            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-            const { latitude, longitude } = pos.coords;
-            setUserLoc({ latitude, longitude });
-            setTimeout(() => mapRef.current?.animateToRegion(
-                { latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 800
-            ), 600);
-            setLocationStatus('ready');
             try {
-                const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
-                if (geo.length > 0) {
-                    const g = geo[0];
-                    setAddress(
-                        [g.street, g.district ?? g.subregion, g.city ?? g.region]
-                            .filter(Boolean).join(', ') || 'Current location'
-                    );
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    setLocationErrorMessage('Please grant location access in your device settings.');
+                    setLocationErrorVisible(true);
+                    return;
                 }
-            } catch {
-                setAddress('Current location');
-            }
 
-            locationSubRef.current = await Location.watchPositionAsync(
-                {
-                    accuracy: Location.Accuracy.BestForNavigation,
-                    timeInterval: 2000,
-                    distanceInterval: 5,
-                },
-                (loc) => {
-                    setUserLoc({
-                        latitude: loc.coords.latitude,
-                        longitude: loc.coords.longitude,
-                        heading: loc.coords.heading ?? undefined,
-                    });
+                const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                const { latitude, longitude } = pos.coords;
+                setUserLoc({ latitude, longitude });
+                setTimeout(() => mapRef.current?.animateToRegion(
+                    { latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 800
+                ), 600);
+                setLocationStatus('ready');
+
+                try {
+                    const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
+                    if (geo.length > 0) {
+                        const g = geo[0];
+                        setAddress(
+                            [g.street, g.district ?? g.subregion, g.city ?? g.region]
+                                .filter(Boolean).join(', ') || 'Current location'
+                        );
+                    }
+                } catch {
+                    setAddress('Current location');
                 }
-            );
+
+                // Start watching position
+                try {
+                    locationSubRef.current = await Location.watchPositionAsync(
+                        {
+                            accuracy: Location.Accuracy.BestForNavigation,
+                            timeInterval: 2000,
+                            distanceInterval: 5,
+                        },
+                        (loc) => {
+                            setUserLoc({
+                                latitude: loc.coords.latitude,
+                                longitude: loc.coords.longitude,
+                                heading: loc.coords.heading ?? undefined,
+                            });
+                        }
+                    );
+                } catch (err) {
+                    console.error('watchPositionAsync failed:', err);
+                }
+            } catch (err: any) {
+                console.error('Location init error:', err);
+                setLocationErrorMessage(err?.message ?? 'Unable to access location services.');
+                setLocationErrorVisible(true);
+            }
         })();
 
         return () => {
@@ -1128,86 +1310,6 @@ export default function VolunteerHome() {
             buildRoute();
         }
     }, [directionsMode, endLocation, startLocation, travelMode]);
-
-    // Fetch route to mock safe place (UoU) from Notunbazar when toggled
-    useEffect(() => {
-        let aborted = false;
-
-        const fetchSafePlaceRoute = async () => {
-            if (!showSafePlace) {
-                setSafePlaceCoords([]);
-                setSafePlaceDistance(null);
-                setSafePlaceLoading(false);
-                return;
-            }
-
-            setSafePlaceLoading(true);
-
-            try {
-                if (!GOOGLE_MAPS_API_KEY) {
-                    // No API key — fallback to straight line from Notunbazar to UoU
-                    const coords = [
-                        { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
-                        { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
-                    ];
-                    if (!aborted) {
-                        setSafePlaceCoords(coords);
-                        setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
-                        mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
-                    }
-                } else {
-                    const origin = `${NOTUNBAZAR_LOC.latitude},${NOTUNBAZAR_LOC.longitude}`;
-                    const destination = `${SAFE_PLACE_LOCATION.latitude},${SAFE_PLACE_LOCATION.longitude}`;
-                    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=walking&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
-                    const res = await fetch(url);
-                    const data = await res.json();
-                    if (!data?.routes?.length) {
-                        if (!aborted) {
-                            const coords = [
-                                { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
-                                { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
-                            ];
-                            setSafePlaceCoords(coords);
-                            setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
-                            mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
-                        }
-                    } else {
-                        const chosen = data.routes[0];
-                        const coords = decodePolyline(chosen.overview_polyline?.points ?? '');
-                        if (!aborted) {
-                            setSafePlaceCoords(coords.length ? coords : [
-                                { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
-                                { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
-                            ]);
-                            // distance from API legs if available
-                            const leg = chosen?.legs?.[0];
-                            const distKm = leg?.distance?.value ? leg.distance.value / 1000 : haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000;
-                            setSafePlaceDistance(distKm);
-                            // Fit map to safe route
-                            if (coords.length > 1) {
-                                mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 }, animated: true });
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                if (!aborted) {
-                    const coords = [
-                        { latitude: NOTUNBAZAR_LOC.latitude, longitude: NOTUNBAZAR_LOC.longitude },
-                        { latitude: SAFE_PLACE_LOCATION.latitude, longitude: SAFE_PLACE_LOCATION.longitude },
-                    ];
-                    setSafePlaceCoords(coords);
-                    setSafePlaceDistance(haversineDistance(NOTUNBAZAR_LOC, SAFE_PLACE_LOCATION) / 1000);
-                }
-            } finally {
-                if (!aborted) setSafePlaceLoading(false);
-            }
-        };
-
-        fetchSafePlaceRoute();
-
-        return () => { aborted = true; };
-    }, [showSafePlace]);
 
     // ── Scan animation helpers ──────────────────────────────────────────
     const startScanAnimation = useCallback(() => {
@@ -1518,21 +1620,6 @@ export default function VolunteerHome() {
         setSosPanelOpen(true);
     }, []);
 
-    const handleSafePlaceToggle = useCallback(() => {
-        setShowSafePlace(prev => {
-            const willShow = !prev;
-            // If toggling OFF, reset map to current location
-            if (prev && !willShow && userLoc) {
-                setTimeout(() => {
-                    mapRef.current?.animateToRegion(
-                        { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
-                    );
-                }, 200);
-            }
-            return willShow;
-        });
-    }, [userLoc]);
-
     const handleViewSos = useCallback(async (req: SosRequest) => {
         const VOLUNTEER_LOC = { latitude: 23.8293, longitude: 90.4182 }; // Khilkhet
         setSosPanelOpen(false);
@@ -1817,11 +1904,19 @@ export default function VolunteerHome() {
                             />
                             {/* start marker (user) */}
                             <Marker coordinate={safePlaceCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
-                                <View style={s.placeMarkerWrap}><View style={[s.placeMarkerIconWrap, { backgroundColor: T.violet }]}><Ionicons name="person" size={18} color={T.onPrimary} /></View></View>
+                                <View style={s.safePlaceMarkerWrap}>
+                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerStart, { borderColor: T.violet }]}> 
+                                        <Ionicons name="person" size={18} color={T.violet} />
+                                    </View>
+                                </View>
                             </Marker>
                             {/* destination marker (safe place) */}
                             <Marker coordinate={safePlaceCoords[safePlaceCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
-                                <View style={s.placeMarkerWrap}><View style={[s.placeMarkerIconWrap, { backgroundColor: T.accent }]}><Ionicons name="shield" size={16} color={T.onPrimary} /></View></View>
+                                <View style={s.safePlaceMarkerWrap}>
+                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerEnd, { borderColor: T.success }]}> 
+                                        <Ionicons name="shield" size={16} color={T.success} />
+                                    </View>
+                                </View>
                             </Marker>
                         </>
                     )}
@@ -2311,7 +2406,6 @@ export default function VolunteerHome() {
                             <Ionicons name="alarm-outline" size={20} color={T.danger} />
                             <View style={s.sosReqBadge} />
                         </TouchableOpacity>
-                        <SafePlaceButton onPress={handleSafePlaceToggle} isActive={showSafePlace} distance={safePlaceDistance} />
                     </View>
                 )}
 
@@ -2350,7 +2444,7 @@ export default function VolunteerHome() {
                                                     <Text style={s.sosViewBtnText}>View</Text>
                                                 </TouchableOpacity>
                                             </View>
-                                            <View style={s.sosActionRow}>
+                                            <View style={s.sosRequestActionRow}>
                                                 <TouchableOpacity
                                                     style={s.sosRejectBtn}
                                                     onPress={() => { }}
@@ -2436,7 +2530,7 @@ export default function VolunteerHome() {
                         </View>
 
                         {/* Action buttons */}
-                        <View style={[s.sosActionRow, { paddingHorizontal: 16, paddingBottom: 14 }]}>
+                        <View style={[s.sosRequestActionRow, { paddingHorizontal: 16, paddingBottom: 14 }]}>
                             <TouchableOpacity
                                 style={s.sosRejectBtn}
                                 onPress={exitSosView}
@@ -2504,20 +2598,24 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── SOS Overlay — centered on screen ───────────────────── */}
-                {showSOS && (
+                {showSOS && !showSafePlace && (
                     <View style={s.sosWrap}>
-                        {sosActive && cancelCountdown > 0 ? (
-                            <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
-                                <View style={s.cancelBtn}>
-                                    <Text style={s.cancelLabel}>CANCEL</Text>
-                                    <Text style={s.cancelCount}>{cancelCountdown}s</Text>
-                                    <Text style={s.cancelSub}>Tap to cancel</Text>
-                                </View>
-                            </TouchableOpacity>
-                        ) : isEmergencyLive ? (
-                            <LiveSOSButton onPress={confirmStop} />
-                        ) : (
+                        {sosStage === 'idle' ? (
                             <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
+                        ) : (
+                            <SosLiveButton
+                                stage={sosStage === 'responding' ? 'responding' : 'requesting'}
+                                animatedStyle={{
+                                    transform: [
+                                        {
+                                            translateY: sosTransitionAnim.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [0, 38],
+                                            }),
+                                        },
+                                    ],
+                                }}
+                            />
                         )}
 
                         {sosActive && pulseAnims.map(({ scale, op }, i) => (
@@ -2532,19 +2630,8 @@ export default function VolunteerHome() {
                             />
                         ))}
 
-                        {sosActive && (
-                            <View style={[s.statusPill, isEmergencyLive && s.statusPillLive]}>
-                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
-                                <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]} numberOfLines={1}>
-                                    {cancelCountdown > 0
-                                        ? `Alert triggered · Cancel in ${cancelCountdown}s`
-                                        : 'Sharing your location'
-                                    }
-                                </Text>
-                            </View>
-                        )}
-                        {!sosActive && (
-                            <View style={s.statusPill}>
+                        {sosStage === 'idle' ? (
+                            <View style={s.sosStatusPill}>
                                 <Text style={s.pillTxt} numberOfLines={1}>
                                     {holdPhase === 'idle'
                                         ? 'Press and hold for 2 sec'
@@ -2554,9 +2641,231 @@ export default function VolunteerHome() {
                                     }
                                 </Text>
                             </View>
+                        ) : sosStage === 'requesting' ? (
+                            <View style={s.sosStatusPill}>
+                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                <Text style={[s.pillTxt, s.pillTxtLive]} numberOfLines={1}>
+                                    Sharing your location...
+                                </Text>
+                            </View>
+                        ) : (
+                            <View style={[s.sosStatusPill, s.sosStatusPillAccepted]}>
+                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                <Text style={[s.pillTxt, s.pillTxtAccepted]} numberOfLines={1}>
+                                    Volunteer Responding • Sharing your location...
+                                </Text>
+                            </View>
+                        )}
+
+                        {sosStage === 'responding' && (
+                            <View style={s.sosResponderActionRow}>
+                                <TouchableOpacity style={[s.sosResponderActionBtn, s.sosResponderActionBtnCancelled]} onPress={confirmStop} activeOpacity={0.85}>
+                                    <Text style={[s.sosResponderActionBtnText, s.sosResponderActionBtnTextCancelled]}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[s.sosResponderActionBtn, s.sosResponderActionBtnResolved]} onPress={openReviewPopup} activeOpacity={0.85}>
+                                    <Text style={[s.sosResponderActionBtnText, s.sosResponderActionBtnTextResolved]}>Resolve</Text>
+                                </TouchableOpacity>
+                            </View>
                         )}
                     </View>
                 )}
+
+                <Modal
+                    visible={verificationGateVisible && needsVolunteerVerification}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={dismissVerificationGate}
+                >
+                    <View style={s.verificationGateOverlay}>
+                        <BlurView intensity={34} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.verificationGateScrim} pointerEvents="none" />
+                        <View style={s.verificationGateCard}>
+                            <View style={s.verificationGateIconWrap}>
+                                <Feather name="shield" size={24} color={T.accent} />
+                            </View>
+                            <Text style={s.verificationGateTitle}>Verification Pending</Text>
+                            <Text style={s.verificationGateMessage}>
+                                Your volunteer account is currently under admin review. You will gain access after approval from administration.
+                            </Text>
+                            <Text style={s.verificationGateEta}>Estimated Review: 24-48h</Text>
+                            <View style={s.verificationGateActions}>
+                                <TouchableOpacity
+                                    style={s.verificationGateOkBtn}
+                                    onPress={dismissVerificationGate}
+                                    activeOpacity={0.85}
+                                >
+                                    <Text style={s.verificationGateOkTxt}>OK</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={s.verificationGateLogoutBtn}
+                                    onPress={handleVerificationLogout}
+                                    activeOpacity={0.9}
+                                >
+                                    <LinearGradient
+                                        colors={['#D92D20', '#F04444']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.verificationGateLogoutFill}
+                                    >
+                                        <Text style={s.verificationGateLogoutTxt}>Logout</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={stopConfirmVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={closeStopConfirm}
+                >
+                    <View style={s.stopConfirmOverlay}>
+                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.stopConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeStopConfirm} />
+                        <View style={s.stopConfirmCard}>
+                            <View style={s.stopConfirmIconWrap}>
+                                <Feather name="alert-triangle" size={24} color={T.danger} />
+                            </View>
+                            <Text style={s.stopConfirmTitle}>Stop Emergency Alert?</Text>
+                            <Text style={s.stopConfirmMessage}>Your location will no longer be shared.</Text>
+                            <View style={s.stopConfirmActions}>
+                                <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={closeStopConfirm} activeOpacity={0.85}>
+                                    <Text style={s.stopConfirmSecondaryTxt}>Keep Active</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={handleStopAlert} activeOpacity={0.9}>
+                                    <LinearGradient
+                                        colors={["#D92D20", "#F04444"]}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.stopConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.stopConfirmPrimaryTxt}>Stop Alert</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={locationErrorVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={() => setLocationErrorVisible(false)}
+                >
+                    <View style={s.stopConfirmOverlay}>
+                        <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.stopConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLocationErrorVisible(false)} />
+                        <View style={s.stopConfirmCard}>
+                            <View style={s.stopConfirmIconWrap}>
+                                <Feather name="map-pin" size={22} color={T.violet} />
+                            </View>
+                            <Text style={s.stopConfirmTitle}>Location Unavailable</Text>
+                            <Text style={s.stopConfirmMessage}>{locationErrorMessage ?? 'Location services unavailable.'}</Text>
+                            <View style={s.stopConfirmActions}>
+                                <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={() => setLocationErrorVisible(false)} activeOpacity={0.85}>
+                                    <Text style={s.stopConfirmSecondaryTxt}>Dismiss</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={() => { setLocationErrorVisible(false); setLocationRetryKey(prev => prev + 1); }} activeOpacity={0.9}>
+                                    <LinearGradient
+                                        colors={[T.violet, '#8A38F6']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.stopConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.stopConfirmPrimaryTxt}>Retry</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={reviewVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={closeReviewPopup}
+                >
+                    <View style={s.reviewOverlay}>
+                        <BlurView intensity={32} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.reviewScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeReviewPopup} />
+                        <View style={s.reviewCard}>
+                            <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                            <View style={s.reviewAvatarRow}>
+                                {reviewQueue.map((volunteer, index) => {
+                                    const isCurrent = index === 0;
+                                    const isRemoving = volunteer.id === reviewRemovingId;
+                                    const animatedStyle = isRemoving ? {
+                                        opacity: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                                        transform: [{ translateY: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) }],
+                                    } : undefined;
+
+                                    return (
+                                        <RNAnimated.View
+                                            key={volunteer.id}
+                                            style={[
+                                                s.reviewAvatarWrap,
+                                                isCurrent && s.reviewAvatarWrapCurrent,
+                                                isRemoving && s.reviewAvatarWrapRemoving,
+                                                animatedStyle,
+                                            ]}
+                                        >
+                                            <Image source={{ uri: volunteer.avatarUri }} style={s.reviewAvatarImg} />
+                                        </RNAnimated.View>
+                                    );
+                                })}
+                            </View>
+                            <Text style={s.reviewSelectedName} numberOfLines={1}>
+                                {reviewQueue[0]?.name ?? 'Volunteer'}
+                            </Text>
+                            <Text style={s.reviewSelectedMeta} numberOfLines={1}>
+                                {reviewQueue.length} volunteer{reviewQueue.length === 1 ? '' : 's'} participated
+                            </Text>
+
+                            <TextInput
+                                value={reviewFeedback}
+                                onChangeText={setReviewFeedback}
+                                placeholder="Write your feedback here..."
+                                placeholderTextColor={T.ink4}
+                                multiline
+                                textAlignVertical="top"
+                                style={s.reviewInput}
+                            />
+
+                            <View style={s.reviewStarsRow}>
+                                {[1, 2, 3, 4, 5].map(star => {
+                                    const active = star <= reviewRating;
+                                    return (
+                                        <TouchableOpacity key={star} onPress={() => setReviewRating(star)} activeOpacity={0.8}>
+                                            <Ionicons name={active ? 'star' : 'star-outline'} size={24} color={active ? '#FBBF24' : T.ink4} />
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            <TouchableOpacity style={s.reviewSubmitBtn} onPress={submitVolunteerReview} activeOpacity={0.9}>
+                                <LinearGradient
+                                    colors={[T.violet, '#7C3AED']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={s.reviewSubmitFill}
+                                >
+                                    <Text style={s.reviewSubmitText}>Submit Review</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
 
                 {/* ── Place Detail Sheet — half screen ─────────────────────── */}
                 {placeSheetOpen && selectedPlace && (
@@ -2607,105 +2916,111 @@ export default function VolunteerHome() {
                                 </TouchableOpacity>
                             </View>
 
-                            <View style={s.placeSheetSection}>
-                                {placeSheetMode === 'incidents' ? (
-                                    <>
-                                        <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
-                                        {placeIncidents.length === 0 ? (
-                                            <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
-                                        ) : (
-                                            placeIncidents.map(inc => (
-                                                <View key={inc.id} style={s.placeIncidentRow}>
-                                                    <View style={s.placeIncidentInfo}>
-                                                        <Text style={s.placeIncidentName}>{inc.reporter}</Text>
-                                                        <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                            <KeyboardAvoidingView
+                                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                                keyboardVerticalOffset={insets.top + 56}
+                                style={s.safePlaceKeyboardAvoiding}
+                            >
+                                <View style={s.placeSheetSection}>
+                                    {placeSheetMode === 'incidents' ? (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
+                                            {placeIncidents.length === 0 ? (
+                                                <Text style={s.placeSheetEmpty}>No reported incidents yet</Text>
+                                            ) : (
+                                                placeIncidents.map(inc => (
+                                                    <View key={inc.id} style={s.placeIncidentRow}>
+                                                        <View style={s.placeIncidentInfo}>
+                                                            <Text style={s.placeIncidentName}>{inc.reporter}</Text>
+                                                            <Text style={s.placeIncidentTime}>{inc.time}</Text>
+                                                        </View>
+                                                        <View style={[
+                                                            s.placeIncidentPill,
+                                                            inc.status === 'ACTIVE' && s.placeIncidentPillActive,
+                                                            inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
+                                                            inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
+                                                        ]}>
+                                                            <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                                        </View>
                                                     </View>
-                                                    <View style={[
-                                                        s.placeIncidentPill,
-                                                        inc.status === 'ACTIVE' && s.placeIncidentPillActive,
-                                                        inc.status === 'RESOLVED' && s.placeIncidentPillResolved,
-                                                        inc.status === 'CANCELLED' && s.placeIncidentPillCancelled,
-                                                    ]}>
-                                                        <Text style={s.placeIncidentPillText}>{inc.status}</Text>
+                                                ))
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
+                                            {safePlaceSubmitState === 'success' ? (
+                                                <RNAnimated.View
+                                                    style={[
+                                                        s.safePlaceSuccessWrap,
+                                                        {
+                                                            opacity: safePlaceSuccessAnim,
+                                                            transform: [{
+                                                                translateY: safePlaceSuccessAnim.interpolate({
+                                                                    inputRange: [0, 1],
+                                                                    outputRange: [10, 0],
+                                                                }),
+                                                            }],
+                                                        },
+                                                    ]}
+                                                >
+                                                    <View style={s.safePlaceSuccessIcon}>
+                                                        <Ionicons name="checkmark" size={18} color={T.onPrimary} />
                                                     </View>
-                                                </View>
-                                            ))
-                                        )}
-                                    </>
-                                ) : (
-                                    <>
-                                        <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
-                                        {safePlaceSubmitState === 'success' ? (
-                                            <RNAnimated.View
-                                                style={[
-                                                    s.safePlaceSuccessWrap,
-                                                    {
-                                                        opacity: safePlaceSuccessAnim,
-                                                        transform: [{
-                                                            translateY: safePlaceSuccessAnim.interpolate({
-                                                                inputRange: [0, 1],
-                                                                outputRange: [10, 0],
-                                                            }),
-                                                        }],
-                                                    },
-                                                ]}
-                                            >
-                                                <View style={s.safePlaceSuccessIcon}>
-                                                    <Ionicons name="checkmark" size={18} color={T.onPrimary} />
-                                                </View>
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={s.safePlaceSuccessTitle}>Sent to admin</Text>
-                                                    <Text style={s.safePlaceSuccessSubtitle}>
-                                                        Your safe place request was sent to admin for confirmation.
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={s.safePlaceSuccessTitle}>Sent to admin</Text>
+                                                        <Text style={s.safePlaceSuccessSubtitle}>
+                                                            Your safe place request was sent to admin for confirmation.
+                                                        </Text>
+                                                    </View>
+                                                </RNAnimated.View>
+                                            ) : (
+                                                <>
+                                                    <Text style={s.safePlaceQuestion}>
+                                                        Why is this place safe? (Describe briefly)
                                                     </Text>
-                                                </View>
-                                            </RNAnimated.View>
-                                        ) : (
-                                            <>
-                                                <Text style={s.safePlaceQuestion}>
-                                                    Why is this place safe? (Describe briefly)
-                                                </Text>
-                                                <TextInput
-                                                    value={safePlaceAnswer}
-                                                    onChangeText={(v) => {
-                                                        setSafePlaceAnswer(v);
-                                                        if (safePlaceError) setSafePlaceError(null);
-                                                    }}
-                                                    placeholder="Type your answer…"
-                                                    placeholderTextColor={T.ink4}
-                                                    multiline
-                                                    textAlignVertical="top"
-                                                    style={s.safePlaceInput}
-                                                    selectionColor={T.violet}
-                                                />
-                                                {!!safePlaceError && (
-                                                    <Text style={s.safePlaceError}>{safePlaceError}</Text>
-                                                )}
-                                                <View style={s.safePlaceActions}>
-                                                    <TouchableOpacity
-                                                        style={[s.safePlaceBtn, s.safePlaceBtnSecondary]}
-                                                        onPress={cancelAddSafePlace}
-                                                        activeOpacity={0.8}
-                                                    >
-                                                        <Text style={s.safePlaceBtnTextSecondary}>Cancel</Text>
-                                                    </TouchableOpacity>
-                                                    <TouchableOpacity
-                                                        style={[
-                                                            s.safePlaceBtn,
-                                                            s.safePlaceBtnPrimary,
-                                                            safePlaceAnswer.trim().length === 0 && s.safePlaceBtnPrimaryDisabled,
-                                                        ]}
-                                                        onPress={safePlaceAnswer.trim().length === 0 ? undefined : submitAddSafePlace}
-                                                        activeOpacity={safePlaceAnswer.trim().length === 0 ? 1 : 0.8}
-                                                    >
-                                                        <Text style={s.safePlaceBtnTextPrimary}>Submit</Text>
-                                                    </TouchableOpacity>
-                                                </View>
-                                            </>
-                                        )}
-                                    </>
-                                )}
-                            </View>
+                                                    <TextInput
+                                                        value={safePlaceAnswer}
+                                                        onChangeText={(v) => {
+                                                            setSafePlaceAnswer(v);
+                                                            if (safePlaceError) setSafePlaceError(null);
+                                                        }}
+                                                        placeholder="Type your answer…"
+                                                        placeholderTextColor={T.ink4}
+                                                        multiline
+                                                        textAlignVertical="top"
+                                                        style={s.safePlaceInput}
+                                                        selectionColor={T.violet}
+                                                    />
+                                                    {!!safePlaceError && (
+                                                        <Text style={s.safePlaceError}>{safePlaceError}</Text>
+                                                    )}
+                                                    <View style={s.safePlaceActions}>
+                                                        <TouchableOpacity
+                                                            style={[s.safePlaceBtn, s.safePlaceBtnCancel]}
+                                                            onPress={cancelAddSafePlace}
+                                                            activeOpacity={0.8}
+                                                        >
+                                                            <Text style={s.safePlaceBtnTextCancel}>Cancel</Text>
+                                                        </TouchableOpacity>
+                                                        <TouchableOpacity
+                                                            style={[
+                                                                s.safePlaceBtn,
+                                                                s.safePlaceBtnSecondary,
+                                                                safePlaceAnswer.trim().length === 0 && s.safePlaceBtnPrimaryDisabled,
+                                                            ]}
+                                                            onPress={safePlaceAnswer.trim().length === 0 ? undefined : submitAddSafePlace}
+                                                            activeOpacity={safePlaceAnswer.trim().length === 0 ? 1 : 0.8}
+                                                        >
+                                                            <Text style={s.safePlaceBtnTextSecondary}>Submit</Text>
+                                                        </TouchableOpacity>
+                                                    </View>
+                                                </>
+                                            )}
+                                        </>
+                                    )}
+                                </View>
+                            </KeyboardAvoidingView>
                         </RNAnimated.View>
                     </>
                 )}
@@ -3111,6 +3426,12 @@ const s = StyleSheet.create({
         color: T.onPrimary,
         letterSpacing: 0.5,
     },
+    sosTxtCompact: {
+        fontSize: 16,
+    },
+    sosSubTxtCompact: {
+        fontSize: 7.5,
+    },
     sosWrap: {
         position: 'absolute',
         alignSelf: 'center',
@@ -3121,19 +3442,11 @@ const s = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 300,
     },
-    pulseRing: {
+    sosStatusPill: {
         position: 'absolute',
-        width: SOS_BTN_SIZE,
-        height: SOS_BTN_SIZE,
-        borderRadius: SOS_BTN_SIZE / 2,
-        borderWidth: 2.5,
-    },
-    statusPill: {
-        position: 'absolute',
-        bottom: -56,
+        bottom: -58,
         alignSelf: 'center',
-        minWidth: 120,
-        maxWidth: SOS_WRAP_SIZE - 48,
+        width: 340,
         borderRadius: 18,
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
@@ -3142,18 +3455,32 @@ const s = StyleSheet.create({
         justifyContent: 'center',
         flexDirection: 'row',
         gap: 6,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
         }),
+    },
+    sosStatusPillAccepted: {
+        backgroundColor: T.dangerBg,
+        borderColor: T.dangerBorder,
+    },
+    pulseRing: {
+        position: 'absolute',
+        width: SOS_BTN_SIZE,
+        height: SOS_BTN_SIZE,
+        borderRadius: SOS_BTN_SIZE / 2,
+        borderWidth: 2.5,
     },
     pillTxt: {
         fontSize: 12,
         fontWeight: '700',
         color: T.ink3,
         letterSpacing: 0.4,
+        textAlign: 'center',
+        flexShrink: 1,
+        lineHeight: 15,
     },
     pillDot: {
         width: 7,
@@ -3167,6 +3494,9 @@ const s = StyleSheet.create({
     },
     pillTxtLive: {
         color: T.danger,
+    },
+    pillTxtAccepted: {
+        color: T.dangerText,
     },
     sosBtnEmg: {
         backgroundColor: T.danger,
@@ -3213,6 +3543,42 @@ const s = StyleSheet.create({
         color: T.ink3,
         marginTop: 2,
     },
+    sosResponderActionRow: {
+        position: 'absolute',
+        bottom: -118,
+        flexDirection: 'row',
+        gap: 10,
+        width: 340,
+        justifyContent: 'center',
+    },
+    sosResponderActionBtn: {
+        flex: 1,
+        minHeight: 44,
+        borderRadius: R.pill,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+    },
+    sosResponderActionBtnCancelled: {
+        backgroundColor: T.dangerBg,
+        borderColor: T.dangerBorder,
+    },
+    sosResponderActionBtnResolved: {
+        backgroundColor: T.safeLight,
+        borderColor: `${T.success}40`,
+    },
+    sosResponderActionBtnText: {
+        fontSize: 12,
+        fontWeight: '900',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+    },
+    sosResponderActionBtnTextCancelled: {
+        color: T.dangerText,
+    },
+    sosResponderActionBtnTextResolved: {
+        color: T.success,
+    },
     sosReqBtn: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -3237,6 +3603,314 @@ const s = StyleSheet.create({
         backgroundColor: T.danger,
         borderWidth: 1.5,
         borderColor: T.surface,
+    },
+
+    verificationGateOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    verificationGateScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    verificationGateCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.76)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    verificationGateIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(138,56,246,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.28)',
+        marginBottom: 14,
+    },
+    verificationGateTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    verificationGateMessage: {
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+    },
+    verificationGateEta: {
+        marginTop: 10,
+        fontSize: 12,
+        lineHeight: 18,
+        color: T.ink3,
+        fontWeight: '700',
+    },
+    verificationGateActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 22,
+    },
+    verificationGateOkBtn: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    verificationGateOkTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    verificationGateLogoutBtn: {
+        flex: 1,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    verificationGateLogoutFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    verificationGateLogoutTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+
+    stopConfirmOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    stopConfirmScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,8,18,0.52)',
+    },
+    stopConfirmCard: {
+        width: '100%',
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.72)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    stopConfirmIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(217,45,32,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(217,45,32,0.28)',
+        marginBottom: 14,
+    },
+    stopConfirmTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+    },
+    stopConfirmMessage: {
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+    },
+    stopConfirmActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 22,
+    },
+    stopConfirmSecondaryBtn: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    stopConfirmSecondaryTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+    stopConfirmPrimaryBtn: {
+        flex: 1,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    stopConfirmPrimaryFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    stopConfirmPrimaryTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+
+    reviewOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 18,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    reviewScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(8,8,16,0.58)',
+    },
+    reviewCard: {
+        width: '100%',
+        maxWidth: 380,
+        borderRadius: 28,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.76)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    reviewEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: T.ink4,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        alignSelf: 'center',
+    },
+    reviewAvatarRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        marginTop: 16,
+        marginBottom: 12,
+        minHeight: 74,
+    },
+    reviewAvatarWrap: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.18)',
+        overflow: 'hidden',
+        backgroundColor: T.violetDim,
+    },
+    reviewAvatarWrapCurrent: {
+        width: 68,
+        height: 68,
+        borderRadius: 34,
+        borderColor: `${T.violet}55`,
+    },
+    reviewAvatarWrapRemoving: {
+        borderColor: `${T.danger}55`,
+    },
+    reviewAvatarImg: {
+        width: '100%',
+        height: '100%',
+    },
+    reviewSelectedName: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: T.ink,
+        textAlign: 'center',
+        letterSpacing: -0.2,
+    },
+    reviewSelectedMeta: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.ink3,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    reviewInput: {
+        minHeight: 96,
+        marginTop: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+        backgroundColor: T.surfaceBulky,
+        color: T.ink,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+    reviewStarsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 8,
+        marginTop: 14,
+    },
+    reviewSubmitBtn: {
+        marginTop: 18,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    reviewSubmitFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    reviewSubmitText: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
 
     sosPanelBackdrop: {
@@ -3345,7 +4019,7 @@ const s = StyleSheet.create({
         color: T.violet,
         letterSpacing: 0.2,
     },
-    sosActionRow: {
+    sosRequestActionRow: {
         flexDirection: 'row',
         gap: 8,
         marginTop: 2,
@@ -3400,6 +4074,22 @@ const s = StyleSheet.create({
     placeMarkerStem: {
         width: 0,
         height: 0,
+    },
+    safePlaceMarkerWrap: { alignItems: 'center', justifyContent: 'center' },
+    safePlaceMarkerIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: T.surface,
+        borderWidth: 2,
+    },
+    safePlaceMarkerStart: {
+        backgroundColor: T.surface,
+    },
+    safePlaceMarkerEnd: {
+        backgroundColor: T.surface,
     },
 
     placeSheetBackdrop: {
@@ -3571,7 +4261,11 @@ const s = StyleSheet.create({
     },
     safePlaceBtnSecondary: {
         backgroundColor: T.surfaceBulky,
-        borderColor: 'rgba(255,255,255,0.14)',
+        borderColor: `${T.violet}45`,
+    },
+    safePlaceBtnCancel: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
     },
     safePlaceBtnPrimary: {
         backgroundColor: T.violet,
@@ -3584,7 +4278,13 @@ const s = StyleSheet.create({
     safePlaceBtnTextSecondary: {
         fontSize: 12,
         fontWeight: '800',
-        color: T.ink,
+        color: T.violet,
+        letterSpacing: 0.2,
+    },
+    safePlaceBtnTextCancel: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: T.danger,
         letterSpacing: 0.2,
     },
     safePlaceBtnTextPrimary: {
@@ -3592,6 +4292,9 @@ const s = StyleSheet.create({
         fontWeight: '800',
         color: T.onPrimary,
         letterSpacing: 0.2,
+    },
+    safePlaceKeyboardAvoiding: {
+        width: '100%',
     },
     placeSheetSectionTitle: {
         fontSize: 11,

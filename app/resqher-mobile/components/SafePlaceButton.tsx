@@ -7,7 +7,7 @@ export default function SafePlaceButton({ onPress, isActive, distance }: { onPre
     return (
         <View style={styles.wrap} pointerEvents="box-none">
             <TouchableOpacity style={[styles.btn, isActive ? styles.active : null]} onPress={onPress} accessibilityRole="button" accessibilityLabel="Show nearest safe place">
-                <SafePlacePinIcon size={20} color={isActive ? T.onPrimary : T.violet} />
+                <SafePlacePinIcon size={20} color={T.violet} />
             </TouchableOpacity>
             {isActive && typeof distance === 'number' && (
                 <View style={styles.badge}>
@@ -28,13 +28,16 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.06)',
+        borderColor: 'rgba(255,255,255,0.12)',
         shadowColor: '#000',
         shadowOpacity: 0.06,
         shadowRadius: 6,
         elevation: 2,
     },
-    active: { backgroundColor: T.violet, borderColor: 'rgba(255,255,255,0.12)' },
+    active: {
+        backgroundColor: T.surfaceBulky,
+        borderColor: T.violet,
+    },
     badge: {
         marginTop: 6,
         paddingVertical: 4,

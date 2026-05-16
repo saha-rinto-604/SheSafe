@@ -13,8 +13,9 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable
+    Modal, Pressable, Alert
 } from 'react-native';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,14 +23,85 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import RespondersList from '../../../../src/components/RespondersList';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
 const MAP_STRIP_HEIGHT = 180;
+const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+type Responder = {
+    id: string;
+    name: string;
+    avatarUri: string;
+    location: { latitude: number; longitude: number };
+    fallbackDistance: string;
+    fallbackDuration: string;
+};
+
+const RESPONDERS: Responder[] = [
+    {
+        id: 'v1',
+        name: 'Kabir Hossain',
+        avatarUri: 'https://i.pravatar.cc/150?img=11',
+        location: { latitude: 23.8328, longitude: 90.4189 },
+        fallbackDistance: '3.2 km',
+        fallbackDuration: '~12 min',
+    },
+    {
+        id: 'v2',
+        name: 'Ayesha S.',
+        avatarUri: 'https://i.pravatar.cc/150?img=20',
+        location: { latitude: 23.8255, longitude: 90.4121 },
+        fallbackDistance: '4.0 km',
+        fallbackDuration: '~14 min',
+    },
+];
+
+// Real polyline decode from Google
+function polylineDecode(str: string, precision = 5) {
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
+    const coordinates: { latitude: number; longitude: number }[] = [];
+    let shift = 0;
+    let result = 0;
+    let byte = null;
+    let latitudeChange;
+    let longitudeChange;
+    const factor = Math.pow(10, precision);
+
+    while (index < str.length) {
+        byte = null;
+        shift = 0;
+        result = 0;
+        do {
+            byte = str.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        latitudeChange = ((result & 1) ? ~(result >> 1) : (result >> 1));
+
+        shift = 0;
+        result = 0;
+        do {
+            byte = str.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+        } while (byte >= 0x20);
+        longitudeChange = ((result & 1) ? ~(result >> 1) : (result >> 1));
+
+        lat += latitudeChange;
+        lng += longitudeChange;
+        coordinates.push({ latitude: lat / factor, longitude: lng / factor });
+    }
+    return coordinates;
+}
 
 // ─── Mock Incidents (lookup) ────────────────────────────────────────────────
 const MOCK_INCIDENTS: Record<string, Incident> = {
@@ -52,10 +124,10 @@ const MOCK_INCIDENTS: Record<string, Incident> = {
         participantCount: 2, createdAt: new Date(Date.now() - 600000).toISOString(),
     },
     'inc-003': {
-        id: 'inc-003', type: 'Harassment Report', status: 'RESOLVED',
+        id: 'inc-003', type: 'Harassment Report', status: 'CANCELLED',
         location: { latitude: 23.7806, longitude: 90.4194, updatedAt: new Date().toISOString() },
         latestMessage: {
-            content: 'Case filed', sender: { id: 'p1', name: 'Officer Alam', role: 'POLICE' },
+            content: 'Incident cancelled by the victim before responder arrival.', sender: { id: 'system', name: 'System', role: 'USER' },
             timestamp: new Date().toISOString(), type: 'TEXT',
         },
         participantCount: 4, createdAt: new Date(Date.now() - 7200000).toISOString(),
@@ -322,7 +394,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
 
 // ─── Floating Glass Pill Input ──────────────────────────────────────────────
-function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void; bottomInset: number }) {
+function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: string) => void; bottomInset: number; onImagePicked?: (uri: string) => void }) {
     const [text, setText] = useState('');
     const [isAttachMenuVisible, setAttachMenuVisible] = useState(false);
     const inputRef = useRef<TextInput>(null);
@@ -338,41 +410,34 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
 
     return (
         <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 30) }]}>
-            {/* ── Floating Evidence Menu ── */}
-            {isAttachMenuVisible && (
-                <View style={st.attachMenuOuter}>
-                    <TouchableOpacity
-                        style={st.attachOptionRow}
-                        activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
-                    >
-                        <Feather name="mic" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Audio Note</Text>
-                    </TouchableOpacity>
-
-                    <View style={st.attachOptionDivider} />
-
-                    <TouchableOpacity
-                        style={st.attachOptionRow}
-                        activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
-                    >
-                        <Feather name="video" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Video Evidence</Text>
-                    </TouchableOpacity>
-
-                    <View style={st.attachOptionDivider} />
-
-                    <TouchableOpacity
-                        style={[st.attachOptionRow, { paddingBottom: 12 }]}
-                        activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(false); }}
-                    >
-                        <Feather name="image" size={20} color="#FFFFFF" />
-                        <Text style={st.attachOptionText}>Photo</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
+            {/* Attach menu as modal-like overlay so outside tap closes it */}
+            <Modal transparent visible={isAttachMenuVisible} animationType="fade">
+                <Pressable style={st.attachModalBackdrop} onPress={() => setAttachMenuVisible(false)}>
+                    <View style={st.attachModalCard}>
+                        <TouchableOpacity
+                            style={st.attachOptionRow}
+                            activeOpacity={0.7}
+                            onPress={async () => {
+                                Haptics.selectionAsync();
+                                setAttachMenuVisible(false);
+                                const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                                if (!perm.granted) {
+                                    Alert.alert('Permission needed', 'Please allow access to photos.');
+                                    return;
+                                }
+                                const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7 });
+                                if (!res.canceled && Array.isArray((res as any).assets) && (res as any).assets.length > 0) {
+                                    const uri = (res as any).assets[0].uri as string | undefined;
+                                    if (uri) onImagePicked?.(uri);
+                                }
+                            }}
+                        >
+                            <Feather name="image" size={20} color="#FFFFFF" />
+                            <Text style={st.attachOptionText}>Photo</Text>
+                        </TouchableOpacity>
+                    </View>
+                </Pressable>
+            </Modal>
 
             <View style={st.inputPillContainer}>
                 {/* Background equivalent to #1E153A @ 0.45 */}
@@ -448,6 +513,102 @@ export default function ChatRoom() {
     const flatRef = useRef<FlatList>(null);
     const isLive = incident.status === 'LIVE';
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
+    const [isRespondersOpen, setRespondersOpen] = useState(false);
+    const [isResponderRemovedOpen, setResponderRemovedOpen] = useState(false);
+    const [respondersList, setRespondersList] = useState(() => [
+        ...RESPONDERS,
+        { id: 'v3', name: 'Raihan Ahmed', avatarUri: 'https://i.pravatar.cc/150?img=12', isAdmin: true, role: 'POLICE' },
+        { id: 'v4', name: 'Nadia Akter', avatarUri: 'https://i.pravatar.cc/150?img=13', role: 'VOLUNTEER' },
+    ]);
+
+    const handleRemoveResponder = useCallback((id: string) => {
+        setRespondersList(prev => prev.filter(r => r.id !== id));
+        setResponderRemovedOpen(true);
+        setTimeout(() => setResponderRemovedOpen(false), 2000);
+    }, []);
+
+    // Edit Case Details
+    const [isEditCaseOpen, setEditCaseOpen] = useState(false);
+    const [caseDetails, setCaseDetails] = useState(() => incident.latestMessage?.content ?? '');
+    const [isSaveConfirmationOpen, setSaveConfirmationOpen] = useState(false);
+    const handleSaveCaseDetails = useCallback(() => {
+        setEditCaseOpen(false);
+        setSaveConfirmationOpen(true);
+        setTimeout(() => setSaveConfirmationOpen(false), 2200);
+    }, [caseDetails]);
+
+    // Leave confirmation
+    const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+    const handleConfirmLeave = useCallback(() => {
+        Haptics.selectionAsync();
+        setHeaderMenuOpen(false);
+        setLeaveConfirmOpen(false);
+        router.back();
+    }, [router]);
+
+    // Map Overlay State
+    const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
+    const [mapRouteCoords, setMapRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [mapDistance, setMapDistance] = useState('');
+    const [mapDuration, setMapDuration] = useState('');
+    const [isLiveNavMode, setIsLiveNavMode] = useState(false);
+    const [selectedResponderId, setSelectedResponderId] = useState(RESPONDERS[0].id);
+    const mapRef = useRef<MapView>(null);
+
+    const selectedResponder = React.useMemo(
+        () => RESPONDERS.find(responder => responder.id === selectedResponderId) ?? RESPONDERS[0],
+        [selectedResponderId]
+    );
+
+    const loadRouteForResponder = useCallback(async (responder: Responder) => {
+        const origin = `${responder.location.latitude},${responder.location.longitude}`;
+        const destination = `${incident.location.latitude},${incident.location.longitude}`;
+
+        if (!GOOGLE_MAPS_API_KEY) {
+            setMapRouteCoords([responder.location, incident.location]);
+            setMapDistance(responder.fallbackDistance);
+            setMapDuration(responder.fallbackDuration);
+            return;
+        }
+
+        try {
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=driving&key=${GOOGLE_MAPS_API_KEY}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data?.routes?.length > 0) {
+                const points = data.routes[0].overview_polyline.points;
+                const coords = polylineDecode(points);
+                const leg = data.routes[0].legs?.[0];
+                setMapRouteCoords(coords);
+                setMapDistance(leg?.distance?.text ?? responder.fallbackDistance);
+                setMapDuration(leg?.duration?.text ?? responder.fallbackDuration);
+                setTimeout(() => {
+                    mapRef.current?.fitToCoordinates(coords, {
+                        edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
+                        animated: true,
+                    });
+                }, 400);
+            }
+        } catch {
+            Alert.alert('Error', 'Failed to load route');
+        }
+    }, [incident.location]);
+
+    const handleSelectResponder = useCallback(async (responderId: string) => {
+        if (responderId === selectedResponderId) return;
+        Haptics.selectionAsync();
+        setSelectedResponderId(responderId);
+        const responder = RESPONDERS.find(item => item.id === responderId);
+        if (responder) {
+            await loadRouteForResponder(responder);
+        }
+    }, [loadRouteForResponder, selectedResponderId]);
+
+    const openMapOverlay = useCallback(async () => {
+        setIsMapOverlayOpen(true);
+        Haptics.selectionAsync();
+        await loadRouteForResponder(selectedResponder);
+    }, [loadRouteForResponder, selectedResponder]);
 
     // Auto-scroll on new messages
     useEffect(() => {
@@ -530,7 +691,7 @@ export default function ChatRoom() {
                                 <TouchableOpacity
                                     style={st.liveMapCircularBtn}
                                     activeOpacity={0.7}
-                                    onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                                    onPress={openMapOverlay}
                                 >
                                     <View style={[StyleSheet.absoluteFill, st.liveMapCircularBg]} />
                                     <Feather name="map" size={18} color="#FFFFFF" />
@@ -552,6 +713,18 @@ export default function ChatRoom() {
 
                 {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
                 <View style={{ marginTop: 12 }} />
+
+                {incident.status === 'CANCELLED' && (
+                    <View style={st.cancelledCard}>
+                        <Feather name="x-circle" size={18} color={T.danger} />
+                        <View style={st.cancelledContent}>
+                            <Text style={st.cancelledTitle}>Incident Cancelled</Text>
+                            <Text style={st.cancelledSubtitle}>
+                                This case was cancelled and the chat has been archived for review.
+                            </Text>
+                        </View>
+                    </View>
+                )}
 
                 {/* ── Messages + Input ────────────────────── */}
                 <KeyboardAvoidingView
@@ -580,7 +753,18 @@ export default function ChatRoom() {
 
                     {/* ── Input or Archive Pill ───────────── */}
                     {isLive ? (
-                        <FloatingInput onSend={handleSend} bottomInset={insets.bottom} />
+                        <FloatingInput onSend={handleSend} bottomInset={insets.bottom} onImagePicked={(uri) => {
+                            const imgMsg: Message = {
+                                id: `m-img-${Date.now()}`,
+                                incidentId: incident.id,
+                                sender: { id: SELF_ID, name: 'You', role: 'USER' },
+                                content: 'Photo',
+                                type: 'IMAGE',
+                                timestamp: new Date().toISOString(),
+                                mediaUrl: uri,
+                            };
+                            setMessages(prev => [...prev, imgMsg]);
+                        }} />
                     ) : (
                         <ArchivePill bottomInset={insets.bottom} />
                     )}
@@ -590,21 +774,21 @@ export default function ChatRoom() {
                 <Modal transparent={true} visible={isHeaderMenuOpen} animationType="fade">
                     <Pressable style={st.headerMenuBackdrop} onPress={() => setHeaderMenuOpen(false)}>
                         <View style={st.headerMenuPanel}>
-                            <TouchableOpacity
-                                style={st.headerMenuRow}
-                                activeOpacity={0.7}
-                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); }}
-                            >
-                                <Feather name="users" size={16} color="#FFFFFF" />
-                                <Text style={st.headerMenuText}>View Responders</Text>
-                            </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={st.headerMenuRow}
+                                        activeOpacity={0.7}
+                                        onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); setRespondersOpen(true); }}
+                                    >
+                                        <Feather name="users" size={16} color="#FFFFFF" />
+                                        <Text style={st.headerMenuText}>View Responders</Text>
+                                    </TouchableOpacity>
 
                             <View style={st.headerMenuDivider} />
 
                             <TouchableOpacity
                                 style={st.headerMenuRow}
                                 activeOpacity={0.7}
-                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); }}
+                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); setEditCaseOpen(true); }}
                             >
                                 <Feather name="edit-2" size={16} color="#FFFFFF" />
                                 <Text style={st.headerMenuText}>Edit Case Details</Text>
@@ -615,7 +799,7 @@ export default function ChatRoom() {
                             <TouchableOpacity
                                 style={st.headerMenuRow}
                                 activeOpacity={0.7}
-                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); }}
+                                onPress={() => { Haptics.selectionAsync(); setLeaveConfirmOpen(true); setHeaderMenuOpen(false); }}
                             >
                                 <Feather name="x-circle" size={16} color="#FF453A" />
                                 <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Leave Dispatch</Text>
@@ -623,6 +807,226 @@ export default function ChatRoom() {
                         </View>
                     </Pressable>
                 </Modal>
+
+                {/* Responders List Modal (reusable component) */}
+                <RespondersList
+                    visible={isRespondersOpen}
+                    data={respondersList as any}
+                    onClose={() => setRespondersOpen(false)}
+                    onRemove={(id) => handleRemoveResponder(id)}
+                />
+
+                {/* Responder Removed confirmation (styled) */}
+                <Modal transparent={true} visible={isResponderRemovedOpen} animationType="fade">
+                    <View style={st.saveBackdropCentered}>
+                        <View style={st.saveCardColored}>
+                            <Text style={st.saveTitleColored}>Responder removed</Text>
+                            <Text style={st.saveMessageColored}>The responder was removed from the chat room.</Text>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Edit Case Modal */}
+                <Modal transparent visible={isEditCaseOpen} animationType="fade">
+                    <Pressable style={st.centerBackdrop} onPress={() => setEditCaseOpen(false)}>
+                        <View style={st.centerCard}>
+                            <Text style={st.centerTitle}>Edit Case Details</Text>
+                            <TextInput
+                                value={caseDetails}
+                                onChangeText={setCaseDetails}
+                                multiline
+                                style={st.caseInput}
+                                placeholder="Describe case details..."
+                                placeholderTextColor="rgba(255,255,255,0.35)"
+                            />
+                            <View style={st.caseBtnsRow}>
+                                <TouchableOpacity style={st.caseBtnCancel} onPress={() => setEditCaseOpen(false)}>
+                                    <Text style={st.caseBtnCancelText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={st.caseBtnSave} onPress={handleSaveCaseDetails}>
+                                    <Text style={st.caseBtnSaveText}>Save</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </Pressable>
+                </Modal>
+
+                {/* Save Confirmation Modal (styled like volunteer) */}
+                <Modal transparent={true} visible={isSaveConfirmationOpen} animationType="fade">
+                    <View style={st.saveBackdropCentered}>
+                        <View style={st.saveCardColored}>
+                            <Text style={st.saveTitleColored}>Saved</Text>
+                            <Text style={st.saveMessageColored}>Case details saved.</Text>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Leave Confirmation */}
+                <Modal transparent visible={isLeaveConfirmOpen} animationType="fade">
+                    <Pressable style={st.centerBackdrop} onPress={() => setLeaveConfirmOpen(false)}>
+                        <View style={st.leaveCard}>
+                            <Text style={st.leaveTitle}>Leave Dispatch?</Text>
+                            <Text style={st.leaveSub}>Are you sure you want to leave this dispatch?</Text>
+                            <View style={st.leaveBtnsRow}>
+                                <TouchableOpacity style={st.leaveCancel} onPress={() => setLeaveConfirmOpen(false)}>
+                                    <Text style={st.leaveCancelText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={st.leaveYes} onPress={handleConfirmLeave}>
+                                    <Text style={st.leaveYesText}>Yes</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </Pressable>
+                </Modal>
+
+                {/* ── Map Overlay ─────────────────────────────────────────────────── */}
+                {isMapOverlayOpen && (
+                    <View style={StyleSheet.absoluteFill}>
+                        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+                        <MapView
+                            ref={mapRef}
+                            style={StyleSheet.absoluteFill}
+                            userInterfaceStyle="dark"
+                            customMapStyle={[
+                                { "elementType": "geometry", "stylers": [{ "color": "#0B071A" }] },
+                                { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
+                                { "elementType": "labels.text.fill", "stylers": [{ "color": "#4A4568" }] },
+                                { "elementType": "labels.text.stroke", "stylers": [{ "visibility": "off" }] },
+                                { "featureType": "poi", "stylers": [{ "visibility": "off" }] },
+                                { "featureType": "transit", "stylers": [{ "visibility": "off" }] },
+                                { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#18142A" }] },
+                                { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#05030A" }] }
+                            ]}
+                            pitchEnabled={true}
+                            initialRegion={{
+                                latitude: 23.8293,
+                                longitude: 90.4182,
+                                latitudeDelta: 0.05,
+                                longitudeDelta: 0.05,
+                            }}
+                        >
+                            {mapRouteCoords.length > 1 && (
+                                <Polyline
+                                    coordinates={mapRouteCoords}
+                                    strokeColor={T.violet}
+                                    strokeWidth={4}
+                                    lineCap="round"
+                                    lineJoin="round"
+                                />
+                            )}
+                            {mapRouteCoords.length > 0 && (
+                                <>
+                                    {/* Responder Marker A */}
+                                    <Marker coordinate={mapRouteCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                                        <View style={st.sosMarkerInnerA}>
+                                            <Image source={{ uri: selectedResponder.avatarUri }} style={st.sosMarkerAvatar} />
+                                        </View>
+                                    </Marker>
+                                    {/* Victim Marker B */}
+                                    <Marker coordinate={mapRouteCoords[mapRouteCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
+                                        <View style={st.sosMarkerInnerB}>
+                                            <Image source={{ uri: incident.latestMessage?.sender?.id ? `https://i.pravatar.cc/150?u=${incident.latestMessage.sender.id}` : 'https://i.pravatar.cc/150?img=5' }} style={st.sosMarkerAvatar} />
+                                        </View>
+                                    </Marker>
+                                </>
+                            )}
+                        </MapView>
+
+                        {/* Top Header */}
+                        <View style={[st.overlayHeader, { top: insets.top + 8 }]}>
+                            <TouchableOpacity
+                                style={st.headerBtn}
+                                onPress={() => { setIsMapOverlayOpen(false); setIsLiveNavMode(false); }}
+                            >
+                                <Feather name="x" size={22} color={T.ink} />
+                            </TouchableOpacity>
+                            <View style={st.overlayTitleWrap}>
+                                <Text style={st.overlayTitle}>
+                                    {isLiveNavMode ? 'Navigating to Victim' : 'Route Overview'}
+                                </Text>
+                            </View>
+                            <View style={{ width: 36 }} />
+                        </View>
+
+                        {/* Bottom Card */}
+                        <View style={[st.overlayBottomCard, { paddingBottom: Math.max(insets.bottom + 16, 32) }]}>
+                            <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={st.overlayCardTint} pointerEvents="none" />
+
+                            <View style={st.responderRow}>
+                                {RESPONDERS.map(responder => {
+                                    const isSelected = responder.id === selectedResponderId;
+                                    return (
+                                        <TouchableOpacity
+                                            key={responder.id}
+                                            style={st.responderAvatarWrap}
+                                            onPress={() => handleSelectResponder(responder.id)}
+                                            activeOpacity={0.75}
+                                        >
+                                            <View style={[st.responderAvatarRing, isSelected && st.responderAvatarRingActive]}>
+                                                <Image source={{ uri: responder.avatarUri }} style={st.responderAvatar} />
+                                            </View>
+                                            <Text style={[st.responderAvatarName, isSelected && st.responderAvatarNameActive]} numberOfLines={1}>
+                                                {responder.name.split(' ')[0]}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            {isLiveNavMode ? (
+                                <View style={st.navInstRow}>
+                                    <View style={st.navInstIconWrap}>
+                                        <Feather name="arrow-up-right" size={32} color={T.violet} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={st.navInstPrimary}>Turn right on Pragati Sarani</Text>
+                                        <Text style={st.navInstSecondary}>In 200 meters · {mapDuration}</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={st.exitNavBtn}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setIsLiveNavMode(false);
+                                            mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 });
+                                            mapRef.current?.fitToCoordinates(mapRouteCoords, {
+                                                edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
+                                                animated: true,
+                                            });
+                                        }}
+                                    >
+                                        <Text style={st.exitNavBtnText}>Exit</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : (
+                                <View style={st.overviewRow}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={st.overviewDist}>{mapDistance}</Text>
+                                        <Text style={st.overviewEta}>{mapDuration} drive</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={st.startNavBtn}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setIsLiveNavMode(true);
+                                            if (mapRouteCoords.length > 0) {
+                                                mapRef.current?.animateCamera({
+                                                    center: mapRouteCoords[0],
+                                                    pitch: 60,
+                                                    heading: 145,
+                                                    zoom: 18,
+                                                }, { duration: 1000 });
+                                            }
+                                        }}
+                                    >
+                                        <Ionicons name="navigate" size={16} color={T.onPrimary} />
+                                        <Text style={st.startNavBtnText}>Live Mode</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                )}
             </View>
         </AtmosphericShell>
     );
@@ -1077,6 +1481,74 @@ const st = StyleSheet.create({
         borderColor: 'rgba(255, 255, 255, 0.05)',
         marginHorizontal: 8,
     },
+    /* Centered modals */
+    centerBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    centerCard: {
+        width: '100%',
+        maxWidth: 720,
+        backgroundColor: '#1E153A',
+        borderRadius: 14,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)'
+    },
+    centerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginBottom: 8 },
+    caseInput: { minHeight: 120, maxHeight: 260, color: '#FFFFFF', padding: 12, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 8 },
+    caseBtnsRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 12 },
+    caseBtnCancel: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+    caseBtnCancelText: { color: '#FFFFFF', opacity: 0.6 },
+    caseBtnSave: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: T.violet, alignItems: 'center', justifyContent: 'center' },
+    caseBtnSaveText: { color: T.onPrimary, fontWeight: '700' },
+    saveBackdropCentered: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+    saveCardColored: {
+        width: '100%',
+        maxWidth: 420,
+        backgroundColor: '#1E153A',
+        borderRadius: 16,
+        paddingVertical: 18,
+        paddingHorizontal: 18,
+        alignItems: 'flex-start',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
+            android: { elevation: 6 },
+        }),
+    },
+    saveTitleColored: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginBottom: 6 },
+    saveMessageColored: { color: 'rgba(255,255,255,0.72)', fontSize: 14, marginBottom: 4 },
+    leaveCard: { width: '100%', maxWidth: 720, backgroundColor: '#1E153A', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+    leaveTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginBottom: 8 },
+    leaveSub: { color: 'rgba(255,255,255,0.7)', marginBottom: 12 },
+    leaveBtnsRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+    leaveCancel: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
+    leaveCancelText: { color: '#FFFFFF', opacity: 0.7 },
+    leaveYes: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#FF453A', alignItems: 'center', justifyContent: 'center' },
+    leaveYesText: { color: '#FFFFFF', fontWeight: '800' },
+    attachModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+    attachModalCard: {
+        position: 'absolute',
+        bottom: 70,
+        left: 20,
+        backgroundColor: '#1E153A',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        paddingTop: 8,
+        paddingHorizontal: 8,
+        minWidth: 180,
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+            android: { elevation: 5 },
+        }),
+        zIndex: 10,
+    },
 
     // ── Archive Pill (RESOLVED read-only) — centered glass capsule
     archiveOuter: {
@@ -1104,6 +1576,31 @@ const st = StyleSheet.create({
         color: T.ink4,
         letterSpacing: 0.2,
     },
+    cancelledCard: {
+        flexDirection: 'row',
+        gap: 10,
+        alignItems: 'center',
+        marginHorizontal: S.s4,
+        padding: S.s4,
+        borderRadius: R.lg,
+        backgroundColor: 'rgba(79, 70, 229, 0.18)',
+        borderWidth: 1,
+        borderColor: 'rgba(124, 58, 237, 0.28)',
+    },
+    cancelledContent: {
+        flex: 1,
+    },
+    cancelledTitle: {
+        color: T.violet,
+        fontSize: 15,
+        fontWeight: '800',
+        marginBottom: 4,
+    },
+    cancelledSubtitle: {
+        color: T.ink4,
+        fontSize: 13,
+        lineHeight: 18,
+    },
 
     // ── Empty
     emptyChat: {
@@ -1126,5 +1623,190 @@ const st = StyleSheet.create({
     emptyChatText: {
         ...Ty.bodySm,
         color: T.ink4,
+    },
+    overlayHeader: {
+        position: 'absolute',
+        left: S.s3,
+        right: S.s3,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        zIndex: 10,
+    },
+    overlayTitleWrap: {
+        backgroundColor: 'rgba(30, 21, 58, 0.85)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    overlayTitle: {
+        color: T.ink,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    overlayBottomCard: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        borderTopWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        backgroundColor: 'rgba(10, 5, 20, 0.5)',
+        paddingTop: 20,
+        paddingHorizontal: S.s4,
+        minHeight: 200,
+        zIndex: 10,
+    },
+    overlayCardTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: `${T.violet}08`,
+    },
+    responderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 14,
+        marginBottom: 16,
+    },
+    responderAvatarWrap: {
+        flex: 1,
+        alignItems: 'center',
+    },
+    responderAvatarRing: {
+        width: 58,
+        height: 58,
+        borderRadius: 29,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    responderAvatarRingActive: {
+        borderColor: T.violet,
+        backgroundColor: 'rgba(138,56,246,0.18)',
+    },
+    responderAvatar: {
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.18)',
+    },
+    responderAvatarName: {
+        marginTop: 8,
+        color: T.ink3,
+        fontSize: 12,
+        fontWeight: '700',
+        textAlign: 'center',
+    },
+    responderAvatarNameActive: {
+        color: T.violet,
+    },
+    overviewRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    overviewDist: {
+        color: T.violet,
+        fontSize: 24,
+        fontWeight: '900',
+    },
+    overviewEta: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '600',
+        marginTop: 2,
+    },
+    startNavBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: T.violet,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 999,
+        gap: 8,
+    },
+    startNavBtnText: {
+        color: T.onPrimary,
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    navInstRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 16,
+    },
+    navInstIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(138,56,246,0.15)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.3)',
+    },
+    navInstPrimary: {
+        color: T.ink,
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    navInstSecondary: {
+        color: T.ink3,
+        fontSize: 13,
+        fontWeight: '500',
+        marginTop: 4,
+    },
+    exitNavBtn: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+    },
+    exitNavBtnText: {
+        color: T.ink2,
+        fontSize: 13,
+        fontWeight: '700',
+    },
+    sosMarkerInnerA: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 2.5,
+        borderColor: T.violet,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    sosMarkerInnerB: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 2.5,
+        borderColor: T.danger,
+        backgroundColor: '#fff',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 6 },
+        }),
+    },
+    sosMarkerAvatar: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
     },
 });
