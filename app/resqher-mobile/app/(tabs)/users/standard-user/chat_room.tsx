@@ -13,9 +13,9 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable, Alert, BackHandler,
+    Modal, Pressable, Alert,
 } from 'react-native';
-import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
@@ -465,15 +465,6 @@ export default function ChatRoom() {
     const isJoiner = joinMode === 'true';
     const autoSent = useRef(false);
 
-    // Block hardware back during an active SOS session
-    useFocusEffect(
-        useCallback(() => {
-            if (autoMessage !== 'true') return;
-            const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
-            return () => sub.remove();
-        }, [autoMessage])
-    );
-
     // Live backend data
     const { messages, sendMessage, isConnected } = useChatSocket(incidentId, userId ?? undefined);
 
@@ -685,22 +676,8 @@ export default function ChatRoom() {
 
     const handleBack = useCallback(() => {
         Haptics.selectionAsync();
-        if (isSOSSession) {
-            Alert.alert(
-                'Leave Emergency Chat?',
-                'This is an active SOS session. Are you sure you want to leave?',
-                [
-                    { text: 'Stay', style: 'cancel' },
-                    {
-                        text: 'Leave', style: 'destructive',
-                        onPress: () => router.replace('/(tabs)/users/standard-user/sos_screen' as any),
-                    },
-                ]
-            );
-        } else {
-            router.back();
-        }
-    }, [isSOSSession, router]);
+        router.back();
+    }, [router]);
 
     const renderMessage = useCallback(({ item }: { item: Message }) => (
         <PillBubble msg={item} isOwn={item.sender.id === selfId} />
@@ -777,25 +754,6 @@ export default function ChatRoom() {
                 {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
                 <View style={{ marginTop: 12 }} />
 
-                {/* ── SOS Action Bar — visible only for active SOS sessions ── */}
-                {isSOSSession && (
-                    <View style={st.sosActionBar}>
-                        <View style={st.sosActivePill}>
-                            <View style={st.sosActiveDot} />
-                            <Text style={st.sosActiveText}>ACTIVE SOS</Text>
-                        </View>
-                        <View style={st.sosActionBtns}>
-                            <TouchableOpacity style={st.resolveBtn} onPress={handleResolve} activeOpacity={0.8}>
-                                <Feather name="check-circle" size={13} color="#34C759" />
-                                <Text style={st.resolveBtnText}>Resolve</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={st.closeIncidentBtn} onPress={handleCloseIncident} activeOpacity={0.8}>
-                                <Feather name="x-circle" size={13} color="#FF453A" />
-                                <Text style={st.closeIncidentBtnText}>Close</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                )}
 
                 {/* ── Messages + Input ────────────────────── */}
                 <KeyboardAvoidingView

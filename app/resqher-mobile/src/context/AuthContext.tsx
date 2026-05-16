@@ -10,13 +10,18 @@ type AuthState = {
   role: Role | null;
   userId: string | null;
   identityCache: Identity | null;
+  /** Global SOS live flag — true when an emergency is currently active */
+  isSosLive: boolean;
 };
 
 type AuthContextValue = AuthState & {
   signIn: (username: string, password: string) => Promise<void>;
   signUp: (phone: string, password: string, firstName: string, lastName: string, role?: Role) => Promise<{ role: Role }>;
-  signOut: () => Promise<void>;
+  /** Attempts sign out. If isSosLive is true, calls onSosBlocked() instead and returns false. */
+  signOut: (onSosBlocked?: () => void) => Promise<boolean>;
   refreshIdentity: () => Promise<void>;
+  /** Call this when an SOS is activated (true) or fully resolved/cancelled (false) */
+  setSosLive: (live: boolean) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -27,6 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [identityCache, setIdentityCache] = useState<Identity | null>(null);
+  const [isSosLive, setIsSosLive] = useState(false);
 
   const isSignedIn = !!accessToken;
 
@@ -56,6 +62,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  const setSosLive = useCallback((live: boolean) => {
+    setIsSosLive(live);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       isLoading,
@@ -64,6 +74,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       role,
       userId,
       identityCache,
+      isSosLive,
+      setSosLive,
       refreshIdentity: async () => {
         if (role) await hydrateIdentity(role);
       },
@@ -109,7 +121,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
       },
-      signOut: async () => {
+      signOut: async (onSosBlocked?: () => void): Promise<boolean> => {
+        // Guard: block logout while an SOS is live
+        if (isSosLive) {
+          onSosBlocked?.();
+          return false;
+        }
         setIsLoading(true);
         try {
           await authService.logout();
@@ -117,12 +134,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRole(null);
           setUserId(null);
           setIdentityCache(null);
+          setIsSosLive(false);
+          return true;
         } finally {
           setIsLoading(false);
         }
       },
     }),
-    [isLoading, isSignedIn, accessToken, role, userId, identityCache, hydrateIdentity]
+    [isLoading, isSignedIn, accessToken, role, userId, identityCache, isSosLive, setSosLive, hydrateIdentity]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

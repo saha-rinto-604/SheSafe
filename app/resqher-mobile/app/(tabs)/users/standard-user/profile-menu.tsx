@@ -5,10 +5,11 @@ import {
     TouchableOpacity,
     Pressable,
     StyleSheet,
-    Alert,
+    Modal,
     ScrollView,
     StatusBar,
     Image,
+    Platform,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -67,10 +68,12 @@ const LOGOUT_ITEM: MenuItem = { icon: 'log-out', label: 'Logout', danger: true }
 export default function ProfileMenuScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { signOut } = useAuth();
+    const { signOut, isSosLive } = useAuth();
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isVerifiedVolunteer, setIsVerifiedVolunteer] = useState(false);
+    const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+    const [sosBlockModalVisible, setSosBlockModalVisible] = useState(false);
 
     // Reload profile and volunteer status whenever this screen is focused
     useFocusEffect(
@@ -88,17 +91,12 @@ export default function ProfileMenuScreen() {
 
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
-            Alert.alert('Logout', 'Are you sure you want to logout?', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Logout',
-                    style: 'destructive',
-                    onPress: async () => {
-                        await signOut();
-                        router.replace('/(auth)/login');
-                    },
-                },
-            ]);
+            // Check if SOS is active before allowing logout
+            if (isSosLive) {
+                setSosBlockModalVisible(true);
+            } else {
+                setLogoutModalVisible(true);
+            }
             return;
         }
 
@@ -132,10 +130,11 @@ export default function ProfileMenuScreen() {
             return;
         }
 
-        Alert.alert(item.label, 'This section will be available soon.');
+        console.warn('[ProfileMenu] Item not yet available:', item.label);
     };
 
     return (
+        <>
         <AtmosphericShell>
             <View style={[s.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -240,6 +239,67 @@ export default function ProfileMenuScreen() {
                 </ScrollView>
             </View>
         </AtmosphericShell>
+
+        {/* ── Logout Confirmation Modal ─────────────────────────────── */}
+        <Modal visible={logoutModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutModalVisible(false)}>
+            <View style={s.modalOverlay}>
+                <View style={s.modalCard}>
+                    <View style={s.modalIconWrap}>
+                        <Feather name="log-out" size={26} color={T.danger} />
+                    </View>
+                    <Text style={s.modalTitle}>Logout?</Text>
+                    <Text style={s.modalBody}>Are you sure you want to log out of ResQher?</Text>
+                    <TouchableOpacity
+                        style={s.modalBtnPrimary}
+                        onPress={() => setLogoutModalVisible(false)}
+                        activeOpacity={0.82}
+                    >
+                        <Text style={s.modalBtnPrimaryText}>Stay Logged In</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={s.modalBtnSecondary}
+                        onPress={async () => {
+                            setLogoutModalVisible(false);
+                            await signOut();
+                            router.replace('/(auth)/login');
+                        }}
+                        activeOpacity={0.75}
+                    >
+                        <Text style={s.modalBtnSecondaryText}>Yes, Logout</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+
+        {/* ── SOS Active — Logout Blocked Modal ────────────────────── */}
+        <Modal visible={sosBlockModalVisible} transparent animationType="fade" onRequestClose={() => setSosBlockModalVisible(false)}>
+            <View style={s.modalOverlay}>
+                <View style={s.modalCard}>
+                    <View style={[s.modalIconWrap, s.modalIconWrapWarning]}>
+                        <Feather name="alert-triangle" size={26} color={T.accent} />
+                    </View>
+                    <Text style={s.modalTitle}>Cannot Logout</Text>
+                    <Text style={s.modalBody}>
+                        You have an active SOS emergency. Please resolve your incident from the SOS screen before logging out.
+                    </Text>
+                    <TouchableOpacity
+                        style={s.modalBtnPrimary}
+                        onPress={() => setSosBlockModalVisible(false)}
+                        activeOpacity={0.82}
+                    >
+                        <Text style={s.modalBtnPrimaryText}>Keep SOS Active</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={s.modalBtnSecondary}
+                        onPress={() => { setSosBlockModalVisible(false); router.back(); }}
+                        activeOpacity={0.75}
+                    >
+                        <Text style={s.modalBtnSecondaryText}>Go Back to SOS</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    </>
     );
 }
 
@@ -418,5 +478,67 @@ const s = StyleSheet.create({
     },
     rowLogout: {
         borderColor: `${T.danger}22`,
+    },
+
+    // ── Themed Modals ──────────────────────────────────────────────────────
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.72)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    modalCard: {
+        width: '100%',
+        backgroundColor: T.surfaceBulky,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        padding: 28,
+        alignItems: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 28, shadowOffset: { width: 0, height: 10 } },
+            android: { elevation: 18 },
+        }),
+    },
+    modalIconWrap: {
+        width: 64, height: 64, borderRadius: 32,
+        backgroundColor: T.dangerBg,
+        borderWidth: 1.5, borderColor: T.dangerBorder,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 18,
+    },
+    modalIconWrapWarning: {
+        backgroundColor: 'rgba(245,158,11,0.12)',
+        borderColor: 'rgba(245,158,11,0.30)',
+    },
+    modalTitle: {
+        fontSize: 20, fontWeight: '800' as const, color: T.ink,
+        letterSpacing: -0.3, marginBottom: 10, textAlign: 'center' as const,
+    },
+    modalBody: {
+        fontSize: 14, fontWeight: '400' as const, color: T.ink3,
+        lineHeight: 21, textAlign: 'center' as const, marginBottom: 26,
+    },
+    modalBtnPrimary: {
+        width: '100%', height: 52,
+        backgroundColor: T.violet,
+        borderRadius: 14,
+        alignItems: 'center' as const, justifyContent: 'center' as const,
+        marginBottom: 12,
+        ...Platform.select({
+            ios: { shadowColor: T.violet, shadowOpacity: 0.38, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 6 },
+        }),
+    },
+    modalBtnPrimaryText: {
+        fontSize: 16, fontWeight: '700' as const, color: T.onPrimary, letterSpacing: 0.2,
+    },
+    modalBtnSecondary: {
+        width: '100%', height: 48,
+        alignItems: 'center' as const, justifyContent: 'center' as const,
+    },
+    modalBtnSecondaryText: {
+        fontSize: 15, fontWeight: '600' as const, color: T.ink4,
     },
 });

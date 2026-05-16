@@ -3,11 +3,12 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
+    "start": "cross-env NODE_OPTIONS=--max-old-space-size=4096 expo start",
+    "start:clear": "cross-env NODE_OPTIONS=--max-old-space-size=4096 expo start --clear",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
-    "web": "expo start --web",
+    "android": "cross-env NODE_OPTIONS=--max-old-space-size=4096 expo run:android",
+    "ios": "cross-env NODE_OPTIONS=--max-old-space-size=4096 expo run:ios",
+    "web": "cross-env NODE_OPTIONS=--max-old-space-size=4096 expo start --web",
     "lint": "expo lint"
   },
   "dependencies": {
@@ -57,6 +58,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "cross-env": "^7.0.3",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"

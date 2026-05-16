@@ -1,22 +1,23 @@
 /**
  * app/(tabs)/users/standard-user/sos_screen.tsx
- * Premium Tactical Command Center — SOS Screen
+ * Premium Tactical Command Center â€” SOS Screen
  * 
  * Features:
  * - Reanimated-powered heartbeat aura (double-pulse rhythm + haptic sync)
  * - Enhanced 24-rule "Encrypted Professional" map style
  * - Custom Electric Violet glow markers (no default Google pins)
- * - LIVE button heartbeat scale sync (1.0 ↔ 1.05)
+ * - LIVE button heartbeat scale sync (1.0 â†” 1.05)
  * - High-contrast GPS/recenter for low-light accessibility
  * - 60fps native-thread animations throughout
  */
 
 import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
-    View, Text, TouchableOpacity, StyleSheet, Alert,
+    View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
     Modal, ScrollView, ViewStyle, Image,
 } from 'react-native';
+import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
     withDelay, withRepeat, Easing as REasing, runOnJS,
@@ -40,9 +41,9 @@ import { incidentService } from '../../../../src/services/incidentService';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { notificationStore } from '../../../../src/services/notificationStore';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PremiumBar — dark glassmorphism surface for header + navbar
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// PremiumBar â€” dark glassmorphism surface for header + navbar
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
 }: {
@@ -61,7 +62,7 @@ const PremiumBar = memo(function PremiumBar({
 
 const pb = StyleSheet.create({
     bar: {
-        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% — lets blur show through
+        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% â€” lets blur show through
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',     // Global 1px white translucent stroke
         overflow: 'hidden',
@@ -76,9 +77,9 @@ const pb = StyleSheet.create({
     },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Layout constants
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const { width, height } = Dimensions.get('window');
 
 const SOS_BTN_SIZE = 156;
@@ -99,9 +100,9 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Nav tab definitions — Ionicons
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Nav tab definitions â€” Ionicons
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const NAV_TABS: {
     id: string;
     label: string;
@@ -117,9 +118,9 @@ const NAV_TABS: {
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;  // Global high-contrast token for all pages
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pulse Radar (idle state — locating)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Pulse Radar (idle state â€” locating)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PulseRadar = memo(function PulseRadar() {
     const a0 = useRef(new RNAnimated.Value(0)).current;
     const a1 = useRef(new RNAnimated.Value(0)).current;
@@ -149,7 +150,7 @@ const PulseRadar = memo(function PulseRadar() {
                 }]} />
             ))}
             <View style={rdr.dot} />
-            <Text style={rdr.label}>Locating…</Text>
+            <Text style={rdr.label}>Locatingâ€¦</Text>
         </View>
     );
 });
@@ -160,9 +161,9 @@ const rdr = StyleSheet.create({
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Emergency Border Overlay — Reanimated (native thread, 60fps)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Emergency Border Overlay â€” Reanimated (native thread, 60fps)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const EmergencyOverlay = memo(function EmergencyOverlay() {
     const opacity = useSharedValue(0.3);
 
@@ -190,11 +191,11 @@ const EmergencyOverlay = memo(function EmergencyOverlay() {
     );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Emergency Heartbeat Aura — Reanimated double-pulse + haptic sync
-// Rhythm: lub (0.02→0.12) — dub (0.04→0.12) — rest (→0.02)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Emergency Heartbeat Aura â€” Reanimated double-pulse + haptic sync
+// Rhythm: lub (0.02â†’0.12) â€” dub (0.04â†’0.12) â€” rest (â†’0.02)
 // Haptics fire on each peak via runOnJS for NFR-006 reliability
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const fireHapticLight = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 };
@@ -205,10 +206,10 @@ const HeartbeatAura = memo(function HeartbeatAura() {
     useEffect(() => {
         pulse.value = withRepeat(
             withSequence(
-                // Lub — first peak
+                // Lub â€” first peak
                 withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
                 withTiming(0.04, { duration: 150, easing: REasing.in(REasing.quad) }),
-                // Dub — second peak
+                // Dub â€” second peak
                 withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
                 // Rest
                 withTiming(0.02, { duration: 800, easing: REasing.inOut(REasing.ease) }),
@@ -239,10 +240,10 @@ const HeartbeatAura = memo(function HeartbeatAura() {
     );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Custom Marker — Electric Violet Glow (idle state)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Custom Marker â€” Electric Violet Glow (idle state)
 // Replaces default Google pin with branded glow marker
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const VioletGlowMarker = memo(function VioletGlowMarker() {
     return (
         <View style={mkr.container}>
@@ -278,9 +279,9 @@ const mkr = StyleSheet.create({
     },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Hold SOS Button — two-semicircle arc progress ring (RN Animated for arc)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Hold SOS Button â€” two-semicircle arc progress ring (RN Animated for arc)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const HoldSosButton = memo(function HoldSosButton({
     onTrigger,
     onPhaseChange,
@@ -356,7 +357,7 @@ const HoldSosButton = memo(function HoldSosButton({
                 </View>
             </RNAnimated.View>
 
-            {/* SOS button — Electric Violet gradient with glow */}
+            {/* SOS button â€” Electric Violet gradient with glow */}
             <TouchableOpacity onPressIn={startHold} onPressOut={endHold} activeOpacity={1}>
                 <LinearGradient
                     colors={G.sosIdle.colors}
@@ -381,9 +382,9 @@ const hs = StyleSheet.create({
     leftFill: { left: 0 },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// LIVE SOS Button — Heartbeat scale sync (1.0 ↔ 1.05) via Reanimated
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// LIVE SOS Button â€” Heartbeat scale sync (1.0 â†” 1.05) via Reanimated
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => void }) {
     return (
         <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
@@ -398,9 +399,9 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
     );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Side Drawer — Feather icons
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Side Drawer â€” Feather icons
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
     { icon: 'user', label: 'Edit Profile' },
     { icon: 'phone-call', label: 'Emergency Contacts' },
@@ -413,7 +414,14 @@ const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label:
     { icon: 'log-out', label: 'Logout', danger: true },
 ];
 
-const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+const Drawer = memo(function Drawer({
+    visible, onClose, onLogoutRequest, onNavigate,
+}: {
+    visible: boolean;
+    onClose: () => void;
+    onLogoutRequest: () => void;
+    onNavigate: (label: string) => void;
+}) {
     const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
     useEffect(() => {
         RNAnimated.spring(slideX, {
@@ -421,6 +429,16 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
             useNativeDriver: true, tension: 62, friction: 13,
         }).start();
     }, [visible]);
+
+    const handleItem = useCallback((item: typeof DRAWER_ITEMS[number]) => {
+        if (item.danger) {
+            onClose();
+            onLogoutRequest();
+        } else {
+            onClose();
+            onNavigate(item.label);
+        }
+    }, [onClose, onLogoutRequest, onNavigate]);
 
     return (
         <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
@@ -435,7 +453,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
                     {DRAWER_ITEMS.map((item, i) => (
                         <React.Fragment key={i}>
                             {item.danger && <View style={s.drawerDivider} />}
-                            <TouchableOpacity style={s.drawerRow} onPress={onClose} activeOpacity={0.65}>
+                            <TouchableOpacity style={s.drawerRow} onPress={() => handleItem(item)} activeOpacity={0.65}>
                                 <View style={[s.drawerIconBox, item.danger && s.drawerIconBoxDanger]}>
                                     <Feather name={item.icon} size={18} color={item.danger ? T.danger : T.violet} />
                                 </View>
@@ -450,9 +468,9 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
     );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// NavTab — icon + underline active indicator
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// NavTab â€” icon + underline active indicator
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
@@ -489,9 +507,9 @@ const NavTab = memo(function NavTab({
     );
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Live Beacon Marker (emergency state — pulsing red rings)
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Live Beacon Marker (emergency state â€” pulsing red rings)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const LiveBeacon = memo(function LiveBeacon() {
     const ring1 = useRef(new RNAnimated.Value(0)).current;
     const ring2 = useRef(new RNAnimated.Value(0)).current;
@@ -529,13 +547,14 @@ const lb = StyleSheet.create({
     label: { marginTop: 3, fontSize: 8, fontWeight: '800', color: T.danger, letterSpacing: 1.1 },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main Screen — Premium Tactical Command Center
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Main Screen â€” Premium Tactical Command Center
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function SOSScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView>(null);
+    const { signOut, setSosLive, isSosLive } = useAuth();
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -552,6 +571,9 @@ export default function SOSScreen() {
     const navigatedRef = useRef(false);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
     const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
+    // Custom modal states
+    const [endSosModalVisible, setEndSosModalVisible] = useState(false);
+    const [logoutBlockModalVisible, setLogoutBlockModalVisible] = useState(false);
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -599,7 +621,7 @@ export default function SOSScreen() {
         }, [])
     );
 
-    // Pulse ring anims (SOS active state — RN Animated for compatibility)
+    // Pulse ring anims (SOS active state â€” RN Animated for compatibility)
     const p0s = useRef(new RNAnimated.Value(1)).current; const p0o = useRef(new RNAnimated.Value(0)).current;
     const p1s = useRef(new RNAnimated.Value(1)).current; const p1o = useRef(new RNAnimated.Value(0)).current;
     const p2s = useRef(new RNAnimated.Value(1)).current; const p2o = useRef(new RNAnimated.Value(0)).current;
@@ -613,7 +635,7 @@ export default function SOSScreen() {
     useEffect(() => {
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') { Alert.alert('Location required', 'Please grant location access.'); return; }
+            if (status !== 'granted') { console.warn('[SOS] Location permission denied'); return; }
             const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
             const { latitude, longitude } = pos.coords;
             setUserLoc({ latitude, longitude });
@@ -643,12 +665,12 @@ export default function SOSScreen() {
         });
     }, []);
 
-    // SOS logic — create incident and start cancel countdown;
-    // navigation to chat room happens after the countdown expires (see useEffect below)
+    // SOS logic â€” create incident and start cancel countdown
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
+        setSosLive(true);
         navigatedRef.current = false;
 
         const lat = userLoc?.latitude;
@@ -677,6 +699,7 @@ export default function SOSScreen() {
                         title: 'SOS Alert Sent',
                         body: `Emergency alert triggered at ${address || 'your location'}`,
                         incidentId: id,
+                        createdAt: new Date().toISOString(),
                     });
                 })
                 .catch(async () => {
@@ -700,12 +723,14 @@ export default function SOSScreen() {
                         title: 'SOS Alert Sent',
                         body: `Emergency alert triggered at ${address || 'your location'}`,
                         incidentId: id,
+                        createdAt: new Date().toISOString(),
                     });
                 });
         } else {
             const id = 'sos-new';
             setActiveIncidentId(id);
             (async () => {
+                const createdAt = new Date().toISOString();
                 const SecureStore = await import('expo-secure-store');
                 const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
                 const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
@@ -723,6 +748,7 @@ export default function SOSScreen() {
                     title: 'SOS Alert Sent',
                     body: 'Emergency alert triggered (location unavailable)',
                     incidentId: id,
+                    createdAt,
                 });
             })();
         }
@@ -747,7 +773,8 @@ export default function SOSScreen() {
         const lat = userLoc?.latitude;
         const lng = userLoc?.longitude;
         const incId = activeIncidentId ?? `temp-${Date.now()}`;
-        router.replace({
+        // Push (not replace) so user can return to SOS screen from chat
+        router.push({
             pathname: '/(tabs)/users/standard-user/chat_room',
             params: {
                 incidentId: incId,
@@ -763,20 +790,72 @@ export default function SOSScreen() {
         navigatedRef.current = false;
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
+        setSosLive(false);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
         import('expo-secure-store').then(SecureStore => SecureStore.deleteItemAsync('resqher_active_sos_v1'));
         if (activeIncidentId) {
             incidentService.cancelIncident(activeIncidentId).catch(() => {});
             setActiveIncidentId(null);
         }
-    }, [activeIncidentId]);
+    }, [activeIncidentId, setSosLive]);
+
+    const resolveSOSAndEnd = useCallback(async () => {
+        // Full resolution: update backend status to RESOLVED, clear local state
+        setEndSosModalVisible(false);
+        if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
+        setSosActive(false);
+        setCancelCountdown(0);
+        setLocationStatus('ready');
+        setHoldPhase('idle');
+        setSosLive(false);
+        navigatedRef.current = false;
+        const incId = activeIncidentId;
+        setActiveIncidentId(null);
+        try {
+            await import('expo-secure-store').then(ss => {
+                ss.deleteItemAsync('resqher_active_sos_v1');
+                ss.deleteItemAsync('resqher_sos_autosent_v1');
+            });
+            if (incId && !incId.startsWith('temp-') && incId !== 'sos-new') {
+                await incidentService.resolveIncident(incId);
+            }
+            if (incId) {
+                const { incidentHistory } = await import('../../../../src/services/incidentHistory');
+                await incidentHistory.updateStatus(incId, 'RESOLVED');
+                const { notificationStore } = await import('../../../../src/services/notificationStore');
+                await notificationStore.add({
+                    type: 'incident_resolved',
+                    title: 'SOS Resolved',
+                    body: 'Your emergency has been marked as resolved.',
+                    incidentId: incId,
+                    createdAt: new Date().toISOString(),
+                });
+            }
+        } catch { /* best-effort */ }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }, [activeIncidentId, setSosLive]);
 
     const confirmStop = useCallback(() => {
-        Alert.alert('Stop Emergency Alert?', 'Your location will no longer be shared.', [
-            { text: 'Keep Active', style: 'cancel' },
-            { text: 'Stop Alert', style: 'destructive', onPress: cancelSOS },
-        ]);
-    }, [cancelSOS]);
+        setEndSosModalVisible(true);
+    }, []);
+
+    const handleDrawerNavigate = useCallback((label: string) => {
+        if (label === 'Edit Profile') router.push('/(tabs)/users/standard-user/edit-profile');
+        else if (label === 'Emergency Contacts') router.push('/(tabs)/users/standard-user/emergency-contacts');
+        else if (label === 'Safety Settings') router.push('/(tabs)/users/standard-user/safety-settings');
+        else if (label === 'Volunteer Verification') router.push('/(tabs)/users/standard-user/volunteer-verification');
+        else if (label === 'Incident History') router.push('/(tabs)/users/standard-user/incident-history');
+        else if (label === 'Privacy & Security') router.push('/(tabs)/users/standard-user/privacy-security');
+    }, [router]);
+
+    const handleLogoutRequest = useCallback(() => {
+        if (isSosLive) {
+            setLogoutBlockModalVisible(true);
+        } else {
+            // No active SOS â€” sign out immediately
+            signOut().then(() => router.replace('/(auth)/login'));
+        }
+    }, [isSosLive, signOut, router]);
 
     const goToMyLoc = () => {
         if (userLoc) mapRef.current?.animateToRegion({ ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600);
@@ -797,9 +876,72 @@ export default function SOSScreen() {
         <View style={s.root}>
             <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
             {/* Live-state overlays removed (keep ring pulse only) */}
-            <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+            <Drawer
+                visible={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+                onLogoutRequest={handleLogoutRequest}
+                onNavigate={handleDrawerNavigate}
+            />
 
-            {/* Map — Encrypted Professional Dark Tactical Style */}
+            {/* â”€â”€ End SOS Confirmation Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <Modal visible={endSosModalVisible} transparent animationType="fade" onRequestClose={() => setEndSosModalVisible(false)}>
+                <View style={s.modalOverlay}>
+                    <View style={s.modalCard}>
+                        <View style={s.modalIconWrap}>
+                            <Feather name="alert-triangle" size={28} color={T.danger} />
+                        </View>
+                        <Text style={s.modalTitle}>End Emergency Alert?</Text>
+                        <Text style={s.modalBody}>
+                            This will mark your incident as resolved and stop sharing your location with responders.
+                        </Text>
+                        <TouchableOpacity
+                            style={s.modalBtnPrimary}
+                            onPress={() => setEndSosModalVisible(false)}
+                            activeOpacity={0.82}
+                        >
+                            <Text style={s.modalBtnPrimaryText}>Keep SOS Active</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={s.modalBtnSecondary}
+                            onPress={resolveSOSAndEnd}
+                            activeOpacity={0.75}
+                        >
+                            <Text style={s.modalBtnSecondaryText}>Yes, End SOS</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* â”€â”€ Logout Blocked Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+            <Modal visible={logoutBlockModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutBlockModalVisible(false)}>
+                <View style={s.modalOverlay}>
+                    <View style={s.modalCard}>
+                        <View style={[s.modalIconWrap, s.modalIconWrapWarning]}>
+                            <Feather name="log-out" size={28} color={T.accent} />
+                        </View>
+                        <Text style={s.modalTitle}>Cannot Logout</Text>
+                        <Text style={s.modalBody}>
+                            You have an active SOS emergency in progress. Please resolve your incident before logging out.
+                        </Text>
+                        <TouchableOpacity
+                            style={s.modalBtnPrimary}
+                            onPress={() => setLogoutBlockModalVisible(false)}
+                            activeOpacity={0.82}
+                        >
+                            <Text style={s.modalBtnPrimaryText}>Stay in SOS</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={s.modalBtnSecondary}
+                            onPress={() => { setLogoutBlockModalVisible(false); setEndSosModalVisible(true); }}
+                            activeOpacity={0.75}
+                        >
+                            <Text style={s.modalBtnSecondaryText}>Resolve SOS First</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Map â€” Encrypted Professional Dark Tactical Style */}
             <MapView
                 ref={mapRef}
                 style={StyleSheet.absoluteFillObject}
@@ -825,7 +967,7 @@ export default function SOSScreen() {
 
             {locationStatus === 'idle' && <PulseRadar />}
 
-            {/* ── Header ─────────────────────────────────────────────────── */}
+            {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <PremiumBar
                 style={[s.header, { top: insets.top + 8 }]}
                 contentStyle={s.headerContent}
@@ -865,10 +1007,10 @@ export default function SOSScreen() {
                 </View>
             </PremiumBar>
 
-            {/* ── 12px Breathing Space Spacer ──────────────────────────────── */}
+            {/* â”€â”€ 12px Breathing Space Spacer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <View style={{ marginTop: 12 }} />
 
-            {/* ── Map controls — High contrast GPS/Recenter ───────────────── */}
+            {/* â”€â”€ Map controls â€” High contrast GPS/Recenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
                 <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
                     <View style={[s.gpsDot, {
@@ -877,7 +1019,7 @@ export default function SOSScreen() {
                                 locationStatus === 'ready' ? T.success : T.ink4,
                     }]} />
                     <Text style={[s.gpsTxt, isEmergencyLive && s.gpsTxtEmg]}>
-                        {locationStatus !== 'idle' ? 'GPS' : '…'}
+                        {locationStatus !== 'idle' ? 'GPS' : 'â€¦'}
                     </Text>
                 </View>
                 <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
@@ -885,7 +1027,7 @@ export default function SOSScreen() {
                 </TouchableOpacity>
             </View>
 
-            {/* ── SOS Section ─────────────────────────────────────────────── */}
+            {/* â”€â”€ SOS Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <View
                 pointerEvents="box-none"
                 style={[s.sosSection, { top: sosTop }]}
@@ -930,7 +1072,7 @@ export default function SOSScreen() {
                         <View style={[s.pillDot, { backgroundColor: T.danger }]} />
                         <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]}>
                             {cancelCountdown > 0
-                                ? `Alert triggered · Cancel in ${cancelCountdown}s`
+                                ? `Alert triggered Â· Cancel in ${cancelCountdown}s`
                                 : 'Sharing your location'
                             }
                         </Text>
@@ -938,7 +1080,7 @@ export default function SOSScreen() {
                 )}
             </View>
 
-            {/* ── Bottom Navbar ─────────────────────────────────────────── */}
+            {/* â”€â”€ Bottom Navbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                 <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                     {NAV_TABS.map(tab => (
@@ -956,9 +1098,9 @@ export default function SOSScreen() {
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Tactical Map Style — dark blue-charcoal base, visible hierarchy
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Tactical Map Style â€” dark blue-charcoal base, visible hierarchy
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -982,15 +1124,15 @@ const TACTICAL_MAP_STYLE = [
     { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// StyleSheet — Premium Tactical Command Center
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// StyleSheet â€” Premium Tactical Command Center
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const s = StyleSheet.create({
     root: { flex: 1, backgroundColor: '#090514' },  // Matches AtmosphericShell gradient end
 
     header: {
         position: 'absolute', left: 14, right: 14,
-        borderRadius: 28,  // Bulky Glass Mandate — matches Hub cards
+        borderRadius: 28,  // Bulky Glass Mandate â€” matches Hub cards
         zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
@@ -1207,4 +1349,66 @@ const s = StyleSheet.create({
     drawerLabel: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
     drawerLabelDanger: { color: T.danger },
     drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
+
+    // â”€â”€ Themed Confirmation Modals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.72)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    modalCard: {
+        width: '100%',
+        backgroundColor: T.surfaceBulky,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        padding: 28,
+        alignItems: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 28, shadowOffset: { width: 0, height: 10 } },
+            android: { elevation: 18 },
+        }),
+    },
+    modalIconWrap: {
+        width: 64, height: 64, borderRadius: 32,
+        backgroundColor: T.dangerBg,
+        borderWidth: 1.5, borderColor: T.dangerBorder,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 18,
+    },
+    modalIconWrapWarning: {
+        backgroundColor: 'rgba(245,158,11,0.12)',
+        borderColor: 'rgba(245,158,11,0.30)',
+    },
+    modalTitle: {
+        fontSize: 20, fontWeight: '800', color: T.ink,
+        letterSpacing: -0.3, marginBottom: 10, textAlign: 'center',
+    },
+    modalBody: {
+        fontSize: 14, fontWeight: '400', color: T.ink3,
+        lineHeight: 21, textAlign: 'center', marginBottom: 26,
+    },
+    modalBtnPrimary: {
+        width: '100%', height: 52,
+        backgroundColor: T.violet,
+        borderRadius: 14,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 12,
+        ...Platform.select({
+            ios: { shadowColor: T.violet, shadowOpacity: 0.38, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 6 },
+        }),
+    },
+    modalBtnPrimaryText: {
+        fontSize: 16, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2,
+    },
+    modalBtnSecondary: {
+        width: '100%', height: 48,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    modalBtnSecondaryText: {
+        fontSize: 15, fontWeight: '600', color: T.ink4,
+    },
 });

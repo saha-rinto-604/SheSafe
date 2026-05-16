@@ -129,10 +129,10 @@ async function updateIncidentStatus(id, status) {
 
 async function cancelAllByUser(userId) {
   const result = await query(
-    `UPDATE incidents SET status = 'CANCELLED' WHERE user_id = ? AND status = 'ACTIVE'`,
+    `DELETE FROM incidents WHERE user_id = ?`,
     [userId]
   );
-  return { cancelled: result.affectedRows };
+  return { deleted: result.affectedRows };
 }
 
 /**
@@ -141,9 +141,9 @@ async function cancelAllByUser(userId) {
  * Ordered by most recent first.
  *
  * Status mapping for the frontend:
- *   ACTIVE    → SOS is currently active
- *   RESOLVED  → SOS was resolved/completed
- *   CANCELLED → SOS was cancelled by the user
+ *   ACTIVE    â†’ SOS is currently active
+ *   RESOLVED  â†’ SOS was resolved/completed
+ *   CANCELLED â†’ SOS was cancelled by the user
  */
 async function getMyIncidents(userId) {
   return query(
