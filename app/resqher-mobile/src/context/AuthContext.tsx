@@ -15,7 +15,7 @@ type AuthState = {
 };
 
 type AuthContextValue = AuthState & {
-  signIn: (username: string, password: string) => Promise<void>;
+  signIn: (username: string, password: string) => Promise<{ role: Role }>;
   signUp: (phone: string, password: string, firstName: string, lastName: string, role?: Role) => Promise<{ role: Role }>;
   /** Attempts sign out. If isSosLive is true, calls onSosBlocked() instead and returns false. */
   signOut: (onSosBlocked?: () => void) => Promise<boolean>;
@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshIdentity: async () => {
         if (role) await hydrateIdentity(role);
       },
-      signIn: async (username: string, password: string) => {
+      signIn: async (username: string, password: string): Promise<{ role: Role }> => {
         setIsLoading(true);
         try {
           console.log('[AUTH_CTX] signIn called with phone:', username);
@@ -93,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setRole(resolvedRole);
           setUserId(identity?.userId ?? null);
           await hydrateIdentity(resolvedRole);
+          return { role: resolvedRole };
         } finally {
           setIsLoading(false);
         }

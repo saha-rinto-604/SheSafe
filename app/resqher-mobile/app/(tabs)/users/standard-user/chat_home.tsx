@@ -12,6 +12,7 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
 import { incidentHistory, type IncidentRecord } from '../../../../src/services/incidentHistory';
 import { incidentService } from '../../../../src/services/incidentService';
+import { Modal, Pressable, Alert } from 'react-native';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const D = {
@@ -65,10 +66,10 @@ function statusCfg(status: IncidentRecord['status']): StatusCfg {
         default:
             return {
                 label: 'CANCELLED',
-                pillBg: 'rgba(255,69,58,0.10)',
-                pillBorder: 'rgba(255,69,58,0.30)',
-                textColor: '#FF453A',
-                borderLeft: 'rgba(255,69,58,0.40)',
+                pillBg: 'rgba(255, 69, 58, 0.12)',
+                pillBorder: 'rgba(255, 69, 58, 0.35)',
+                textColor: T.danger,
+                borderLeft: T.danger,
             };
     }
 }
@@ -83,6 +84,7 @@ const IncidentCard = memo(function IncidentCard({
 }) {
     const cfg = statusCfg(record.status);
     const isActive = String(record.status).toUpperCase() === 'ACTIVE';
+    const isCancelled = String(record.status).toUpperCase() === 'CANCELLED';
     const resolvedTime = record.resolvedAt ? timeAgo(record.resolvedAt) : null;
 
     return (
@@ -92,8 +94,8 @@ const IncidentCard = memo(function IncidentCard({
             activeOpacity={0.75}
         >
             {/* Avatar */}
-            <View style={[st.avatar, isActive ? st.avatarActive : st.avatarInactive]}>
-                <Feather name="alert-circle" size={18} color={isActive ? T.violet : D.subtitle} />
+            <View style={[st.avatar, isActive ? st.avatarActive : isCancelled ? st.avatarCancelled : st.avatarInactive]}>
+                <Feather name="alert-circle" size={18} color={isActive ? T.violet : isCancelled ? T.danger : D.subtitle} />
                 {isActive && <View style={st.activeDot} />}
             </View>
 
@@ -355,6 +357,10 @@ const st = StyleSheet.create({
     },
     avatarActive: { backgroundColor: T.violetDim, borderColor: T.violet },
     avatarInactive: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)' },
+    avatarCancelled: {
+        backgroundColor: 'rgba(255,69,58,0.08)',
+        borderColor: 'rgba(255,69,58,0.25)',
+    },
     activeDot: {
         position: 'absolute', top: 4, right: 4,
         width: 8, height: 8, borderRadius: 4,

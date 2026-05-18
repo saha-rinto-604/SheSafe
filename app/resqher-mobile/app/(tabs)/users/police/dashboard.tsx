@@ -3,10 +3,13 @@ import { View, Text, StyleSheet, TouchableOpacity, StatusBar } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { T, Ty, R, S } from '../../../../src/constants/theme';
+import { useAuth } from '../../../../src/context/AuthContext';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { useRouter } from 'expo-router';
 
 export default function PoliceDashboard() {
     const router = useRouter();
+    const { identityCache } = useAuth();
 
     return (
         <SafeAreaView style={st.container}>
@@ -14,7 +17,7 @@ export default function PoliceDashboard() {
             <View style={st.header}>
                 <Text style={st.title}>Police Terminal</Text>
                 <TouchableOpacity style={st.profileBtn}>
-                    <Feather name="user" size={24} color={T.onPrimary} />
+                    <UserAvatar uri={identityCache?.photoUri} size={36} style={st.profileAvatar} />
                 </TouchableOpacity>
             </View>
 
@@ -55,12 +58,14 @@ const st = StyleSheet.create({
         color: T.ink,
     },
     profileBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: T.danger,
-        justifyContent: 'center',
-        alignItems: 'center',
+        width: 36, height: 36, borderRadius: 18,
+        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)',
+        overflow: 'hidden',
+    },
+    profileAvatar: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
     },
     content: {
         padding: S.s4,

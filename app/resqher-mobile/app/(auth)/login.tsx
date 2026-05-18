@@ -55,8 +55,8 @@ export default function Login() {
         return;
       }
 
-      await signIn(phone, password);
-      let route = ROLE_DEFAULT_ROUTE.USER;
+      const { role } = await signIn(phone, password);
+      let route = ROLE_DEFAULT_ROUTE[role] || ROLE_DEFAULT_ROUTE.USER;
       router.replace(route as any);
     } catch (e: any) {
       const msg = e?.message ?? '';

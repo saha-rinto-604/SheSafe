@@ -230,12 +230,18 @@ export default function Signup() {
     }
     setSubmitting(true);
     try {
+      // Map DB role names to AuthContext Role type for proper JWT encoding
+      const ROLE_TO_AUTH: Record<UserRole, 'USER' | 'VOLUNTEER' | 'POLICE'> = {
+        standard_user: 'USER',
+        volunteer: 'VOLUNTEER',
+        law_enforcement: 'POLICE',
+      };
       const result = await signUp(
         data.phone.trim(),
         data.password,
         data.firstName,
         data.lastName,
-        role
+        ROLE_TO_AUTH[role] ?? 'USER'
       );
 
       showToast({ type: 'success', title: 'Welcome to ResQher!', message: 'Your account has been created successfully.' });

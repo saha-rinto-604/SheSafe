@@ -26,6 +26,7 @@ import { T } from '../../constants/theme';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../types/chat';
 import { decodePolyline } from './map/decodePolyline';
 import { st } from './ChatRoom.styles';
+import UserAvatar from './UserAvatar';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
@@ -121,7 +122,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     return (
         <View style={[st.bubbleRow, alignRight ? st.bubbleRowOwn : st.bubbleRowOther]}>
             {!alignRight && (
-                <Image source={{ uri: `https://i.pravatar.cc/150?u=${msg.sender.id}` }} style={st.avatar} />
+                <UserAvatar uri={null} size={32} style={st.avatar} />
             )}
             <View style={st.bubbleCol}>
                 {!alignRight && (
@@ -439,12 +440,12 @@ export function SharedChatRoom({
                                 <>
                                     <Marker coordinate={mapRouteCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
                                         <View style={st.sosMarkerInnerA}>
-                                            <Image source={{ uri: 'https://i.pravatar.cc/150?img=11' }} style={st.sosMarkerAvatar} />
+                                            <UserAvatar uri={null} size={28} style={st.sosMarkerAvatar} />
                                         </View>
                                     </Marker>
                                     <Marker coordinate={mapRouteCoords[mapRouteCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
                                         <View style={st.sosMarkerInnerB}>
-                                            <Image source={{ uri: incident.latestMessage?.sender?.id ? `https://i.pravatar.cc/150?u=${incident.latestMessage.sender.id}` : 'https://i.pravatar.cc/150?img=5' }} style={st.sosMarkerAvatar} />
+                                            <UserAvatar uri={null} size={28} style={st.sosMarkerAvatar} />
                                         </View>
                                     </Marker>
                                 </>

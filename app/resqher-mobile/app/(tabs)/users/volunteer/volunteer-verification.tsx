@@ -2,7 +2,7 @@
  * volunteer-verification.tsx — Volunteer Verification Screen (Standard User)
  * ─────────────────────────────────────────────────────────────────────────────
  * States: Initial → Form (Upload Docs) → Pending → Verified | Rejected
- * Persistence: expo-secure-store (key: resqher_volunteer_verification_v1)
+ * Persistence: Backend API → /api/verification
  * Upload: expo-image-picker (gallery for ID/Certificate, camera+gallery for Selfie)
  */
 
@@ -22,14 +22,12 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as SecureStore from 'expo-secure-store';
+import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { useAuth } from '../../../../src/context/AuthContext';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
-export const VERIFICATION_KEY = 'resqher_volunteer_verification_v1';
-
+// ── Types ──────────────────────────────────────────────────────────────────
 export type VerificationStatus =
     | 'not_applied'
     | 'draft'
@@ -51,18 +49,29 @@ export type VerificationRecord = {
 const INITIAL_RECORD: VerificationRecord = { status: 'not_applied' };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-export async function loadVerificationRecord(): Promise<VerificationRecord> {
-    try {
-        const raw = await SecureStore.getItemAsync(VERIFICATION_KEY);
-        if (raw) return { ...INITIAL_RECORD, ...JSON.parse(raw) };
-    } catch { /* returns default */ }
-    return { ...INITIAL_RECORD };
+
+/** Transform API response to local shape. */
+function apiToRecord(v: any): VerificationRecord {
+    if (!v) return { ...INITIAL_RECORD };
+    return {
+        status: v.status || 'not_applied',
+        submittedOn: v.submittedAt || v.submitted_at || undefined,
+        documents: {
+            idCardUri: v.idCardUrl || v.id_card_url || undefined,
+            selfieUri: v.selfieUrl || v.selfie_url || undefined,
+            certificateUri: v.certificateUrl || v.certificate_url || undefined,
+        },
+        rejectionReason: v.rejectionReason || v.rejection_reason || undefined,
+    };
 }
 
-async function saveRecord(record: VerificationRecord) {
+export async function loadVerificationRecord(): Promise<VerificationRecord> {
     try {
-        await SecureStore.setItemAsync(VERIFICATION_KEY, JSON.stringify(record));
-    } catch { /* best-effort */ }
+        const { data } = await api.get('/api/verification');
+        return apiToRecord(data?.verification);
+    } catch {
+        return { ...INITIAL_RECORD };
+    }
 }
 
 function formatDate(iso: string): string {
@@ -71,6 +80,25 @@ function formatDate(iso: string): string {
             day: '2-digit', month: 'short', year: 'numeric',
         });
     } catch { return iso; }
+}
+
+/** Upload a document image to the backend. */
+async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localUri: string): Promise<string | null> {
+    const formData = new FormData();
+    const filename = localUri.split('/').pop() || 'doc.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const mimeType = match ? `image/${match[1]}` : 'image/jpeg';
+
+    formData.append('document', {
+        uri: localUri,
+        name: filename,
+        type: mimeType,
+    } as any);
+
+    const { data } = await api.post(`/api/verification/upload/${type}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data?.url || data?.verification?.[`${type}_url`] || localUri;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -169,52 +197,6 @@ export default function VolunteerVerificationScreen() {
     const router = useRouter();
     const { signOut } = useAuth();
 
-    const [record, setRecord] = useState<VerificationRecord>(INITIAL_RECORD);
-    const [viewState, setViewState] = useState<'loading' | 'initial' | 'form' | 'status'>('loading');
-    const [idCardUri, setIdCardUri] = useState<string | undefined>();
-    const [selfieUri, setSelfieUri] = useState<string | undefined>();
-    const [certUri, setCertUri] = useState<string | undefined>();
-    const [submitting, setSubmitting] = useState(false);
-
-    // ── Load persisted record on mount ────────────────────────────────────
-    useEffect(() => {
-        loadVerificationRecord().then(rec => {
-            setRecord(rec);
-            if (rec.status === 'not_applied') {
-                setViewState('initial');
-            } else if (rec.status === 'draft') {
-                // Restore any saved draft uris
-                setIdCardUri(rec.documents?.idCardUri);
-                setSelfieUri(rec.documents?.selfieUri);
-                setCertUri(rec.documents?.certificateUri);
-                setViewState('form');
-            } else {
-                setViewState('status');
-            }
-        });
-    }, []);
-
-    // ── Persist helper ────────────────────────────────────────────────────
-    const persist = useCallback(async (rec: VerificationRecord) => {
-        setRecord(rec);
-        await saveRecord(rec);
-    }, []);
-
-    // ── Actions ──────────────────────────────────────────────────────────
-    const handleApply = async () => {
-        const draft: VerificationRecord = { status: 'draft', documents: {} };
-        await persist(draft);
-        setViewState('form');
-    };
-
-    const handleBackToIntro = async () => {
-        setIdCardUri(undefined);
-        setSelfieUri(undefined);
-        setCertUri(undefined);
-        await persist(INITIAL_RECORD);
-        setViewState('initial');
-    };
-
     const handleGoToVolunteerHome = () => {
         router.replace('/(tabs)/users/volunteer');
     };
@@ -224,30 +206,91 @@ export default function VolunteerVerificationScreen() {
         router.replace('/(auth)/login');
     };
 
+    const [record, setRecord] = useState<VerificationRecord>(INITIAL_RECORD);
+    const [viewState, setViewState] = useState<'loading' | 'initial' | 'form' | 'status'>('loading');
+    const [idCardUri, setIdCardUri] = useState<string | undefined>();
+    const [selfieUri, setSelfieUri] = useState<string | undefined>();
+    const [certUri, setCertUri] = useState<string | undefined>();
+    const [submitting, setSubmitting] = useState(false);
+
+    // ── Load verification status from API on mount ────────────────────────
+    useEffect(() => {
+        (async () => {
+            try {
+                const { data } = await api.get('/api/verification');
+                const rec = apiToRecord(data?.verification);
+                setRecord(rec);
+                if (rec.status === 'not_applied') {
+                    setViewState('initial');
+                } else if (rec.status === 'draft') {
+                    setIdCardUri(rec.documents?.idCardUri);
+                    setSelfieUri(rec.documents?.selfieUri);
+                    setCertUri(rec.documents?.certificateUri);
+                    setViewState('form');
+                } else {
+                    setViewState('status');
+                }
+            } catch {
+                // API failed — show initial state
+                setViewState('initial');
+            }
+        })();
+    }, []);
+
+    // ── Actions ──────────────────────────────────────────────────────────
+    const handleApply = async () => {
+        try {
+            const { data } = await api.post('/api/verification/apply');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setViewState('form');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not start application.';
+            Alert.alert('Error', msg);
+        }
+    };
+
     const handleSubmit = async () => {
-        // For now: allow submit even without documents and show admin modal immediately.
+        if (!idCardUri || !selfieUri) {
+            Alert.alert(
+                'Documents required',
+                'Please upload your ID Card and a Selfie holding your ID before submitting.',
+            );
+            return;
+        }
         setSubmitting(true);
-        const pendingRecord: VerificationRecord = {
-            status: 'pending',
-            submittedOn: new Date().toISOString(),
-            documents: {
-                idCardUri,
-                selfieUri,
-                certificateUri: certUri,
-            },
-        };
-        await persist(pendingRecord);
-        setSubmitting(false);
-        setViewState('status');
+        try {
+            // Upload documents to backend
+            await uploadDocument('id_card', idCardUri);
+            await uploadDocument('selfie', selfieUri);
+            if (certUri) await uploadDocument('certificate', certUri);
+
+            // Submit for review
+            const { data } = await api.post('/api/verification/submit');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setViewState('status');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not submit verification.';
+            Alert.alert('Error', msg);
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const handleReapply = async () => {
-        const draft: VerificationRecord = { status: 'draft', documents: {} };
-        setIdCardUri(undefined);
-        setSelfieUri(undefined);
-        setCertUri(undefined);
-        await persist(draft);
-        setViewState('form');
+        try {
+            const { data } = await api.post('/api/verification/reapply');
+            const rec = apiToRecord(data?.verification);
+            setRecord(rec);
+            setIdCardUri(undefined);
+            setSelfieUri(undefined);
+            setCertUri(undefined);
+            setViewState('form');
+        } catch (err: any) {
+            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not reapply.';
+            Alert.alert('Error', msg);
+        }
     };
 
     // ── Image picker helpers ──────────────────────────────────────────────
@@ -297,21 +340,7 @@ export default function VolunteerVerificationScreen() {
         ]);
     };
 
-    // ── Persist draft uris whenever images change ─────────────────────────
-    useEffect(() => {
-        if (viewState !== 'form') return;
-        const updated: VerificationRecord = {
-            ...record,
-            status: 'draft',
-            documents: {
-                idCardUri,
-                selfieUri,
-                certificateUri: certUri,
-            },
-        };
-        void saveRecord(updated);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [idCardUri, selfieUri, certUri]);
+    // Draft state is now managed by the API — no local auto-save needed
 
     const canSubmit = !!idCardUri && !!selfieUri;
 
@@ -325,19 +354,13 @@ export default function VolunteerVerificationScreen() {
 
                 {/* ── Header ─────────────────────────────────────────────── */}
                 <View style={[s.header, { paddingTop: insets.top + 8 }]}>
-                    {viewState === 'form' ? (
-                        <TouchableOpacity
-                            style={s.headerBtn}
-                            onPress={handleBackToIntro}
-                            activeOpacity={0.8}
-                            accessibilityRole="button"
-                            accessibilityLabel="Back to verification intro"
-                        >
-                            <Feather name="arrow-left" size={18} color={T.ink} />
-                        </TouchableOpacity>
-                    ) : (
-                        <View style={s.headerSpacer} />
-                    )}
+                    <TouchableOpacity
+                        style={s.headerBtn}
+                        onPress={() => router.back()}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                        <Feather name="chevron-left" size={22} color={T.ink} />
+                    </TouchableOpacity>
                     <Text style={s.headerTitle}>Volunteer Verification</Text>
                     <View style={s.headerSpacer} />
                 </View>
@@ -447,15 +470,14 @@ export default function VolunteerVerificationScreen() {
                                 </Text>
                             )}
 
-                            {/* Submit: always visible purple; handler validates required fields */}
+                            {/* Submit */}
                             <TouchableOpacity
-                                style={s.primaryBtn}
-                                onPress={submitting ? undefined : handleSubmit}
-                                activeOpacity={0.8}
-                                disabled={submitting}
+                                style={[s.primaryBtn, !canSubmit && s.primaryBtnDisabled]}
+                                onPress={canSubmit && !submitting ? handleSubmit : undefined}
+                                activeOpacity={canSubmit ? 0.8 : 1}
                             >
-                                <Feather name="send" size={17} color={T.onPrimary} />
-                                <Text style={s.primaryBtnText}>
+                                <Feather name="send" size={17} color={canSubmit ? T.onPrimary : T.disabledText} />
+                                <Text style={[s.primaryBtnText, !canSubmit && s.primaryBtnTextDisabled]}>
                                     {submitting ? 'Submitting…' : 'Submit Verification Request'}
                                 </Text>
                             </TouchableOpacity>
@@ -491,40 +513,63 @@ export default function VolunteerVerificationScreen() {
                                 {/* Pending message */}
                                 {record.status === 'pending' && (
                                     <>
-                                        <Section title="What happens next">
-                                            <View style={s.infoRow}>
-                                                <Feather name="clock" size={15} color={T.accent} />
-                                                <Text style={s.infoText}>
-                                                    Your documents are being reviewed. This usually takes
-                                                    24–48 hours.
-                                                </Text>
-                                            </View>
-                                            <Divider />
-                                            <View style={s.infoRow}>
-                                                <Feather name="bell" size={15} color={T.violet} />
-                                                <Text style={s.infoText}>
-                                                    You will be notified once verification is complete.
-                                                </Text>
-                                            </View>
-                                        </Section>
+                                    <Section title="What happens next">
+                                        <View style={s.infoRow}>
+                                            <Feather name="clock" size={15} color={T.accent} />
+                                            <Text style={s.infoText}>
+                                                Your documents are being reviewed. This usually takes
+                                                24–48 hours.
+                                            </Text>
+                                        </View>
+                                        <Divider />
+                                        <View style={s.infoRow}>
+                                            <Feather name="bell" size={15} color={T.violet} />
+                                            <Text style={s.infoText}>
+                                                You will be notified once verification is complete.
+                                            </Text>
+                                        </View>
+                                    </Section>
 
-                                        <TouchableOpacity
-                                            style={s.primaryBtn}
-                                            onPress={handleGoToVolunteerHome}
-                                            activeOpacity={0.8}
-                                        >
-                                            <Feather name="home" size={17} color={T.onPrimary} />
-                                            <Text style={s.primaryBtnText}>OK</Text>
-                                        </TouchableOpacity>
+                                    {/* Edit Documents — reverts pending → draft so user can re-upload */}
+                                    <TouchableOpacity
+                                        style={[s.primaryBtn, s.editDocsBtn]}
+                                        onPress={async () => {
+                                            try {
+                                                const { data } = await api.post('/api/verification/edit');
+                                                const rec = apiToRecord(data?.verification);
+                                                setRecord(rec);
+                                                setIdCardUri(rec.documents?.idCardUri);
+                                                setSelfieUri(rec.documents?.selfieUri);
+                                                setCertUri(rec.documents?.certificateUri);
+                                                setViewState('form');
+                                            } catch (err: any) {
+                                                const msg = err?.response?.data?.message || 'Could not edit documents.';
+                                                Alert.alert('Error', msg);
+                                            }
+                                        }}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Feather name="edit-2" size={17} color={T.violet} />
+                                        <Text style={[s.primaryBtnText, { color: T.violet }]}>Edit Documents</Text>
+                                    </TouchableOpacity>
 
-                                        <TouchableOpacity
-                                            style={[s.primaryBtn, s.logoutBtn]}
-                                            onPress={handleLogout}
-                                            activeOpacity={0.8}
-                                        >
-                                            <Feather name="log-out" size={17} color={T.danger} />
-                                            <Text style={[s.primaryBtnText, s.logoutBtnText]}>Logout</Text>
-                                        </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={s.primaryBtn}
+                                        onPress={handleGoToVolunteerHome}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Feather name="home" size={17} color={T.onPrimary} />
+                                        <Text style={s.primaryBtnText}>OK</Text>
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        style={[s.primaryBtn, s.logoutBtn]}
+                                        onPress={handleLogout}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Feather name="log-out" size={17} color={T.danger} />
+                                        <Text style={[s.primaryBtnText, s.logoutBtnText]}>Logout</Text>
+                                    </TouchableOpacity>
                                     </>
                                 )}
 
@@ -691,6 +736,9 @@ const s = StyleSheet.create({
         borderRadius: R.md, paddingVertical: 15,
         marginBottom: 12,
     },
+    primaryBtnDisabled: {
+        backgroundColor: T.disabled,
+    },
     logoutBtn: {
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
@@ -698,9 +746,6 @@ const s = StyleSheet.create({
     },
     logoutBtnText: {
         color: T.danger,
-    },
-    primaryBtnDisabled: {
-        backgroundColor: T.disabled,
     },
     primaryBtnText: {
         fontSize: 15, fontWeight: '700',
@@ -711,6 +756,11 @@ const s = StyleSheet.create({
     },
     reapplyBtn: {
         backgroundColor: T.dangerPressed,
+    },
+    editDocsBtn: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: `${T.violet}40`,
     },
 
     // ── Form intro ────────────────────────────────────────────────────────────
@@ -857,103 +907,6 @@ const s = StyleSheet.create({
         flex: 1,
         fontSize: 13, fontWeight: '500',
         color: T.dangerText, lineHeight: 18,
-    },
-    verificationGateOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 22,
-        backgroundColor: 'rgba(4,6,12,0.45)',
-    },
-    verificationGateScrim: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,8,18,0.52)',
-    },
-    verificationGateCard: {
-        width: '100%',
-        maxWidth: 360,
-        borderRadius: 28,
-        paddingHorizontal: 22,
-        paddingTop: 22,
-        paddingBottom: 18,
-        backgroundColor: 'rgba(24,16,40,0.76)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        overflow: 'hidden',
-        ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
-            android: { elevation: 18 },
-        }),
-    },
-    verificationGateIconWrap: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(138,56,246,0.14)',
-        borderWidth: 1,
-        borderColor: 'rgba(138,56,246,0.28)',
-        marginBottom: 14,
-    },
-    verificationGateTitle: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: T.ink,
-        letterSpacing: -0.3,
-    },
-    verificationGateMessage: {
-        marginTop: 8,
-        fontSize: 14,
-        lineHeight: 20,
-        color: T.ink2,
-        fontWeight: '500',
-    },
-    verificationGateEta: {
-        marginTop: 10,
-        fontSize: 12,
-        lineHeight: 18,
-        color: T.ink3,
-        fontWeight: '700',
-    },
-    verificationGateActions: {
-        flexDirection: 'row',
-        gap: 10,
-        marginTop: 22,
-    },
-    verificationGateOkBtn: {
-        flex: 1,
-        minHeight: 48,
-        borderRadius: R.pill,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    verificationGateOkTxt: {
-        color: T.ink3,
-        fontSize: 14,
-        fontWeight: '800',
-        letterSpacing: 0.5,
-    },
-    verificationGateLogoutBtn: {
-        flex: 1,
-        borderRadius: R.pill,
-        overflow: 'hidden',
-        minHeight: 48,
-    },
-    verificationGateLogoutFill: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    verificationGateLogoutTxt: {
-        color: T.onPrimary,
-        fontSize: 14,
-        fontWeight: '900',
-        letterSpacing: 0.6,
-        textTransform: 'uppercase',
     },
 });
 

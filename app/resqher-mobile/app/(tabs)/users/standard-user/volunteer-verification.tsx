@@ -64,6 +64,15 @@ function apiToRecord(v: any): VerificationRecord {
     };
 }
 
+export async function loadVerificationRecord(): Promise<VerificationRecord> {
+    try {
+        const { data } = await api.get('/api/verification');
+        return apiToRecord(data?.verification);
+    } catch {
+        return { ...INITIAL_RECORD };
+    }
+}
+
 function formatDate(iso: string): string {
     try {
         return new Date(iso).toLocaleDateString('en-GB', {

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
+import Svg, { Path, Circle as SvgCircle, Rect, G as SvgG, Text as SvgText, Line } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
@@ -24,10 +25,12 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+
 import { useAuth } from '../../../../src/context/AuthContext';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
 import { loadVerificationRecord, type VerificationRecord } from '../standard-user/volunteer-verification';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -57,7 +60,7 @@ const RED_ZONES: { id: string; name: string; latitude: number; longitude: number
 type SosRequest = {
     id: string;
     victimName: string;
-    avatarUri: string;
+    avatarUri: string | null;
     distanceKm: number;
     locationLabel: string;
     latitude: number;
@@ -67,14 +70,14 @@ type SosRequest = {
 type ReviewVolunteer = {
     id: string;
     name: string;
-    avatarUri: string;
+    avatarUri: string | null;
 };
 
 const MOCK_SOS_REQUESTS: SosRequest[] = [
     {
         id: 'sos-101',
         victimName: 'Ayesha Rahman',
-        avatarUri: 'https://i.pravatar.cc/150?img=47&u=sos-101',
+        avatarUri: null,
         distanceKm: 0.8,
         locationLabel: 'United International University, Dhaka',
         latitude: 23.7924,
@@ -291,10 +294,55 @@ function getManeuverIcon(maneuver?: string): string {
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;
 
-const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string; iconFamily?: 'Ionicons' | 'MaterialCommunityIcons' }[] = [
+const PurpleSosSquareIcon = ({ size = 26 }: { size?: number }) => (
+    <Svg viewBox="0 0 24 24" width={size} height={size}>
+        <Rect x="2" y="3" width="20" height="20" rx="5" fill="#A78BFA" fillOpacity="0.4" />
+        <Rect x="2" y="2" width="20" height="20" rx="5" fill="#A78BFA" />
+        <SvgText x="12" y="14" fill="#F5F5F7" fontSize="6.5" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle" alignmentBaseline="middle">SOS</SvgText>
+    </Svg>
+);
+
+const PurpleSosBellIcon = ({ size = 22 }: { size?: number }) => (
+    <Svg viewBox="0 0 24 24" width={size} height={size}>
+        <Path d="M5 7 Q 2 12 5 17" stroke="#A78BFA" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        <Path d="M7 9 Q 5 12 7 15" stroke="#A78BFA" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        <Path d="M19 7 Q 22 12 19 17" stroke="#A78BFA" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        <Path d="M17 9 Q 19 12 17 15" stroke="#A78BFA" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        <SvgCircle cx="12" cy="4" r="1.5" fill="#A78BFA" />
+        <Path d="M12 5 C 9 5 8 8 8 11 L 6.5 16.5 L 17.5 16.5 L 16 11 C 16 8 15 5 12 5 Z" fill="#A78BFA" />
+        <Path d="M10 17.5 A 2 2 0 0 0 14 17.5 Z" fill="#A78BFA" />
+        <SvgText x="12" y="13.5" fill="#F5F5F7" fontSize="4.5" fontWeight="bold" fontFamily="sans-serif" textAnchor="middle" alignmentBaseline="middle">SOS</SvgText>
+    </Svg>
+);
+
+const LeaderboardIcon = ({ color }: { color: string }) => (
+    <Svg viewBox="0 0 48 48" width={24} height={24}>
+        <SvgG stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <SvgCircle cx="24" cy="9" r="6" />
+            <Path d="M 17 40 L 8 40 C 4 40 4 36 4 27 C 4 17 12 16 24 16 C 36 16 44 17 44 27 C 44 36 44 40 40 40 L 31 40" />
+            <Line x1="16" y1="23" x2="32" y2="23" />
+            <Path d="M 16 23 C 16 35 20 37 24 37 C 28 37 32 35 32 23" />
+            <Path d="M 19 23 C 19 32 21 34 24 34 C 27 34 29 32 29 23" />
+            <Path d="M 16 26 C 11 26 11 32 16 32" />
+            <Path d="M 32 26 C 37 26 37 32 32 32" />
+            <Path d="M 22 37 C 22 41 18 41 18 41 L 18 45 L 30 45 L 30 41 C 30 41 26 41 26 37" />
+            <Line x1="15" y1="45" x2="33" y2="45" />
+            <SvgCircle cx="10" cy="36" r="3.5" />
+            <Path d="M 10 34 L 10 36 L 12 36" />
+            <SvgCircle cx="35" cy="33" r="1" fill={color} stroke="none" />
+            <SvgCircle cx="35" cy="36.5" r="1" fill={color} stroke="none" />
+            <SvgCircle cx="35" cy="40" r="1" fill={color} stroke="none" />
+            <Line x1="38" y1="33" x2="42" y2="33" />
+            <Line x1="38" y1="36.5" x2="42" y2="36.5" />
+            <Line x1="38" y1="40" x2="42" y2="40" />
+        </SvgG>
+    </Svg>
+);
+
+const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string; iconFamily?: 'Ionicons' | 'MaterialCommunityIcons'; isCustomSvg?: boolean; }[] = [
     { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons' },
     { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons' },
-    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons' },
+    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons', isCustomSvg: true },
     { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline', iconFamily: 'Ionicons' },
 ];
 
@@ -524,6 +572,155 @@ const scanStyles = StyleSheet.create({
 
 
 
+// ── Navigation Instruction Card Styles ───────────────────────────────────────
+const ns = StyleSheet.create({
+    cardWrap: {
+        position: 'absolute', left: 14, right: 14,
+        borderRadius: R.lg, overflow: 'hidden',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        zIndex: 260,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    warningBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        marginTop: 10,
+        marginLeft: 12,
+        backgroundColor: 'rgba(226,91,58,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(226,91,58,0.4)',
+    },
+    warningBadgeText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#E25B3A',
+    },
+    cardTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,10,18,0.88)',
+    },
+    cardBody: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2,
+        gap: S.s3,
+    },
+    iconWrap: {
+        width: 44, height: 44, borderRadius: R.sm,
+        backgroundColor: T.violetDim,
+        borderWidth: 1, borderColor: `${T.violet}35`,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    textWrap: { flex: 1 },
+    instrText: {
+        fontSize: 14, fontWeight: '700',
+        color: T.ink, letterSpacing: -0.2,
+        lineHeight: 20,
+    },
+    distText: {
+        fontSize: 12, fontWeight: '600',
+        color: T.ink3, marginTop: 2,
+    },
+    cardFooter: {
+        flexDirection: 'row', alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2,
+    },
+    stepCounter: {
+        fontSize: 11, fontWeight: '600',
+        color: T.ink4, letterSpacing: 0.4,
+    },
+    autoAdvanceText: {
+        fontSize: 11, fontWeight: '500',
+        color: T.violet, letterSpacing: 0.2,
+    },
+    navBtn: {
+        width: 32, height: 32, borderRadius: R.hBtn,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center', justifyContent: 'center',
+    },
+    safePathBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        height: 28,
+        borderRadius: R.pill,
+        backgroundColor: T.violet,
+        borderWidth: 1,
+        borderColor: `${T.violet}70`,
+    },
+    safePathBtnText: {
+        fontSize: 10,
+        fontWeight: '800',
+        color: T.onPrimary,
+        letterSpacing: 0.3,
+    },
+    goLiveBtn: {
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: 12, height: 32,
+        borderRadius: R.pill,
+        backgroundColor: T.violet,
+        borderWidth: 1, borderColor: `${T.violet}70`,
+    },
+    goLiveBtnText: {
+        fontSize: 11, fontWeight: '700',
+        color: T.onPrimary, letterSpacing: 0.2,
+    },
+    endLiveBtn: {
+        paddingHorizontal: 14, paddingVertical: 8,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+    },
+    endLiveBtnText: {
+        fontSize: 11, fontWeight: '700',
+        color: T.onPrimary, letterSpacing: 0.2,
+    },
+});
+
+// ── Top Live Banner Styles ───────────────────────────────────────────
+const lb = StyleSheet.create({
+    bannerWrap: {
+        position: 'absolute', left: 14, right: 14,
+        borderRadius: R.lg, overflow: 'hidden',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        zIndex: 360,
+    },
+    bannerTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(10,10,18,0.85)',
+    },
+    bannerBody: {
+        width: '100%',
+        flexDirection: 'row', alignItems: 'center',
+        paddingHorizontal: S.s4, paddingVertical: S.s4,
+        gap: S.s4,
+    },
+    textWrap: { flex: 1 },
+    distText: {
+        fontSize: 16, fontWeight: '800',
+        color: T.violet, marginBottom: 4, letterSpacing: -0.2,
+    },
+    instrText: {
+        fontSize: 18, fontWeight: '700',
+        color: T.ink, letterSpacing: -0.3,
+        lineHeight: 22,
+    },
+    audioBtn: {
+        width: 44, height: 44, borderRadius: R.hBtn,
+        backgroundColor: `${T.violet}10`,
+        borderWidth: 1, borderColor: `${T.violet}25`,
+        alignItems: 'center', justifyContent: 'center',
+    },
+});
+
 // ── NavTab — identical to SOS screen ────────────────────────────────────────
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
@@ -551,11 +748,15 @@ const NavTab = memo(function NavTab({
         >
             <RNAnimated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
                 <View style={[s.navIconBox, isActive && s.navIconBoxActive]}>
-                    <Icon
-                        name={(isActive ? tab.iconActive : tab.iconOutline) as any}
-                        size={20}
-                        color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
-                    />
+                    {tab.isCustomSvg ? (
+                        <LeaderboardIcon color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR} />
+                    ) : (
+                        <Icon
+                            name={(isActive ? tab.iconActive : tab.iconOutline) as any}
+                            size={20}
+                            color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
+                        />
+                    )}
                 </View>
                 <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
             </RNAnimated.View>
@@ -679,35 +880,6 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
     );
 });
 
-type SosLiveButtonStage = 'requesting' | 'responding';
-
-const SosLiveButton = memo(function SosLiveButton({
-    stage,
-    animatedStyle,
-}: {
-    stage: SosLiveButtonStage;
-    animatedStyle?: any;
-}) {
-    return (
-        <RNAnimated.View style={animatedStyle}>
-            <View style={[s.sosBtn, s.sosBtnEmg]}>
-                <View style={s.sosBtnDangerFill}>
-                    <Ionicons
-                        name={stage === 'responding' ? 'pulse' : 'location-sharp'}
-                        size={stage === 'responding' ? 22 : 24}
-                        color={T.onDanger}
-                    />
-                    <Text style={[s.sosTxt, stage === 'responding' && s.sosTxtCompact]}>
-                        {stage === 'responding' ? 'LIVE' : 'SOS'}
-                    </Text>
-                    <Text style={[s.sosSubTxt, stage === 'responding' && s.sosSubTxtCompact]}>
-                        {stage === 'responding' ? 'VOLUNTEER ACCEPTED' : 'SHARING LOCATION'}
-                    </Text>
-                </View>
-            </View>
-        </RNAnimated.View>
-    );
-});
 
 // ── Volunteer Home Screen ────────────────────────────────────────────────────
 export default function VolunteerHome() {
@@ -721,8 +893,11 @@ export default function VolunteerHome() {
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [locationRetryKey, setLocationRetryKey] = useState(0);
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
-    const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('driving');
+    const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('walking');
     const [isLiveNav, setIsLiveNav] = useState(false);
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
     const [audioEnabled, setAudioEnabled] = useState(false);
     const [address, setAddress] = useState('');
     const [searchActive, setSearchActive] = useState(false);
@@ -754,6 +929,11 @@ export default function VolunteerHome() {
     const [reviewFeedback, setReviewFeedback] = useState('');
     const [reviewRating, setReviewRating] = useState(5);
     const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
+
+    // UI Flows Hook Setup
+    const [responderSheetVisible, setResponderSheetVisible] = useState(false);
+    const [stopConfirmMode, setStopConfirmMode] = useState<'cancel' | 'resolve'>('cancel');
+
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const sosTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const sosTransitionAnim = useRef(new RNAnimated.Value(0)).current;
@@ -804,18 +984,17 @@ export default function VolunteerHome() {
                 if (!isActive) return;
 
                 setProfile(nextProfile);
-                setVerificationRecord(nextVerification);
+                setVerificationRecord(nextVerification || null);
 
                 // If user hasn't applied or has a draft, take them to the verification flow
-                if ((nextVerification.status === 'not_applied' || nextVerification.status === 'draft') && !verificationNavRef.current) {
+                const status = nextVerification?.status || 'not_applied';
+                if ((status === 'not_applied' || status === 'draft') && !verificationNavRef.current) {
                     verificationNavRef.current = true;
                     router.push('/(tabs)/users/volunteer/volunteer-verification');
                     return;
                 }
 
                 // For the current verification flow test, do not show the home gate.
-                // The admin popup is shown on the verification screen, and OK should
-                // return directly here without a second modal.
                 setVerificationGateVisible(false);
             });
 
@@ -850,11 +1029,11 @@ export default function VolunteerHome() {
     const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
     const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
     const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim0 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim0 = useRef(new RNAnimated.Value(1)).current;
     const pulseAnim0Op = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim1 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim1 = useRef(new RNAnimated.Value(1)).current;
     const pulseAnim1Op = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim2 = useRef(new RNAnimated.Value(0)).current;
+    const pulseAnim2 = useRef(new RNAnimated.Value(1)).current;
     const pulseAnim2Op = useRef(new RNAnimated.Value(0)).current;
     const pulseAnims = [
         { scale: pulseAnim0, op: pulseAnim0Op },
@@ -897,18 +1076,14 @@ export default function VolunteerHome() {
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
     }, []);
 
-    const confirmStop = useCallback(() => {
+    const confirmStop = useCallback((mode: 'cancel' | 'resolve') => {
+        setStopConfirmMode(mode);
         setStopConfirmVisible(true);
     }, []);
 
     const closeStopConfirm = useCallback(() => {
         setStopConfirmVisible(false);
     }, []);
-
-    const handleStopAlert = useCallback(() => {
-        setStopConfirmVisible(false);
-        cancelSOS();
-    }, [cancelSOS]);
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
@@ -926,6 +1101,15 @@ export default function VolunteerHome() {
         }
         setReviewVisible(true);
     }, [cancelSOS, reviewQueue.length]);
+
+    const handleStopAlert = useCallback(() => {
+        setStopConfirmVisible(false);
+        if (stopConfirmMode === 'cancel') {
+            cancelSOS();
+        } else {
+            openReviewPopup();
+        }
+    }, [cancelSOS, openReviewPopup, stopConfirmMode]);
 
     const closeReviewPopup = useCallback(() => {
         setReviewVisible(false);
@@ -1078,7 +1262,19 @@ export default function VolunteerHome() {
                 }
             }
         }
-    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav]);
+
+        // Progress polyline update
+        if (routeCoords.length > 0) {
+            let closestIdx = 0;
+            let minD = Infinity;
+            routeCoords.forEach((pt, i) => {
+                const d = haversineDistance(userLoc, pt);
+                if (d < minD) { minD = d; closestIdx = i; }
+            });
+            setCompletedRouteCoords(routeCoords.slice(0, closestIdx + 1));
+            setRemainingRouteCoords(routeCoords.slice(closestIdx));
+        }
+    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav, routeCoords]);
 
     // Audio Guidance
     useEffect(() => {
@@ -1265,6 +1461,8 @@ export default function VolunteerHome() {
 
                 // Display shortest route immediately as violet
                 setRouteCoords(chosenCoords);
+                setCompletedRouteCoords([]);
+                setRemainingRouteCoords(chosenCoords);
                 setUnsafeRouteCoords(chosenCoords);
 
                 // Extract turn-by-turn instructions
@@ -1473,6 +1671,8 @@ export default function VolunteerHome() {
 
             setSafeRouteCoords(finalCoords);
             setRouteCoords(finalCoords);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords(finalCoords);
             setNavInstructions(instructions);
             setCurrentStepIdx(0);
             setRouteUnsafe(bestScore > 0);
@@ -1905,7 +2105,7 @@ export default function VolunteerHome() {
                             {/* start marker (user) */}
                             <Marker coordinate={safePlaceCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
                                 <View style={s.safePlaceMarkerWrap}>
-                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerStart, { borderColor: T.violet }]}> 
+                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerStart, { borderColor: T.violet }]}>
                                         <Ionicons name="person" size={18} color={T.violet} />
                                     </View>
                                 </View>
@@ -1913,7 +2113,7 @@ export default function VolunteerHome() {
                             {/* destination marker (safe place) */}
                             <Marker coordinate={safePlaceCoords[safePlaceCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
                                 <View style={s.safePlaceMarkerWrap}>
-                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerEnd, { borderColor: T.success }]}> 
+                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerEnd, { borderColor: T.success }]}>
                                         <Ionicons name="shield" size={16} color={T.success} />
                                     </View>
                                 </View>
@@ -1931,7 +2131,28 @@ export default function VolunteerHome() {
                         />
                     )}
 
-                    {routeCoords.length > 1 && (
+                    {/* Completed route (green) */}
+                    {completedRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={completedRouteCoords}
+                            strokeColor="#3B82F6"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Remaining route (violet) */}
+                    {remainingRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={remainingRouteCoords}
+                            strokeColor={T.violet}
+                            strokeWidth={4}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Fallback: full route if no progress split yet */}
+                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
                             coordinates={routeCoords}
                             strokeColor={T.violet}
@@ -1951,37 +2172,23 @@ export default function VolunteerHome() {
                                 lineCap="round"
                                 lineJoin="round"
                             />
-                            
+
                             {/* Volunteer Marker (Point A) */}
                             <Marker
                                 coordinate={sosPathCoords[0]}
                                 anchor={{ x: 0.5, y: 0.5 }}
+                                zIndex={1000}
                             >
-                                <View style={s.sosMarkerOuter}>
-                                    <View style={[s.sosMarkerInner, { borderColor: T.violet }]}>
-                                        <Image 
-                                            source={{ uri: profile?.photoUri || 'https://i.pravatar.cc/150?img=11' }} 
-                                            style={s.sosMarkerAvatar}
-                                            resizeMode="cover"
-                                        />
-                                    </View>
-                                </View>
+                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' }} />
                             </Marker>
 
                             {/* Victim Marker (Point B) */}
                             <Marker
                                 coordinate={sosPathCoords[sosPathCoords.length - 1]}
                                 anchor={{ x: 0.5, y: 0.5 }}
+                                zIndex={999}
                             >
-                                <View style={s.sosMarkerOuter}>
-                                    <View style={[s.sosMarkerInner, { borderColor: T.danger }]}>
-                                        <Image 
-                                            source={{ uri: activeSosView.avatarUri }} 
-                                            style={s.sosMarkerAvatar}
-                                            resizeMode="cover"
-                                        />
-                                    </View>
-                                </View>
+                                <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.danger, borderWidth: 2, borderColor: '#fff' }} />
                             </Marker>
                         </>
                     )}
@@ -2073,7 +2280,6 @@ export default function VolunteerHome() {
                                         <Ionicons name="arrow-back" size={20} color={T.ink2} />
                                     </TouchableOpacity>
                                 )}
-                                {/** Back button — animates in when search expands */}
                                 {!activeSosView && (
                                     <RNAnimated.View
                                         style={{
@@ -2121,7 +2327,6 @@ export default function VolunteerHome() {
                                     )}
                                 </TouchableOpacity>
 
-                                {/** Notification + burger — animate out AND release space so search expands */}
                                 <RNAnimated.View
                                     style={{
                                         width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
@@ -2149,14 +2354,13 @@ export default function VolunteerHome() {
                                             accessibilityLabel="Open profile menu"
                                             accessibilityRole="button"
                                         >
-                                            {profile?.photoUri ? (
-                                                <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
-                                            ) : (
-                                                <Image
-                                                    source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                                    style={s.profileAvatar}
-                                                />
-                                            )}
+                                            <UserAvatar
+                                                uri={profile?.photoUri}
+                                                size={36}
+                                                style={s.profileAvatar}
+                                                iconColor={T.violet}
+                                                backgroundColor={T.violetDim}
+                                            />
                                         </TouchableOpacity>
                                     </View>
                                 </RNAnimated.View>
@@ -2272,121 +2476,16 @@ export default function VolunteerHome() {
                     </View>
                 )}
 
-                {/* ── Start Location Overlay ─────────────────────────────── */}
-                {startSearchActive && (
-                    <View style={s.searchOverlay}>
-                        <Pressable
-                            style={s.searchOverlayBackdrop}
-                            onPress={() => setStartSearchActive(false)}
-                            pointerEvents="box-only"
-                        />
-                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 56 }]}
-                        >
-                            <View style={s.startSearchHeader}>
-                                <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
-                                <TextInput
-                                    ref={startInputRef}
-                                    style={s.startSearchInput}
-                                    placeholder="Choose start location"
-                                    placeholderTextColor={T.ink4}
-                                    value={startSearchText}
-                                    onChangeText={setStartSearchText}
-                                    returnKeyType="search"
-                                    selectionColor={T.violet}
-                                />
-                                {startSearchText.length > 0 && (
-                                    <TouchableOpacity
-                                        onPress={() => setStartSearchText('')}
-                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                    >
-                                        <Ionicons name="close-circle" size={16} color={T.ink4} />
-                                    </TouchableOpacity>
-                                )}
-                            </View>
-                            <Text style={s.searchSectionTitle}>Start location</Text>
-                            <TouchableOpacity
-                                style={s.searchRow}
-                                onPress={handleStartCurrentLocation}
-                                activeOpacity={0.7}
-                            >
-                                <View style={s.searchIconWrap}>
-                                    <Ionicons name="locate" size={16} color={T.violet} />
-                                </View>
-                                <View style={s.searchTextWrap}>
-                                    <Text style={s.searchTitle}>Your location</Text>
-                                    <Text style={s.searchSubtitle} numberOfLines={1}>Use current GPS location</Text>
-                                </View>
-                            </TouchableOpacity>
-
-                            {startQuery.length === 0 ? (
-                                <>
-                                    <Text style={s.searchSectionTitle}>Recent searches</Text>
-                                    {recentPlaces.length === 0 ? (
-                                        <Text style={s.searchEmptyText}>No recent searches yet</Text>
-                                    ) : (
-                                        recentPlaces.map(place => (
-                                            <TouchableOpacity
-                                                key={place.id}
-                                                style={s.searchRow}
-                                                onPress={() => handleStartSelect(place)}
-                                                activeOpacity={0.7}
-                                            >
-                                                <View style={s.searchIconWrap}>
-                                                    <Ionicons name="time-outline" size={16} color={T.violet} />
-                                                </View>
-                                                <View style={s.searchTextWrap}>
-                                                    <Text style={s.searchTitle}>{place.name}</Text>
-                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
-                                                </View>
-                                            </TouchableOpacity>
-                                        ))
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    <Text style={s.searchSectionTitle}>Suggestions</Text>
-                                    {startSuggestions.length === 0 ? (
-                                        <Text style={s.searchEmptyText}>
-                                            {startStatus === 'MISSING_KEY'
-                                                ? 'Missing Google Maps API key'
-                                                : startStatus && startStatus !== 'OK'
-                                                    ? `Places API error: ${startStatus}`
-                                                    : 'No results found'}
-                                        </Text>
-                                    ) : (
-                                        startSuggestions.slice(0, 10).map(place => (
-                                            <TouchableOpacity
-                                                key={place.id}
-                                                style={s.searchRow}
-                                                onPress={() => handleStartPredictionSelect(place)}
-                                                activeOpacity={0.7}
-                                            >
-                                                <View style={s.searchIconWrap}>
-                                                    <Ionicons name="location" size={16} color={T.violet} />
-                                                </View>
-                                                <View style={s.searchTextWrap}>
-                                                    <Text style={s.searchTitle}>{place.name}</Text>
-                                                    <Text style={s.searchSubtitle} numberOfLines={1}>{place.address}</Text>
-                                                </View>
-                                            </TouchableOpacity>
-                                        ))
-                                    )}
-                                </>
-                            )}
-                        </View>
-                    </View>
-                )}
-
                 {/* ── Current location button (35% from top) ───────────────────── */}
                 {!directionsMode && !selectedPlace && !sosPanelOpen && !activeSosView && !searchActive && !startSearchActive && (
                     <View style={s.mapControls}>
                         <TouchableOpacity
-                            style={s.ctrlBtn}
+                            style={[s.ctrlBtn, { borderColor: '#A78BFA' }]}
                             onPress={() => !sosActive && setShowSOS(!showSOS)}
                             accessibilityLabel="Emergency SOS"
                             accessibilityRole="button"
                         >
-                            <Ionicons name="warning-outline" size={20} color={T.danger} />
+                            <PurpleSosSquareIcon size={26} />
                         </TouchableOpacity>
                         <TouchableOpacity
                             style={s.ctrlBtn}
@@ -2397,13 +2496,13 @@ export default function VolunteerHome() {
                             <Ionicons name="locate-outline" size={22} color={T.violet} />
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={s.sosReqBtn}
+                            style={[s.sosReqBtn, { borderColor: '#A78BFA' }]}
                             onPress={openSosPanel}
                             activeOpacity={0.85}
                             accessibilityLabel="View SOS requests"
                             accessibilityRole="button"
                         >
-                            <Ionicons name="alarm-outline" size={20} color={T.danger} />
+                            <PurpleSosBellIcon size={30} />
                             <View style={s.sosReqBadge} />
                         </TouchableOpacity>
                     </View>
@@ -2411,7 +2510,7 @@ export default function VolunteerHome() {
 
                 {/* ── SOS Requests Panel — floating window ─────────────────── */}
                 {sosPanelOpen && (
-                    <>
+                    <View style={{ flex: 1, position: 'absolute', width: '100%', height: '100%', zIndex: 235 }}>
                         <Pressable style={s.sosPanelBackdrop} onPress={closeSosPanel} />
                         <View style={[s.sosPanel, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                             <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
@@ -2426,7 +2525,7 @@ export default function VolunteerHome() {
                             >
                                 {MOCK_SOS_REQUESTS.map(req => (
                                     <View key={req.id} style={s.sosCard}>
-                                        <Image source={{ uri: req.avatarUri }} style={s.sosAvatar} />
+                                        <UserAvatar uri={req.avatarUri} size={40} style={s.sosAvatar} />
                                         <View style={s.sosCardBody}>
                                             <View style={s.sosCardRow}>
                                                 <Text style={s.sosVictimName}>{req.victimName}</Text>
@@ -2465,7 +2564,7 @@ export default function VolunteerHome() {
                                 ))}
                             </ScrollView>
                         </View>
-                    </>
+                    </View>
                 )}
 
                 {/* ── SOS Path Info Card ───────────────────────────────────────── */}
@@ -2474,12 +2573,12 @@ export default function VolunteerHome() {
                         <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={s.sosPanelTint} pointerEvents="none" />
 
-                        {/* A ──── distance ──── B connector */}
                         <View style={s.sosConnectorRow}>
                             <View style={s.sosConnectorEndpoint}>
                                 <View style={[s.sosConnectorCircle, s.sosConnectorCircleA]}>
-                                    <Image
-                                        source={{ uri: profile?.photoUri || 'https://i.pravatar.cc/150?img=11' }}
+                                    <UserAvatar
+                                        uri={profile?.photoUri}
+                                        size={44}
                                         style={s.sosConnectorAvatar}
                                     />
                                 </View>
@@ -2507,8 +2606,9 @@ export default function VolunteerHome() {
 
                             <View style={s.sosConnectorEndpoint}>
                                 <View style={[s.sosConnectorCircle, s.sosConnectorCircleB]}>
-                                    <Image
-                                        source={{ uri: activeSosView.avatarUri }}
+                                    <UserAvatar
+                                        uri={activeSosView.avatarUri}
+                                        size={28}
                                         style={s.sosConnectorAvatar}
                                     />
                                 </View>
@@ -2520,7 +2620,6 @@ export default function VolunteerHome() {
                             </View>
                         </View>
 
-                        {/* Victim info row */}
                         <View style={s.sosInfoRow}>
                             <View style={[s.sosInfoDot, { backgroundColor: T.danger }]} />
                             <View style={{ flex: 1 }}>
@@ -2529,7 +2628,6 @@ export default function VolunteerHome() {
                             </View>
                         </View>
 
-                        {/* Action buttons */}
                         <View style={[s.sosRequestActionRow, { paddingHorizontal: 16, paddingBottom: 14 }]}>
                             <TouchableOpacity
                                 style={s.sosRejectBtn}
@@ -2558,7 +2656,7 @@ export default function VolunteerHome() {
 
                 {/* ── Location Card — slides up from bottom ───────────────────── */}
                 {showLocationCard && (
-                    <>
+                    <View style={{ flex: 1, position: 'absolute', width: '100%', height: '100%', zIndex: 220 }}>
                         <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closeLocationCard} />
                         </RNAnimated.View>
@@ -2594,44 +2692,43 @@ export default function VolunteerHome() {
                                 </TouchableOpacity>
                             </View>
                         </RNAnimated.View>
-                    </>
+                    </View>
                 )}
 
                 {/* ── SOS Overlay — centered on screen ───────────────────── */}
-                {showSOS && !showSafePlace && (
-                    <View style={s.sosWrap}>
-                        {sosStage === 'idle' ? (
-                            <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
-                        ) : (
-                            <SosLiveButton
-                                stage={sosStage === 'responding' ? 'responding' : 'requesting'}
-                                animatedStyle={{
-                                    transform: [
-                                        {
-                                            translateY: sosTransitionAnim.interpolate({
-                                                inputRange: [0, 1],
-                                                outputRange: [0, 38],
-                                            }),
-                                        },
-                                    ],
-                                }}
-                            />
-                        )}
+                {showSOS && !showSafePlace && !searchActive && !startSearchActive && !sosPanelOpen && (
+                    <View style={s.sosSection} pointerEvents="box-none">
+                        <View style={s.sosWrap}>
+                            {sosActive && cancelCountdown > 0 ? (
+                                <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
+                                    <View style={s.cancelBtn}>
+                                        <Text style={s.cancelLabel}>CANCEL</Text>
+                                        <Text style={s.cancelCount}>{cancelCountdown}s</Text>
+                                        <Text style={s.cancelSub}>Tap to cancel</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ) : isEmergencyLive ? (
+                                <LiveSOSButton onPress={() => setResponderSheetVisible(true)} />
+                            ) : (
+                                <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
+                            )}
 
-                        {sosActive && pulseAnims.map(({ scale, op }, i) => (
-                            <RNAnimated.View
-                                key={i}
-                                pointerEvents="none"
-                                style={[s.pulseRing, {
-                                    transform: [{ scale }],
-                                    opacity: op,
-                                    borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
-                                }]}
-                            />
-                        ))}
+                            {sosActive && pulseAnims.map(({ scale, op }, i) => (
+                                <RNAnimated.View
+                                    key={i}
+                                    pointerEvents="none"
+                                    style={[s.pulseRing, {
+                                        transform: [{ scale }],
+                                        opacity: op,
+                                        borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
+                                    }]}
+                                />
+                            ))}
+                        </View>
 
-                        {sosStage === 'idle' ? (
-                            <View style={s.sosStatusPill}>
+                        {/* ── Feedback Message Pillar ── */}
+                        <View style={[s.sosStatusPill, isEmergencyLive && s.statusPillLive]}>
+                            {!sosActive ? (
                                 <Text style={s.pillTxt} numberOfLines={1}>
                                     {holdPhase === 'idle'
                                         ? 'Press and hold for 2 sec'
@@ -2640,33 +2737,18 @@ export default function VolunteerHome() {
                                             : 'Release'
                                     }
                                 </Text>
-                            </View>
-                        ) : sosStage === 'requesting' ? (
-                            <View style={s.sosStatusPill}>
-                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
-                                <Text style={[s.pillTxt, s.pillTxtLive]} numberOfLines={1}>
-                                    Sharing your location...
-                                </Text>
-                            </View>
-                        ) : (
-                            <View style={[s.sosStatusPill, s.sosStatusPillAccepted]}>
-                                <View style={[s.pillDot, { backgroundColor: T.danger }]} />
-                                <Text style={[s.pillTxt, s.pillTxtAccepted]} numberOfLines={1}>
-                                    Volunteer Responding • Sharing your location...
-                                </Text>
-                            </View>
-                        )}
-
-                        {sosStage === 'responding' && (
-                            <View style={s.sosResponderActionRow}>
-                                <TouchableOpacity style={[s.sosResponderActionBtn, s.sosResponderActionBtnCancelled]} onPress={confirmStop} activeOpacity={0.85}>
-                                    <Text style={[s.sosResponderActionBtnText, s.sosResponderActionBtnTextCancelled]}>Cancel</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={[s.sosResponderActionBtn, s.sosResponderActionBtnResolved]} onPress={openReviewPopup} activeOpacity={0.85}>
-                                    <Text style={[s.sosResponderActionBtnText, s.sosResponderActionBtnTextResolved]}>Resolve</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
+                            ) : (
+                                <>
+                                    <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                    <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]} numberOfLines={1}>
+                                        {cancelCountdown > 0
+                                            ? `Alert triggered · Cancel in ${cancelCountdown}s`
+                                            : 'Sharing your location'
+                                        }
+                                    </Text>
+                                </>
+                            )}
+                        </View>
                     </View>
                 )}
 
@@ -2716,6 +2798,54 @@ export default function VolunteerHome() {
                     </View>
                 </Modal>
 
+                {/* ── STEP 1: GLASSMORPHIC STATUS UPDATE BOTTOM SHEET ── */}
+                <Modal
+                    visible={responderSheetVisible}
+                    animationType="slide"
+                    transparent={true}
+                    statusBarTranslucent
+                    onRequestClose={() => setResponderSheetVisible(false)}
+                >
+                    <View style={s.responderSheetOverlay}>
+                        <Pressable style={StyleSheet.absoluteFill} onPress={() => setResponderSheetVisible(false)} />
+                        <View style={s.responderSheetContainer}>
+                            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={s.responderSheetTint} pointerEvents="none" />
+
+                            <View style={s.responderSheetGrabberWrap}>
+                                <View style={s.responderSheetGrabber} />
+                            </View>
+
+                            <View style={s.responderSheetContent}>
+                                <Text style={s.responderSheetTitle}>Update Emergency Status</Text>
+
+                                <TouchableOpacity
+                                    style={[styles.sheetMainBtn, styles.btnResolve]}
+                                    onPress={() => { setResponderSheetVisible(false); confirmStop('resolve'); }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="checkmark-circle-outline" size={18} color="#3B82F6" />
+                                    <Text style={styles.btnTextResolved}>RESOLVE</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[styles.sheetMainBtn, styles.btnCancel]}
+                                    onPress={() => { setResponderSheetVisible(false); confirmStop('cancel'); }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
+                                    <Text style={styles.btnTextCancel}>CANCEL</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity style={s.sheetCloseLink} onPress={() => setResponderSheetVisible(false)}>
+                                    <Text style={s.sheetCloseLinkText}>Back to live tracking map</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* ── STEP 2: BRAND IDENTICAL CONFIRMATION DIALOG BOX ── */}
                 <Modal
                     visible={stopConfirmVisible}
                     transparent
@@ -2724,28 +2854,38 @@ export default function VolunteerHome() {
                     onRequestClose={closeStopConfirm}
                 >
                     <View style={s.stopConfirmOverlay}>
-                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={s.stopConfirmScrim} pointerEvents="none" />
                         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeStopConfirm} />
                         <View style={s.stopConfirmCard}>
-                            <View style={s.stopConfirmIconWrap}>
-                                <Feather name="alert-triangle" size={24} color={T.danger} />
+                            <View style={[s.stopConfirmIconWrap, stopConfirmMode === 'resolve' && { backgroundColor: 'rgba(52,199,89,0.14)', borderColor: 'rgba(52,199,89,0.28)' }]}>
+                                <Feather
+                                    name={stopConfirmMode === 'resolve' ? "check-circle" : "alert-triangle"}
+                                    size={24}
+                                    color={stopConfirmMode === 'resolve' ? T.success : T.danger}
+                                />
                             </View>
-                            <Text style={s.stopConfirmTitle}>Stop Emergency Alert?</Text>
-                            <Text style={s.stopConfirmMessage}>Your location will no longer be shared.</Text>
+                            <Text style={s.stopConfirmTitle}>
+                                {stopConfirmMode === 'resolve' ? 'Resolve Emergency?' : 'Stop Emergency Alert?'}
+                            </Text>
+                            <Text style={s.stopConfirmMessage}>
+                                {stopConfirmMode === 'resolve'
+                                    ? 'Are you completely secure? This will mark the incident tracking window as successfully resolved.'
+                                    : 'Your active live tracking stream will cut off and no longer share real-time location vectors.'}
+                            </Text>
                             <View style={s.stopConfirmActions}>
-                                <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={closeStopConfirm} activeOpacity={0.85}>
-                                    <Text style={s.stopConfirmSecondaryTxt}>Keep Active</Text>
+                                {/* Primary Dominant Purple Button Pattern */}
+                                <TouchableOpacity style={[s.stopConfirmPrimaryBtn, { overflow: 'hidden' }]} onPress={closeStopConfirm} activeOpacity={0.85}>
+                                    <View style={[s.stopConfirmPrimaryFill, { backgroundColor: T.violet }]}>
+                                        <Text style={s.stopConfirmPrimaryTxt}>No, Keep Active</Text>
+                                    </View>
                                 </TouchableOpacity>
-                                <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={handleStopAlert} activeOpacity={0.9}>
-                                    <LinearGradient
-                                        colors={["#D92D20", "#F04444"]}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 1 }}
-                                        style={s.stopConfirmPrimaryFill}
-                                    >
-                                        <Text style={s.stopConfirmPrimaryTxt}>Stop Alert</Text>
-                                    </LinearGradient>
+
+                                {/* Secondary Link/Text Pattern */}
+                                <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={handleStopAlert} activeOpacity={0.9}>
+                                    <Text style={[s.stopConfirmSecondaryTxt, { color: stopConfirmMode === 'resolve' ? T.success : T.danger }]}>
+                                        {stopConfirmMode === 'resolve' ? 'Yes, Resolve' : 'Yes, Stop'}
+                                    </Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -2820,7 +2960,7 @@ export default function VolunteerHome() {
                                                 animatedStyle,
                                             ]}
                                         >
-                                            <Image source={{ uri: volunteer.avatarUri }} style={s.reviewAvatarImg} />
+                                            <UserAvatar uri={volunteer.avatarUri} size={48} style={s.reviewAvatarImg} />
                                         </RNAnimated.View>
                                     );
                                 })}
@@ -2869,7 +3009,7 @@ export default function VolunteerHome() {
 
                 {/* ── Place Detail Sheet — half screen ─────────────────────── */}
                 {placeSheetOpen && selectedPlace && (
-                    <>
+                    <View style={{ flex: 1, position: 'absolute', width: '100%', height: '100%', zIndex: 230 }}>
                         <RNAnimated.View style={[s.placeSheetBackdrop, { opacity: placeSheetOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closePlaceSheet} />
                         </RNAnimated.View>
@@ -3022,7 +3162,7 @@ export default function VolunteerHome() {
                                 </View>
                             </KeyboardAvoidingView>
                         </RNAnimated.View>
-                    </>
+                    </View>
                 )}
 
                 {/* ── Step-by-Step Instruction Card ────────────────────────────── */}
@@ -3094,6 +3234,14 @@ export default function VolunteerHome() {
                                     >
                                         <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />
                                         <Text style={ns.goLiveBtnText}>GO LIVE</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[ns.goLiveBtn, { backgroundColor: 'rgba(138,56,246,0.15)', borderColor: 'rgba(138,56,246,0.3)' }]}
+                                        onPress={() => setIsReviewMode(!isReviewMode)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="list" size={14} color={T.violet} style={{ marginRight: 4 }} />
+                                        <Text style={[ns.goLiveBtnText, { color: T.violet }]}>{isReviewMode ? 'CLOSE' : 'REVIEW'}</Text>
                                     </TouchableOpacity>
                                 </View>
                             ) : (
@@ -3169,6 +3317,86 @@ const TACTICAL_MAP_STYLE = [
 // ── StyleSheet ────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
     root: { flex: 1 },
+
+    responderSheetOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(4,3,8,0.45)',
+        zIndex: 999,
+    },
+    responderSheetContainer: {
+        backgroundColor: T.surfaceOverlay,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        paddingBottom: Platform.OS === 'ios' ? 42 : 28,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    responderSheetTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    responderSheetGrabberWrap: {
+        alignItems: 'center',
+        paddingVertical: 12,
+    },
+    responderSheetGrabber: {
+        width: 42,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+    },
+    responderSheetContent: {
+        paddingHorizontal: 24,
+        alignItems: 'center',
+    },
+    responderSheetTitle: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: '800',
+        marginBottom: 20,
+        letterSpacing: -0.2,
+    },
+    responderSheetBtn: {
+        width: '100%',
+        minHeight: 48,
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        borderWidth: 1,
+        marginBottom: 12,
+    },
+    responderSheetBtnCancel: {
+        backgroundColor: `${T.danger}1A`,
+        borderColor: `${T.danger}59`,
+    },
+    responderSheetBtnResolve: {
+        backgroundColor: `${T.violet}1F`,
+        borderColor: `${T.violet}59`,
+    },
+    responderSheetBtnText: {
+        fontSize: 13,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+    },
+    responderSheetBtnTextCancel: {
+        color: T.danger,
+    },
+    responderSheetBtnTextResolve: {
+        color: T.violet,
+    },
+    sheetCloseLink: {
+        marginTop: 4,
+        paddingVertical: 8,
+    },
+    sheetCloseLinkText: {
+        color: T.navIconInactive,
+        fontSize: 12,
+        fontWeight: '600',
+        textDecorationLine: 'underline',
+    },
 
     crosshairWrap: {
         position: 'absolute', alignSelf: 'center',
@@ -3296,19 +3524,14 @@ const s = StyleSheet.create({
         alignItems: 'center', justifyContent: 'center',
     },
     profileBtn: {
-        width: 40, height: 40, borderRadius: 20,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
-            android: { elevation: 6, shadowColor: '#8A38F6' },
-        }),
+        width: 36, height: 36, borderRadius: 18,
+        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)',
+        overflow: 'hidden',
     },
     profileAvatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
     },
     notifDot: {
         position: 'absolute', top: 7, right: 7,
@@ -3413,50 +3636,48 @@ const s = StyleSheet.create({
         borderRadius: SOS_BTN_SIZE / 2,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 4 } },
-            android: { elevation: 8, shadowColor: '#8A38F6' },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.40, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 12 },
         }),
     },
     sosTxt: {
-        fontSize: 18,
+        fontSize: 38,
         fontWeight: '900',
         color: T.onPrimary,
-        letterSpacing: 0.5,
+        letterSpacing: 1.5,
     },
     sosTxtCompact: {
-        fontSize: 16,
+        fontSize: 18,
     },
     sosSubTxtCompact: {
         fontSize: 7.5,
     },
-    sosWrap: {
+    sosSection: {
         position: 'absolute',
-        alignSelf: 'center',
-        top: height * 0.4,
+        top: (height - SOS_WRAP_SIZE) / 2,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 300,
+    },
+    sosWrap: {
         width: SOS_WRAP_SIZE,
         height: SOS_WRAP_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 300,
     },
     sosStatusPill: {
-        position: 'absolute',
-        bottom: -58,
-        alignSelf: 'center',
-        width: 340,
-        borderRadius: 18,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
         backgroundColor: T.surfaceBulky,
+        borderRadius: R.full,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        marginTop: 22,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 6,
-        paddingHorizontal: 12,
-        paddingVertical: 9,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 3 },
@@ -3499,20 +3720,26 @@ const s = StyleSheet.create({
         color: T.dangerText,
     },
     sosBtnEmg: {
-        backgroundColor: T.danger,
-        borderColor: T.dangerBorder,
+        ...Platform.select({
+            ios: { shadowColor: '#E23636', shadowOpacity: 0.35, shadowRadius: 30, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 12 },
+        }),
     },
     sosBtnDangerFill: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: SOS_BTN_SIZE / 2,
+        backgroundColor: '#D92D20',
+        overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 2,
     },
     sosSubTxt: {
-        fontSize: 8,
-        fontWeight: '900',
-        color: T.onDanger,
-        letterSpacing: 0.5,
-        marginTop: 2,
+        color: `${T.onPrimary}B3`,
+        fontSize: 12,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 1.2,
+        marginTop: 4,
     },
     cancelBtn: {
         width: SOS_BTN_SIZE,
@@ -4084,6 +4311,7 @@ const s = StyleSheet.create({
         justifyContent: 'center',
         backgroundColor: T.surface,
         borderWidth: 2,
+        overflow: 'hidden',
     },
     safePlaceMarkerStart: {
         backgroundColor: T.surface,
@@ -4460,6 +4688,7 @@ const s = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
+        overflow: 'hidden',
     },
     sosMarkerLabel: {
         paddingHorizontal: 6,
@@ -4526,6 +4755,8 @@ const s = StyleSheet.create({
     sosConnectorAvatar: {
         width: '100%',
         height: '100%',
+        borderRadius: 24,
+        overflow: 'hidden',
     },
     sosConnectorPointLabel: {
         fontSize: 11,
@@ -4596,6 +4827,7 @@ const s = StyleSheet.create({
         width: 8,
         height: 8,
         borderRadius: 4,
+        overflow: 'hidden',
     },
     sosInfoName: {
         fontSize: 13,
@@ -4631,151 +4863,37 @@ const s = StyleSheet.create({
     },
 });
 
-// ── Navigation Instruction Card Styles ───────────────────────────────────────
-const ns = StyleSheet.create({
-    cardWrap: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, overflow: 'hidden',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        zIndex: 260,
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
-            android: { elevation: 10 },
-        }),
-    },
-    warningBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        alignSelf: 'flex-start',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 999,
-        marginTop: 10,
-        marginLeft: 12,
-        backgroundColor: 'rgba(226,91,58,0.12)',
-        borderWidth: 1,
-        borderColor: 'rgba(226,91,58,0.4)',
-    },
-    warningBadgeText: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#E25B3A',
-    },
-    cardTint: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,10,18,0.88)',
-    },
-    cardBody: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2,
-        gap: S.s3,
-    },
-    iconWrap: {
-        width: 44, height: 44, borderRadius: R.sm,
-        backgroundColor: T.violetDim,
-        borderWidth: 1, borderColor: `${T.violet}35`,
-        alignItems: 'center', justifyContent: 'center',
-    },
-    textWrap: { flex: 1 },
-    instrText: {
-        fontSize: 14, fontWeight: '700',
-        color: T.ink, letterSpacing: -0.2,
-        lineHeight: 20,
-    },
-    distText: {
-        fontSize: 12, fontWeight: '600',
-        color: T.ink3, marginTop: 2,
-    },
-    cardFooter: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2,
-    },
-    stepCounter: {
-        fontSize: 11, fontWeight: '600',
-        color: T.ink4, letterSpacing: 0.4,
-    },
-    autoAdvanceText: {
-        fontSize: 11, fontWeight: '500',
-        color: T.violet, letterSpacing: 0.2,
-    },
-    navBtn: {
-        width: 32, height: 32, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    safePathBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 10,
-        height: 28,
-        borderRadius: R.pill,
-        backgroundColor: T.violet,
-        borderWidth: 1,
-        borderColor: `${T.violet}70`,
-    },
-    safePathBtnText: {
-        fontSize: 10,
-        fontWeight: '800',
-        color: T.onPrimary,
-        letterSpacing: 0.3,
-    },
-    goLiveBtn: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 12, height: 32,
-        borderRadius: R.pill,
-        backgroundColor: T.violet,
-        borderWidth: 1, borderColor: `${T.violet}70`,
-    },
-    goLiveBtnText: {
-        fontSize: 11, fontWeight: '700',
-        color: T.onPrimary, letterSpacing: 0.2,
-    },
-    endLiveBtn: {
-        paddingHorizontal: 14, paddingVertical: 8,
-        borderRadius: R.pill,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-    },
-    endLiveBtnText: {
-        fontSize: 11, fontWeight: '700',
-        color: T.onPrimary, letterSpacing: 0.2,
-    },
-});
-
-// ── Top Live Banner Styles ───────────────────────────────────────────
-const lb = StyleSheet.create({
-    bannerWrap: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, overflow: 'hidden',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        zIndex: 360,
-    },
-    bannerTint: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,10,18,0.85)',
-    },
-    bannerBody: {
+// Extra Dedicated Global Action Stylesheet Configuration Pattern
+const styles = StyleSheet.create({
+    sheetMainBtn: {
         width: '100%',
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingVertical: S.s4,
-        gap: S.s4,
+        height: 48,
+        borderRadius: 24,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        borderWidth: 1,
+        marginBottom: 12,
     },
-    textWrap: { flex: 1 },
-    distText: {
-        fontSize: 16, fontWeight: '800',
-        color: T.violet, marginBottom: 4, letterSpacing: -0.2,
+    btnResolve: {
+        backgroundColor: 'rgba(138, 56, 246, 0.12)',
+        borderColor: 'rgba(138, 56, 246, 0.35)',
     },
-    instrText: {
-        fontSize: 18, fontWeight: '700',
-        color: T.ink, letterSpacing: -0.3,
-        lineHeight: 22,
+    btnCancel: {
+        backgroundColor: 'rgba(217, 45, 32, 0.1)',
+        borderColor: 'rgba(217, 45, 32, 0.35)',
     },
-    audioBtn: {
-        width: 44, height: 44, borderRadius: R.hBtn,
-        backgroundColor: `${T.violet}10`,
-        borderWidth: 1, borderColor: `${T.violet}25`,
-        alignItems: 'center', justifyContent: 'center',
+    btnTextResolved: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: '#A78BFA',
+        letterSpacing: 0.5,
+    },
+    btnTextCancel: {
+        fontSize: 14,
+        fontWeight: '900',
+        color: '#D92D20',
+        letterSpacing: 0.5,
     },
 });

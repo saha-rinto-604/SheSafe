@@ -18,7 +18,6 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import VolunteerBottomNav, { VOLUNTEER_NAV_SCREEN_PADDING } from '../../../../src/components/VolunteerBottomNav';
 
 type ActivityType = 'RESPONDED' | 'FOLLOW_UP' | 'TRAINING' | 'ALERT';
 type ActivityStatus = 'COMPLETED' | 'ASSIGNED' | 'CANCELLED';
@@ -255,7 +254,7 @@ export default function VolunteerActivity() {
                 </View>
 
                 <ScrollView
-                    contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + VOLUNTEER_NAV_SCREEN_PADDING }]}
+                    contentContainerStyle={[s.scroll, { paddingBottom: insets.bottom + 24 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     {segment === 'Activity' ? (
@@ -274,10 +273,12 @@ export default function VolunteerActivity() {
                                             <Animated.View
                                                 style={[
                                                     s.timelineDot,
-                                                    { backgroundColor: tone.fg, opacity: pulse.interpolate({
-                                                        inputRange: [0, 1],
-                                                        outputRange: [0.7, 1],
-                                                    }) },
+                                                    {
+                                                        backgroundColor: tone.fg, opacity: pulse.interpolate({
+                                                            inputRange: [0, 1],
+                                                            outputRange: [0.7, 1],
+                                                        })
+                                                    },
                                                 ]}
                                             />
                                             {!isLast && <View style={s.timelineLine} />}
@@ -339,10 +340,12 @@ export default function VolunteerActivity() {
                             </RNScrollView>
 
                             {currentUser && (
-                                <Animated.View style={[s.currentUserCard, { opacity: pulse.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0.88, 1],
-                                }) }]}>
+                                <Animated.View style={[s.currentUserCard, {
+                                    opacity: pulse.interpolate({
+                                        inputRange: [0, 1],
+                                        outputRange: [0.88, 1],
+                                    })
+                                }]}>
                                     <View style={s.currentUserAvatarWrap}>
                                         <Image source={{ uri: DEFAULT_AVATAR }} style={s.currentUserAvatar} />
                                     </View>
@@ -400,9 +403,6 @@ export default function VolunteerActivity() {
                         </View>
                     )}
                 </ScrollView>
-
-
-                <VolunteerBottomNav activeTab="Activity" />
             </View>
         </AtmosphericShell>
     );

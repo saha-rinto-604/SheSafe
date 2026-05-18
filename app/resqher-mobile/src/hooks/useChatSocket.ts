@@ -115,6 +115,7 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                                     title: 'New Message',
                                     body: `${incoming.sender.name}: ${incoming.content.slice(0, 60)}`,
                                     incidentId,
+                                    createdAt: new Date().toISOString(),
                                 });
                             }
                             break;
@@ -130,6 +131,7 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                                     title: 'Responder Joined',
                                     body: `${data.payload.name || 'A responder'} has joined your incident`,
                                     incidentId,
+                                    createdAt: new Date().toISOString(),
                                 });
                             }
                             break;

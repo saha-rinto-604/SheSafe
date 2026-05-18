@@ -28,6 +28,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+
 import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
@@ -55,7 +56,7 @@ const DEFAULT_REGION = {
     longitudeDelta: 0.03,
 };
 
-type MedicalCategoryView = 'specialists' | 'hospital' | 'pharmacy';
+type MedicalCategoryView = 'specialists' | 'hospital' | 'pharmacy' | 'ambulance';
 type ProviderCard = {
     id: string;
     name: string;
@@ -92,7 +93,7 @@ const D = {
     title: '#FFFFFF',
     subtitle: '#C4C1D4',
     muted: '#A09CB2',
-    safeColor: '#10B981',
+    safeColor: '#3B82F6',
     dangerColor: 'rgba(255,59,48,0.3)',
     cardRadius: 16,
 } as const;
@@ -323,6 +324,15 @@ export default function MedicalMapView() {
     const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
     const [isRouting, setIsRouting] = useState(false);
     const [isLiveNav, setIsLiveNav] = useState(false);
+    const [medProfile, setMedProfile] = useState<UserProfile | null>(null);
+
+    useEffect(() => {
+        getUserProfile().then(setMedProfile).catch(() => {});
+    }, []);
+    const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
     const [locationPermitted, setLocationPermitted] = useState(false);
     const [showRouteOverview, setShowRouteOverview] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -550,7 +560,7 @@ export default function MedicalMapView() {
         setIsRouting(true);
         const originParam = `${origin.latitude},${origin.longitude}`;
         const destinationParam = `${destination.latitude},${destination.longitude}`;
-        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originParam}&destination=${destinationParam}&mode=driving&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
+        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originParam}&destination=${destinationParam}&mode=${travelMode === 'motorcycle' ? 'two_wheeler' : travelMode}&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
 
         try {
             const res = await fetch(directionsUrl);
@@ -569,6 +579,8 @@ export default function MedicalMapView() {
             }
 
             setSafeRoute(routeCoords);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords(routeCoords);
 
             const steps = route?.legs?.[0]?.steps ?? [];
             const instructions: NavStep[] = steps.map((step: any) => ({
@@ -763,6 +775,18 @@ export default function MedicalMapView() {
             }
         }
 
+        // Progress polyline update
+        if (safeRoute && safeRoute.length > 0) {
+            let closestIdx = 0;
+            let minD = Infinity;
+            safeRoute.forEach((pt, i) => {
+                const d = haversineDistance(userLoc, pt);
+                if (d < minD) { minD = d; closestIdx = i; }
+            });
+            setCompletedRouteCoords(safeRoute.slice(0, closestIdx + 1));
+            setRemainingRouteCoords(safeRoute.slice(closestIdx));
+        }
+
         const lastOrigin = lastRerouteOriginRef.current;
         if (lastOrigin && haversineDistance(lastOrigin, userLoc) < 50) return;
 
@@ -779,6 +803,7 @@ export default function MedicalMapView() {
         navInstructions,
         selectedProvider,
         userLoc,
+        safeRoute,
     ]);
 
     // ── Nav press ───────────────────────────────────────────────────────────
@@ -800,7 +825,18 @@ export default function MedicalMapView() {
         router.back();
     }, [router]);
 
-    return (
+    
+    // Re-fetch route when travel mode changes
+    useEffect(() => {
+        if (showRouteOverview && selectedProvider) {
+            buildLiveRoute(
+                KHILKHET_ORIGIN,
+                { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
+                true
+            );
+        }
+    }, [travelMode]);
+return (
         <AtmosphericShell>
             <View style={st.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -821,20 +857,23 @@ export default function MedicalMapView() {
                         if (showCallout) closeCallout();
                     }}
                 >
-                    <Marker coordinate={KHILKHET_ORIGIN} tracksViewChanges={false}>
-                        <View style={st.originMarker}>
-                            <Ionicons name="bus" size={14} color={T.onPrimary} />
-                        </View>
+                    {/* User Origin Marker */}
+                    <Marker
+                        coordinate={KHILKHET_ORIGIN}
+                        anchor={{ x: 0.5, y: 0.5 }}
+                        zIndex={998}
+                    >
+                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' }} />
                     </Marker>
 
+                    {/* Live User Marker */}
                     {isLiveNav && userLoc && (
                         <Marker
                             coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
-                            tracksViewChanges={false}
+                            anchor={{ x: 0.5, y: 0.5 }}
+                            zIndex={1000}
                         >
-                            <View style={st.liveUserMarker}>
-                                <Ionicons name="navigate" size={14} color={T.onPrimary} />
-                            </View>
+                            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#3B82F6', borderWidth: 2, borderColor: '#fff' }} />
                         </Marker>
                     )}
 
@@ -880,13 +919,34 @@ export default function MedicalMapView() {
                     ))}
 
                     {/* Safe Route Polyline — Auto-triggered on pin select */}
-                    {safeRoute && (
+                    {/* Completed route (green) */}
+                    {completedRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={completedRouteCoords}
+                            strokeColor="#3B82F6"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Remaining route (violet) */}
+                    {remainingRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={remainingRouteCoords}
+                            strokeColor={T.violet}
+                            strokeWidth={4}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Fallback: full route if no progress split yet */}
+                    {completedRouteCoords.length === 0 && safeRoute && safeRoute.length > 1 && (
                         <Polyline
                             coordinates={safeRoute}
                             strokeColor={T.violet}
-                            strokeWidth={5}
-                            lineJoin="round"
+                            strokeWidth={4}
                             lineCap="round"
+                            lineJoin="round"
                         />
                     )}
                 </MapView>
@@ -908,6 +968,29 @@ export default function MedicalMapView() {
 
                             <Text style={st.routeOverlayTitle}>Route Overview</Text>
                         </View>
+                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 12, paddingHorizontal: 16 }}>
+                                {(['walking', 'driving', 'motorcycle', 'transit'] as const).map(mode => (
+                                    <TouchableOpacity
+                                        key={mode}
+                                        style={{
+                                            flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+                                            paddingVertical: 8, borderRadius: 999,
+                                            backgroundColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.06)',
+                                            borderWidth: 1, borderColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.08)',
+                                        }}
+                                        onPress={() => setTravelMode(mode)}
+                                    >
+                                        <Ionicons
+                                            name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
+                                            size={16}
+                                            color={travelMode === mode ? T.onPrimary : T.ink3}
+                                        />
+                                        <Text style={{ color: travelMode === mode ? '#fff' : '#A09CB2', fontSize: 11, fontWeight: '700' }}>
+                                            {mode === 'motorcycle' ? 'Bike' : mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
                     </RNAnimated.View>
                 )}
 

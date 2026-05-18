@@ -68,13 +68,14 @@ function statusStyle(status: IncidentStatus): StatusStyle {
 // ── IncidentCard component ─────────────────────────────────────────────────────
 function IncidentCard({ incident }: { incident: Incident }) {
     const ss = statusStyle(incident.status);
+    const isCancelled = incident.status === 'Cancelled';
     return (
-        <View style={s.card}>
+        <View style={[s.card, isCancelled && s.cardCancelled]}>
             {/* ── Top row: ID + Status badge ── */}
             <View style={s.cardTopRow}>
                 <View style={s.incidentIdRow}>
-                    <Feather name="alert-circle" size={14} color={T.ink4} />
-                    <Text style={s.incidentId}>Incident #{incident.incidentNumber}</Text>
+                    <Feather name="alert-circle" size={14} color={isCancelled ? T.danger : T.ink4} />
+                    <Text style={[s.incidentId, isCancelled && s.incidentIdCancelled]}>Incident #{incident.incidentNumber}</Text>
                 </View>
                 <View style={[s.statusBadge, { backgroundColor: ss.bg, borderColor: ss.border }]}>
                     <View style={[s.statusDot, { backgroundColor: ss.dot }]} />
@@ -259,6 +260,12 @@ const s = StyleSheet.create({
         paddingVertical: 14,
         marginBottom: 12,
     },
+    cardCancelled: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
+        borderLeftColor: T.danger,
+        borderLeftWidth: 4,
+    },
     cardTopRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -275,6 +282,9 @@ const s = StyleSheet.create({
         fontWeight: '700',
         color: T.ink,
         letterSpacing: -0.2,
+    },
+    incidentIdCancelled: {
+        color: T.danger,
     },
 
     // Status badge

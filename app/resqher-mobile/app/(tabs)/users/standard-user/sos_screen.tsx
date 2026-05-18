@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle, Image,
+    Modal, ScrollView, ViewStyle, Image, TextInput,
 } from 'react-native';
 import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
@@ -38,6 +38,7 @@ import { G } from '../../../../src/constants/gradients';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { notificationStore } from '../../../../src/services/notificationStore';
 
@@ -92,6 +93,18 @@ const CANCEL_DURATION_DEFAULT = 10;
 const HOLD_MS = 2000;
 
 const NAV_HEIGHT = 58;
+
+type ReviewVolunteer = {
+    id: string;
+    name: string;
+    avatarUri: string | null;
+};
+
+const REVIEW_VOLUNTEERS: ReviewVolunteer[] = [
+    { id: 'rv-1', name: 'John Doe', avatarUri: 'https://i.pravatar.cc/150?img=12&u=rv-1' },
+    { id: 'rv-2', name: 'Amin Rahman', avatarUri: 'https://i.pravatar.cc/150?img=15&u=rv-2' },
+    { id: 'rv-3', name: 'Nusrat Jahan', avatarUri: 'https://i.pravatar.cc/150?img=32&u=rv-3' },
+];
 const NAV_BOT_OFFSET = 14;
 const SOS_BOTTOM = NAV_BOT_OFFSET + NAV_HEIGHT + 28;
 
@@ -156,8 +169,8 @@ const PulseRadar = memo(function PulseRadar() {
 });
 const rdr = StyleSheet.create({
     wrap: { position: 'absolute', alignSelf: 'center', top: height * 0.3, alignItems: 'center', zIndex: 5 },
-    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: T.brandGlow },
-    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
+    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: T.brandGlow, overflow: 'hidden' },
+    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface, overflow: 'hidden' },
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
@@ -262,6 +275,7 @@ const mkr = StyleSheet.create({
         width: 32, height: 32, borderRadius: 16,
         backgroundColor: 'rgba(138,56,246,0.30)',
         alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.50, shadowRadius: 12, shadowOffset: { width: 0, height: 0 } },
             android: { elevation: 6 },
@@ -272,10 +286,12 @@ const mkr = StyleSheet.create({
         backgroundColor: T.violet,
         borderWidth: 2.5, borderColor: T.surface,
         alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
     },
     innerDot: {
         width: 6, height: 6, borderRadius: 3,
         backgroundColor: T.onPrimary,
+        overflow: 'hidden',
     },
 });
 
@@ -390,9 +406,9 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
         <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
             <View style={[s.sosBtn, s.sosBtnEmg]}>
                 <View style={s.sosBtnDangerFill}>
-                    <Ionicons name="location-sharp" size={24} color={T.onDanger} />
+                    <Ionicons name="pulse" size={32} color={T.onDanger} />
                     <Text style={s.sosTxt}>LIVE</Text>
-                    <Text style={s.sosSubTxt}>TAP TO STOP</Text>
+                    <Text style={s.sosSubTxt}>VOLUNTEER ACCEPTED</Text>
                 </View>
             </View>
         </TouchableOpacity>
@@ -541,9 +557,9 @@ const LiveBeacon = memo(function LiveBeacon() {
 });
 const lb = StyleSheet.create({
     wrap: { alignItems: 'center' },
-    ring: { position: 'absolute', width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: T.danger, top: -3 },
-    core: { width: 22, height: 22, borderRadius: 11, backgroundColor: T.danger, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: T.onDanger },
-    dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.onDanger },
+    ring: { position: 'absolute', width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: T.danger, top: -3, overflow: 'hidden' },
+    core: { width: 22, height: 22, borderRadius: 11, backgroundColor: T.danger, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: T.onDanger, overflow: 'hidden' },
+    dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.onDanger, overflow: 'hidden' },
     label: { marginTop: 3, fontSize: 8, fontWeight: '800', color: T.danger, letterSpacing: 1.1 },
 });
 
@@ -571,9 +587,20 @@ export default function SOSScreen() {
     const navigatedRef = useRef(false);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
     const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
-    // Custom modal states
     const [endSosModalVisible, setEndSosModalVisible] = useState(false);
     const [logoutBlockModalVisible, setLogoutBlockModalVisible] = useState(false);
+    const [deactivateSheetVisible, setDeactivateSheetVisible] = useState(false);
+    const [stopConfirmMode, setStopConfirmMode] = useState<'cancel' | 'resolve'>('cancel');
+    const [searchActive, setSearchActive] = useState(false);
+    const [startSearchActive, setStartSearchActive] = useState(false);
+
+    // Review Popup States
+    const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>(REVIEW_VOLUNTEERS);
+    const [reviewFeedback, setReviewFeedback] = useState('');
+    const [reviewRating, setReviewRating] = useState(5);
+    const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
+    const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -614,10 +641,30 @@ export default function SOSScreen() {
         }
     }, [router]);
 
-    // Reset active tab when screen regains focus (e.g. returning from Chat)
+    // Reset active tab and restore SOS state when screen regains focus
     useFocusEffect(
         useCallback(() => {
             setActiveTab('Home');
+            import('expo-secure-store').then(SecureStore => {
+                SecureStore.getItemAsync('resqher_active_sos_v1').then(raw => {
+                    if (raw) {
+                        try {
+                            const parsed = JSON.parse(raw);
+                            if (parsed?.incidentId) {
+                                navigatedRef.current = true; // Prevent auto-redirect when restoring state
+                                setActiveIncidentId(parsed.incidentId);
+                                setSosActive(true);
+                                setCancelCountdown(0);
+                                setSosLive(true);
+                            }
+                        } catch { }
+                    } else {
+                        setSosActive(false);
+                        setSosLive(false);
+                        setActiveIncidentId(null);
+                    }
+                });
+            });
         }, [])
     );
 
@@ -783,21 +830,87 @@ export default function SOSScreen() {
                 userAddress: address || '',
             },
         } as any);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isEmergencyLive, activeIncidentId]);
 
     const cancelSOS = useCallback(() => {
+        setEndSosModalVisible(false);
         navigatedRef.current = false;
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
         setSosLive(false);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-        import('expo-secure-store').then(SecureStore => SecureStore.deleteItemAsync('resqher_active_sos_v1'));
-        if (activeIncidentId) {
-            incidentService.cancelIncident(activeIncidentId).catch(() => {});
-            setActiveIncidentId(null);
+        
+        const incId = activeIncidentId;
+        setActiveIncidentId(null);
+        
+        import('expo-secure-store').then(SecureStore => {
+            SecureStore.deleteItemAsync('resqher_active_sos_v1');
+            SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+        });
+        
+        if (incId) {
+            if (!incId.startsWith('temp-') && incId !== 'sos-new') {
+                incidentService.cancelIncident(incId).catch(() => { });
+            }
+            incidentHistory.updateStatus(incId, 'CANCELLED');
+            notificationStore.add({
+                type: 'incident_cancelled',
+                title: 'SOS Cancelled',
+                body: 'Your emergency has been cancelled.',
+                incidentId: incId,
+                createdAt: new Date().toISOString(),
+            });
         }
     }, [activeIncidentId, setSosLive]);
+
+    const resetReviewFlow = useCallback(() => {
+        setReviewVisible(false);
+        setReviewQueue(REVIEW_VOLUNTEERS);
+        setReviewFeedback('');
+        setReviewRating(5);
+        setReviewRemovingId(null);
+        reviewExitAnim.setValue(0);
+    }, [reviewExitAnim]);
+
+    const openReviewPopup = useCallback(() => {
+        if (!REVIEW_VOLUNTEERS.length) return;
+        setReviewQueue(REVIEW_VOLUNTEERS);
+        setReviewVisible(true);
+    }, []);
+
+    const closeReviewPopup = useCallback(() => {
+        setReviewVisible(false);
+    }, []);
+
+    const submitVolunteerReview = useCallback(() => {
+        const currentVolunteer = reviewQueue[0];
+        if (!currentVolunteer) {
+            resetReviewFlow();
+            return;
+        }
+
+        setReviewRemovingId(currentVolunteer.id);
+        RNAnimated.timing(reviewExitAnim, {
+            toValue: 1,
+            duration: 240,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        }).start(() => {
+            const nextQueue = reviewQueue.slice(1);
+
+            if (!nextQueue.length) {
+                resetReviewFlow();
+                return;
+            }
+
+            setReviewQueue(nextQueue);
+            setReviewFeedback('');
+            setReviewRating(5);
+            setReviewRemovingId(null);
+            reviewExitAnim.setValue(0);
+        });
+    }, [resetReviewFlow, reviewExitAnim, reviewQueue]);
 
     const resolveSOSAndEnd = useCallback(async () => {
         // Full resolution: update backend status to RESOLVED, clear local state
@@ -833,10 +946,11 @@ export default function SOSScreen() {
             }
         } catch { /* best-effort */ }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }, [activeIncidentId, setSosLive]);
+        openReviewPopup();
+    }, [activeIncidentId, setSosLive, openReviewPopup]);
 
     const confirmStop = useCallback(() => {
-        setEndSosModalVisible(true);
+        setDeactivateSheetVisible(true);
     }, []);
 
     const handleDrawerNavigate = useCallback((label: string) => {
@@ -852,7 +966,7 @@ export default function SOSScreen() {
         if (isSosLive) {
             setLogoutBlockModalVisible(true);
         } else {
-            // No active SOS â€” sign out immediately
+            // No active SOS — sign out immediately
             signOut().then(() => router.replace('/(auth)/login'));
         }
     }, [isSosLive, signOut, router]);
@@ -863,237 +977,379 @@ export default function SOSScreen() {
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
-    // SOS overlay placement: below map center (thumb-reachable) and clamped
-    const targetCenterY = height * 0.62;
-    const headerSafeTop = insets.top + 120;
-    const bottomSafe = navBottom + NAV_HEIGHT + 18;
-    const extraBelowWrap = 76; // status pill + spacing
-    const maxTop = Math.max(headerSafeTop, height - bottomSafe - (SOS_WRAP_SIZE + extraBelowWrap));
-    const sosTop = Math.min(Math.max(targetCenterY - SOS_WRAP_SIZE / 2, headerSafeTop), maxTop);
+    // SOS overlay placement: dead-center vertically and horizontally in the screen viewport
+    const sosTop = (height - SOS_WRAP_SIZE) / 2;
 
     return (
         <AtmosphericShell>
-        <View style={s.root}>
-            <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-            {/* Live-state overlays removed (keep ring pulse only) */}
-            <Drawer
-                visible={drawerOpen}
-                onClose={() => setDrawerOpen(false)}
-                onLogoutRequest={handleLogoutRequest}
-                onNavigate={handleDrawerNavigate}
-            />
+            <View style={s.root}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+                {/* Live-state overlays removed (keep ring pulse only) */}
+                <Drawer
+                    visible={drawerOpen}
+                    onClose={() => setDrawerOpen(false)}
+                    onLogoutRequest={handleLogoutRequest}
+                    onNavigate={handleDrawerNavigate}
+                />
 
-            {/* â”€â”€ End SOS Confirmation Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <Modal visible={endSosModalVisible} transparent animationType="fade" onRequestClose={() => setEndSosModalVisible(false)}>
-                <View style={s.modalOverlay}>
-                    <View style={s.modalCard}>
-                        <View style={s.modalIconWrap}>
-                            <Feather name="alert-triangle" size={28} color={T.danger} />
-                        </View>
-                        <Text style={s.modalTitle}>End Emergency Alert?</Text>
-                        <Text style={s.modalBody}>
-                            This will mark your incident as resolved and stop sharing your location with responders.
-                        </Text>
-                        <TouchableOpacity
-                            style={s.modalBtnPrimary}
-                            onPress={() => setEndSosModalVisible(false)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={s.modalBtnPrimaryText}>Keep SOS Active</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={s.modalBtnSecondary}
-                            onPress={resolveSOSAndEnd}
-                            activeOpacity={0.75}
-                        >
-                            <Text style={s.modalBtnSecondaryText}>Yes, End SOS</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                {/* ── STEP 1: GLASSMORPHIC STATUS UPDATE BOTTOM SHEET ── */}
+                <Modal
+                    visible={deactivateSheetVisible}
+                    animationType="slide"
+                    transparent={true}
+                    statusBarTranslucent
+                    onRequestClose={() => setDeactivateSheetVisible(false)}
+                >
+                    <View style={s.responderSheetOverlay}>
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setDeactivateSheetVisible(false)} />
+                        <View style={s.responderSheetContainer}>
+                            <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+                            <View style={s.responderSheetTint} pointerEvents="none" />
 
-            {/* â”€â”€ Logout Blocked Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <Modal visible={logoutBlockModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutBlockModalVisible(false)}>
-                <View style={s.modalOverlay}>
-                    <View style={s.modalCard}>
-                        <View style={[s.modalIconWrap, s.modalIconWrapWarning]}>
-                            <Feather name="log-out" size={28} color={T.accent} />
-                        </View>
-                        <Text style={s.modalTitle}>Cannot Logout</Text>
-                        <Text style={s.modalBody}>
-                            You have an active SOS emergency in progress. Please resolve your incident before logging out.
-                        </Text>
-                        <TouchableOpacity
-                            style={s.modalBtnPrimary}
-                            onPress={() => setLogoutBlockModalVisible(false)}
-                            activeOpacity={0.82}
-                        >
-                            <Text style={s.modalBtnPrimaryText}>Stay in SOS</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={s.modalBtnSecondary}
-                            onPress={() => { setLogoutBlockModalVisible(false); setEndSosModalVisible(true); }}
-                            activeOpacity={0.75}
-                        >
-                            <Text style={s.modalBtnSecondaryText}>Resolve SOS First</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Map â€” Encrypted Professional Dark Tactical Style */}
-            <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={PROVIDER_GOOGLE}
-                initialRegion={DEFAULT_REGION}
-                showsUserLocation
-                showsMyLocationButton={false}
-                showsCompass={false}
-                moveOnMarkerPress={false}
-                customMapStyle={TACTICAL_MAP_STYLE}
-            >
-                {userLoc && !isEmergencyLive && (
-                    <Marker coordinate={userLoc} tracksViewChanges={false}>
-                        <VioletGlowMarker />
-                    </Marker>
-                )}
-                {userLoc && isEmergencyLive && (
-                    <Marker coordinate={userLoc} tracksViewChanges={false} anchor={{ x: 0.5, y: 1 }}>
-                        <LiveBeacon />
-                    </Marker>
-                )}
-            </MapView>
-
-            {locationStatus === 'idle' && <PulseRadar />}
-
-            {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <PremiumBar
-                style={[s.header, { top: insets.top + 8 }]}
-                contentStyle={s.headerContent}
-            >
-                <View style={s.locBox}>
-                    <Text style={s.locLabel}>CURRENT LOCATION</Text>
-                    {locationStatus === 'idle'
-                        ? <View style={s.shimmer} />
-                        : <Text style={s.locAddr} numberOfLines={1}>{address}</Text>
-                    }
-                </View>
-                <View style={s.headerBtns}>
-                    <TouchableOpacity
-                        style={s.hBtn}
-                        onPress={() => router.push('/(tabs)/users/standard-user/notifications')}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                        <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
-                        {hasUnreadNotif && <View style={s.notifDot} />}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={s.profileBtn}
-                        onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Open profile menu"
-                        accessibilityRole="button"
-                    >
-                        {profile?.photoUri ? (
-                            <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
-                        ) : (
-                            <Image
-                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                style={s.profileAvatar}
-                            />
-                        )}
-                    </TouchableOpacity>
-                </View>
-            </PremiumBar>
-
-            {/* â”€â”€ 12px Breathing Space Spacer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <View style={{ marginTop: 12 }} />
-
-            {/* â”€â”€ Map controls â€” High contrast GPS/Recenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
-                <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
-                    <View style={[s.gpsDot, {
-                        backgroundColor:
-                            locationStatus === 'sharing' ? T.danger :
-                                locationStatus === 'ready' ? T.success : T.ink4,
-                    }]} />
-                    <Text style={[s.gpsTxt, isEmergencyLive && s.gpsTxtEmg]}>
-                        {locationStatus !== 'idle' ? 'GPS' : 'â€¦'}
-                    </Text>
-                </View>
-                <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
-                    <Ionicons name="locate-outline" size={22} color={T.onPrimary} />
-                </TouchableOpacity>
-            </View>
-
-            {/* â”€â”€ SOS Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <View
-                pointerEvents="box-none"
-                style={[s.sosSection, { top: sosTop }]}
-            >
-                <View style={s.sosWrap}>
-                    {sosActive && cancelCountdown > 0 ? (
-                        <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
-                            <View style={s.cancelBtn}>
-                                <Text style={s.cancelLabel}>CANCEL</Text>
-                                <Text style={s.cancelCount}>{cancelCountdown}s</Text>
-                                <Text style={s.cancelSub}>Tap to cancel</Text>
+                            <View style={s.responderSheetGrabberWrap}>
+                                <View style={s.responderSheetGrabber} />
                             </View>
-                        </TouchableOpacity>
-                    ) : isEmergencyLive ? (
-                        <LiveSOSButton onPress={confirmStop} />
-                    ) : (
-                        <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
-                    )}
 
-                    {sosActive && pulseAnims.map(({ scale, op }, i) => (
-                        <RNAnimated.View key={i} pointerEvents="none" style={[s.pulseRing, {
-                            transform: [{ scale }], opacity: op,
-                            borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
+                            <View style={s.responderSheetContent}>
+                                <Text style={s.responderSheetTitle}>Update Emergency Status</Text>
+
+                                <TouchableOpacity
+                                    style={[s.responderSheetBtn, s.responderSheetBtnResolve]}
+                                    onPress={() => { setDeactivateSheetVisible(false); setStopConfirmMode('resolve'); setEndSosModalVisible(true); }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="checkmark-circle-outline" size={18} color="#10B981" />
+                                    <Text style={[s.responderSheetBtnText, s.responderSheetBtnTextResolve]}>RESOLVE</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={[s.responderSheetBtn, s.responderSheetBtnCancel]}
+                                    onPress={() => { setDeactivateSheetVisible(false); setStopConfirmMode('cancel'); setEndSosModalVisible(true); }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
+                                    <Text style={[s.responderSheetBtnText, s.responderSheetBtnTextCancel]}>CANCEL</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity style={s.sheetCloseLink} onPress={() => setDeactivateSheetVisible(false)}>
+                                    <Text style={s.sheetCloseLinkText}>Back to live tracking map</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* ── STEP 2: BRAND IDENTICAL CONFIRMATION DIALOG BOX ── */}
+                <Modal visible={endSosModalVisible} transparent animationType="fade" onRequestClose={() => setEndSosModalVisible(false)}>
+                    <View style={s.modalOverlay}>
+                        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setEndSosModalVisible(false)} />
+
+                        <View style={s.modalCard}>
+                            <View style={[
+                                s.modalIconWrap,
+                                stopConfirmMode === 'resolve' && { backgroundColor: 'rgba(52,199,89,0.14)', borderColor: 'rgba(52,199,89,0.28)' }
+                            ]}>
+                                <Feather
+                                    name={stopConfirmMode === 'resolve' ? "check-circle" : "alert-triangle"}
+                                    size={24}
+                                    color={stopConfirmMode === 'resolve' ? T.success : T.danger}
+                                />
+                            </View>
+                            <Text style={s.modalTitle}>
+                                {stopConfirmMode === 'resolve' ? 'Resolve Emergency?' : 'Stop Emergency Alert?'}
+                            </Text>
+                            <Text style={s.modalBody}>
+                                {stopConfirmMode === 'resolve'
+                                    ? 'Are you completely secure? This will mark the incident tracking window as successfully resolved.'
+                                    : 'Your active live tracking stream will cut off and no longer share real-time location vectors.'
+                                }
+                            </Text>
+
+                            <TouchableOpacity
+                                style={s.modalBtnPrimary}
+                                onPress={() => setEndSosModalVisible(false)}
+                                activeOpacity={0.82}
+                            >
+                                <Text style={s.modalBtnPrimaryText}>No, Keep Active</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={s.modalBtnSecondary}
+                                onPress={stopConfirmMode === 'resolve' ? resolveSOSAndEnd : cancelSOS}
+                                activeOpacity={0.75}
+                            >
+                                <Text style={[s.modalBtnSecondaryText, { color: stopConfirmMode === 'resolve' ? T.success : T.danger }]}>
+                                    {stopConfirmMode === 'resolve' ? 'Yes, Resolve' : 'Yes, Stop'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* ── Logout Blocked Modal ────────────────────────────────────── */}
+                <Modal visible={logoutBlockModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutBlockModalVisible(false)}>
+                    <View style={s.modalOverlay}>
+                        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLogoutBlockModalVisible(false)} />
+
+                        <View style={s.modalCard}>
+                            <View style={[s.modalIconWrap, s.modalIconWrapWarning]}>
+                                <Feather name="log-out" size={24} color={T.accent} />
+                            </View>
+                            <Text style={s.modalTitle}>Cannot Logout</Text>
+                            <Text style={s.modalBody}>
+                                You have an active SOS emergency in progress. Please resolve your incident before logging out.
+                            </Text>
+
+                            <TouchableOpacity
+                                style={s.modalBtnPrimary}
+                                onPress={() => setLogoutBlockModalVisible(false)}
+                                activeOpacity={0.82}
+                            >
+                                <Text style={s.modalBtnPrimaryText}>Stay in SOS</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={s.modalBtnSecondary}
+                                onPress={() => { setLogoutBlockModalVisible(false); setEndSosModalVisible(true); }}
+                                activeOpacity={0.75}
+                            >
+                                <Text style={s.modalBtnSecondaryText}>Resolve SOS First</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* ── STEP 3: VOLUNTEER REVIEW DIALOGUE ── */}
+                <Modal
+                    visible={reviewVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={closeReviewPopup}
+                >
+                    <View style={s.reviewOverlay}>
+                        <BlurView intensity={32} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.reviewScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeReviewPopup} />
+
+                        <View style={s.reviewCard}>
+                            <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                            <View style={s.reviewAvatarRow}>
+                                {reviewQueue.map((volunteer, index) => {
+                                    const isCurrent = index === 0;
+                                    const isRemoving = volunteer.id === reviewRemovingId;
+                                    const animatedStyle = isRemoving ? {
+                                        opacity: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                                        transform: [{ translateY: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) }],
+                                    } : undefined;
+
+                                    return (
+                                        <RNAnimated.View
+                                            key={volunteer.id}
+                                            style={[
+                                                s.reviewAvatarWrap,
+                                                isCurrent && s.reviewAvatarWrapCurrent,
+                                                isRemoving && s.reviewAvatarWrapRemoving,
+                                                animatedStyle,
+                                            ]}
+                                        >
+                                            <UserAvatar uri={volunteer.avatarUri} size={48} style={s.reviewAvatarImg} />
+                                        </RNAnimated.View>
+                                    );
+                                })}
+                            </View>
+                            <Text style={s.reviewSelectedName} numberOfLines={1}>
+                                {reviewQueue[0]?.name ?? 'Volunteer'}
+                            </Text>
+                            <Text style={s.reviewSelectedMeta} numberOfLines={1}>
+                                {reviewQueue.length} volunteer{reviewQueue.length === 1 ? '' : 's'} participated
+                            </Text>
+
+                            <TextInput
+                                value={reviewFeedback}
+                                onChangeText={setReviewFeedback}
+                                placeholder="Write your feedback here..."
+                                placeholderTextColor={T.ink4}
+                                multiline
+                                textAlignVertical="top"
+                                style={s.reviewInput}
+                            />
+
+                            <View style={s.reviewStarsRow}>
+                                {[1, 2, 3, 4, 5].map(star => {
+                                    const active = star <= reviewRating;
+                                    return (
+                                        <TouchableOpacity key={star} onPress={() => setReviewRating(star)} activeOpacity={0.8}>
+                                            <Ionicons name={active ? 'star' : 'star-outline'} size={24} color={active ? '#FBBF24' : T.ink4} />
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            <TouchableOpacity style={s.reviewSubmitBtn} onPress={submitVolunteerReview} activeOpacity={0.9}>
+                                <LinearGradient
+                                    colors={[T.violet, '#7C3AED']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={s.reviewSubmitFill}
+                                >
+                                    <Text style={s.reviewSubmitText}>Submit Review</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Map â€” Encrypted Professional Dark Tactical Style */}
+                <MapView
+                    ref={mapRef}
+                    style={StyleSheet.absoluteFillObject}
+                    provider={PROVIDER_GOOGLE}
+                    initialRegion={DEFAULT_REGION}
+                    showsUserLocation
+                    showsMyLocationButton={false}
+                    showsCompass={false}
+                    moveOnMarkerPress={false}
+                    customMapStyle={TACTICAL_MAP_STYLE}
+                >
+                    {userLoc && !isEmergencyLive && (
+                        <Marker coordinate={userLoc} tracksViewChanges={false}>
+                            <VioletGlowMarker />
+                        </Marker>
+                    )}
+                    {userLoc && isEmergencyLive && (
+                        <Marker coordinate={userLoc} tracksViewChanges={false} anchor={{ x: 0.5, y: 1 }}>
+                            <LiveBeacon />
+                        </Marker>
+                    )}
+                </MapView>
+
+                {locationStatus === 'idle' && <PulseRadar />}
+
+                {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                <PremiumBar
+                    style={[s.header, { top: insets.top + 8 }]}
+                    contentStyle={s.headerContent}
+                >
+                    <View style={s.locBox}>
+                        <Text style={s.locLabel}>CURRENT LOCATION</Text>
+                        {locationStatus === 'idle'
+                            ? <View style={s.shimmer} />
+                            : <Text style={s.locAddr} numberOfLines={1}>{address}</Text>
+                        }
+                    </View>
+                    <View style={s.headerBtns}>
+                        <TouchableOpacity
+                            style={s.hBtn}
+                            onPress={() => router.push('/(tabs)/users/standard-user/notifications')}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Ionicons name="notifications-outline" size={20} color={T.onPrimary} />
+                            {hasUnreadNotif && <View style={s.notifDot} />}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={s.profileBtn}
+                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel="Open profile menu"
+                            accessibilityRole="button"
+                        >
+                            <UserAvatar uri={profile?.photoUri} size={36} style={s.profileAvatar} />
+                        </TouchableOpacity>
+                    </View>
+                </PremiumBar>
+
+                {/* â”€â”€ 12px Breathing Space Spacer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                <View style={{ marginTop: 12 }} />
+
+                {/* â”€â”€ Map controls â€” High contrast GPS/Recenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
+                    <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
+                        <View style={[s.gpsDot, {
+                            backgroundColor:
+                                locationStatus === 'sharing' ? T.danger :
+                                    locationStatus === 'ready' ? T.success : T.ink4,
                         }]} />
-                    ))}
+                        <Text style={[s.gpsTxt, isEmergencyLive && s.gpsTxtEmg]}>
+                            {locationStatus !== 'idle' ? 'GPS' : 'â€¦'}
+                        </Text>
+                    </View>
+                    <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
+                        <Ionicons name="locate-outline" size={22} color={T.onPrimary} />
+                    </TouchableOpacity>
                 </View>
 
-                {!sosActive && (
-                    <View style={s.statusPill}>
-                        <Text style={s.pillTxt}>
-                            {holdPhase === 'idle'
-                                ? 'Press and hold for 2 sec'
-                                : holdPhase === 'holding'
-                                    ? 'Holding...'
-                                    : 'Release'
-                            }
-                        </Text>
-                    </View>
-                )}
-                {sosActive && (
-                    <View style={[s.statusPill, isEmergencyLive && s.statusPillLive]}>
-                        <View style={[s.pillDot, { backgroundColor: T.danger }]} />
-                        <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]}>
-                            {cancelCountdown > 0
-                                ? `Alert triggered Â· Cancel in ${cancelCountdown}s`
-                                : 'Sharing your location'
-                            }
-                        </Text>
-                    </View>
-                )}
-            </View>
+                {/* â”€â”€ SOS Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                <View
+                    pointerEvents="box-none"
+                    style={[s.sosSection, { top: sosTop }]}
+                >
+                    <View style={s.sosWrap}>
+                        {sosActive && cancelCountdown > 0 ? (
+                            <TouchableOpacity onPress={cancelSOS} activeOpacity={0.88}>
+                                <View style={s.cancelBtn}>
+                                    <Text style={s.cancelLabel}>CANCEL</Text>
+                                    <Text style={s.cancelCount}>{cancelCountdown}s</Text>
+                                    <Text style={s.cancelSub}>Tap to cancel</Text>
+                                </View>
+                            </TouchableOpacity>
+                        ) : isEmergencyLive ? (
+                            <LiveSOSButton onPress={confirmStop} />
+                        ) : (
+                            <HoldSosButton onTrigger={triggerSOS} onPhaseChange={setHoldPhase} />
+                        )}
 
-            {/* â”€â”€ Bottom Navbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
-                <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
-                    {NAV_TABS.map(tab => (
-                        <NavTab
-                            key={tab.id}
-                            tab={tab}
-                            isActive={activeTab === tab.id}
-                            onPress={() => handleNavigation(tab.id)}
-                        />
-                    ))}
-                </PremiumBar>
+                        {sosActive && pulseAnims.map(({ scale, op }, i) => (
+                            <RNAnimated.View key={i} pointerEvents="none" style={[s.pulseRing, {
+                                transform: [{ scale }], opacity: op,
+                                borderColor: isEmergencyLive ? `${T.danger}73` : G.sosRingDefault,
+                            }]} />
+                        ))}
+                    </View>
+
+                    {!sosActive && (
+                        <View style={s.statusPill}>
+                            <Text style={s.pillTxt}>
+                                {holdPhase === 'idle'
+                                    ? 'Press and hold for 2 sec'
+                                    : holdPhase === 'holding'
+                                        ? 'Holding...'
+                                        : 'Release'
+                                }
+                            </Text>
+                        </View>
+                    )}
+                    {sosActive && (
+                        <View style={[s.statusPill, isEmergencyLive && s.statusPillLive]}>
+                            <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                            <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]}>
+                                {cancelCountdown > 0
+                                    ? `Alert triggered Â· Cancel in ${cancelCountdown}s`
+                                    : 'Sharing your location'
+                                }
+                            </Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* â”€â”€ Bottom Navbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
+                    <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
+                        {NAV_TABS.map(tab => (
+                            <NavTab
+                                key={tab.id}
+                                tab={tab}
+                                isActive={activeTab === tab.id}
+                                onPress={() => handleNavigation(tab.id)}
+                            />
+                        ))}
+                    </PremiumBar>
+                </View>
             </View>
-        </View>
         </AtmosphericShell>
     );
 }
@@ -1140,19 +1396,14 @@ const s = StyleSheet.create({
         }),
     },
     profileBtn: {
-        width: 40, height: 40, borderRadius: 20,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
-            android: { elevation: 6, shadowColor: '#8A38F6' },
-        }),
+        width: 36, height: 36, borderRadius: 18,
+        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.15)',
+        overflow: 'hidden',
     },
     profileAvatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: '100%',
+        height: '100%',
+        resizeMode: 'cover',
     },
     headerContent: {
         flexDirection: 'row', alignItems: 'center',
@@ -1240,7 +1491,7 @@ const s = StyleSheet.create({
     },
 
     sosTxt: { color: T.onPrimary, fontSize: 38, fontWeight: '900', letterSpacing: 1.5 },
-    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
+    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 8, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
@@ -1259,7 +1510,7 @@ const s = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', gap: 6,
         backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
-        paddingHorizontal: 16, paddingVertical: 8, marginTop: 22,
+        paddingHorizontal: 16, paddingVertical: 8,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
@@ -1352,63 +1603,291 @@ const s = StyleSheet.create({
 
     // â”€â”€ Themed Confirmation Modals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.72)',
+        ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 24,
+        paddingHorizontal: 22,
+        backgroundColor: 'rgba(4,6,12,0.45)',
     },
     modalCard: {
         width: '100%',
-        backgroundColor: T.surfaceBulky,
-        borderRadius: 24,
+        maxWidth: 360,
+        borderRadius: 28,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.72)',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.12)',
-        padding: 28,
+        overflow: 'hidden',
         alignItems: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 28, shadowOffset: { width: 0, height: 10 } },
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
             android: { elevation: 18 },
         }),
     },
     modalIconWrap: {
-        width: 64, height: 64, borderRadius: 32,
-        backgroundColor: T.dangerBg,
-        borderWidth: 1.5, borderColor: T.dangerBorder,
-        alignItems: 'center', justifyContent: 'center',
-        marginBottom: 18,
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(217,45,32,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(217,45,32,0.28)',
+        marginBottom: 14,
     },
     modalIconWrapWarning: {
-        backgroundColor: 'rgba(245,158,11,0.12)',
-        borderColor: 'rgba(245,158,11,0.30)',
+        backgroundColor: 'rgba(245,158,11,0.14)',
+        borderColor: 'rgba(245,158,11,0.28)',
     },
     modalTitle: {
-        fontSize: 20, fontWeight: '800', color: T.ink,
-        letterSpacing: -0.3, marginBottom: 10, textAlign: 'center',
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        letterSpacing: -0.3,
+        textAlign: 'center',
     },
     modalBody: {
-        fontSize: 14, fontWeight: '400', color: T.ink3,
-        lineHeight: 21, textAlign: 'center', marginBottom: 26,
+        marginTop: 8,
+        fontSize: 14,
+        lineHeight: 20,
+        color: T.ink2,
+        fontWeight: '500',
+        textAlign: 'center',
+        marginBottom: 22,
     },
     modalBtnPrimary: {
-        width: '100%', height: 52,
+        width: '100%',
+        minHeight: 48,
+        borderRadius: R.pill,
         backgroundColor: T.violet,
-        borderRadius: 14,
-        alignItems: 'center', justifyContent: 'center',
+        alignItems: 'center',
+        justifyContent: 'center',
         marginBottom: 12,
-        ...Platform.select({
-            ios: { shadowColor: T.violet, shadowOpacity: 0.38, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-            android: { elevation: 6 },
-        }),
     },
     modalBtnPrimaryText: {
-        fontSize: 16, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2,
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
     modalBtnSecondary: {
-        width: '100%', height: 48,
-        alignItems: 'center', justifyContent: 'center',
+        width: '100%',
+        minHeight: 48,
+        borderRadius: R.pill,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     modalBtnSecondaryText: {
-        fontSize: 15, fontWeight: '600', color: T.ink4,
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '800',
+        letterSpacing: 0.5,
+    },
+
+    // ── Themed Slide-up Reason Sheets ──
+    responderSheetOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(4,3,8,0.45)',
+        zIndex: 999,
+    },
+    responderSheetContainer: {
+        backgroundColor: T.surfaceOverlay,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        overflow: 'hidden',
+        paddingBottom: Platform.OS === 'ios' ? 42 : 28,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    responderSheetTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    responderSheetGrabberWrap: {
+        alignItems: 'center',
+        paddingVertical: 12,
+    },
+    responderSheetGrabber: {
+        width: 42,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+    },
+    responderSheetContent: {
+        paddingHorizontal: 24,
+        alignItems: 'center',
+    },
+    responderSheetTitle: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: '800',
+        marginBottom: 20,
+        letterSpacing: -0.2,
+    },
+    responderSheetBtn: {
+        width: '100%',
+        minHeight: 48,
+        borderRadius: 24,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        borderWidth: 1,
+        marginBottom: 12,
+    },
+    responderSheetBtnCancel: {
+        backgroundColor: `${T.danger}1A`,
+        borderColor: `${T.danger}59`,
+    },
+    responderSheetBtnResolve: {
+        backgroundColor: `${T.violet}1F`,
+        borderColor: `${T.violet}59`,
+    },
+    responderSheetBtnText: {
+        fontSize: 13,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        marginLeft: 8,
+    },
+    responderSheetBtnTextCancel: {
+        color: T.danger,
+    },
+    responderSheetBtnTextResolve: {
+        color: T.violet,
+    },
+    sheetCloseLink: {
+        marginTop: 4,
+        paddingVertical: 8,
+    },
+    sheetCloseLinkText: {
+        color: T.navIconInactive,
+        fontSize: 12,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+
+    reviewOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 18,
+        backgroundColor: 'rgba(4,6,12,0.45)',
+    },
+    reviewScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(8,8,16,0.58)',
+    },
+    reviewCard: {
+        width: '100%',
+        maxWidth: 380,
+        borderRadius: 28,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 18,
+        backgroundColor: 'rgba(24,16,40,0.76)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+            android: { elevation: 18 },
+        }),
+    },
+    reviewEyebrow: {
+        fontSize: 11,
+        fontWeight: '800',
+        color: T.ink4,
+        letterSpacing: 1.2,
+        textTransform: 'uppercase',
+        alignSelf: 'center',
+    },
+    reviewAvatarRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        marginTop: 16,
+        marginBottom: 12,
+        minHeight: 74,
+    },
+    reviewAvatarWrap: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.18)',
+        overflow: 'hidden',
+        backgroundColor: T.violetDim,
+    },
+    reviewAvatarWrapCurrent: {
+        width: 68,
+        height: 68,
+        borderRadius: 34,
+        borderColor: `${T.violet}55`,
+    },
+    reviewAvatarWrapRemoving: {
+        borderColor: `${T.danger}55`,
+    },
+    reviewAvatarImg: {
+        width: '100%',
+        height: '100%',
+    },
+    reviewSelectedName: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: T.ink,
+        textAlign: 'center',
+        letterSpacing: -0.2,
+    },
+    reviewSelectedMeta: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: T.ink3,
+        textAlign: 'center',
+        marginTop: 4,
+    },
+    reviewInput: {
+        minHeight: 96,
+        marginTop: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.10)',
+        backgroundColor: T.surfaceBulky,
+        color: T.ink,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: '500',
+    },
+    reviewStarsRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 8,
+        marginTop: 14,
+    },
+    reviewSubmitBtn: {
+        marginTop: 18,
+        borderRadius: R.pill,
+        overflow: 'hidden',
+        minHeight: 48,
+    },
+    reviewSubmitFill: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    reviewSubmitText: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '900',
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
     },
 });

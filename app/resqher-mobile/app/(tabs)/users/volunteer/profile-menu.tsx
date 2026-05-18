@@ -24,6 +24,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 
 type MenuItem = {
     label: string;
@@ -202,14 +203,13 @@ export default function ProfileMenuScreen() {
                     accessibilityRole="button"
                 >
                     <View style={s.profileAvatarWrap}>
-                        {profile?.photoUri ? (
-                            <Image source={{ uri: profile.photoUri }} style={s.profileAvatar} />
-                        ) : (
-                            <Image
-                                source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                style={s.profileAvatar}
-                            />
-                        )}
+                        <UserAvatar 
+                            uri={profile?.photoUri} 
+                            size={58} 
+                            style={s.profileAvatar} 
+                            iconColor={T.violet}
+                            backgroundColor={T.violetDim}
+                        />
                     </View>
                     <View style={s.profileInfo}>
                         <Text style={s.profileName} numberOfLines={1}>

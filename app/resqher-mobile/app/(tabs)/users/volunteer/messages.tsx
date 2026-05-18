@@ -284,7 +284,7 @@ export default function VolunteerMessages() {
     const insets = useSafeAreaInsets();
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [segment, setSegment] = useState<Segment>('Assisting');
+    const [segment, setSegment] = useState<Segment>('Assisted');
     const [segmentWidth, setSegmentWidth] = useState(0);
     const indicator = useRef(new Animated.Value(0)).current;
 

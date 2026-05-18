@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity, Image, FlatList, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T, S, R } from '../constants/theme';
+import UserAvatar from './shared/UserAvatar';
+
 // Accept a flexible responder shape for mock lists
 type ResponderItem = {
   id: string;
   name: string;
-  avatarUri?: string;
-  avatarUrl?: string;
+  avatarUri?: string | null;
+  avatarUrl?: string | null;
   role?: string;
   isAdmin?: boolean;
 };
@@ -22,10 +24,10 @@ type Props = {
 export default function RespondersList({ visible, onClose, data, onRemove }: Props) {
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
 
-  const renderRow = ({ item }: { item: Participant & { avatarUri?: string; isAdmin?: boolean } }) => (
+  const renderRow = ({ item }: { item: ResponderItem }) => (
     <View style={styles.row}>
       <View style={styles.leftRow}>
-        <Image source={{ uri: item.avatarUri ?? item.avatarUrl ?? `https://i.pravatar.cc/150?u=${item.id}` }} style={styles.avatar} />
+        <UserAvatar uri={item.avatarUri ?? item.avatarUrl} size={44} style={styles.avatar} />
         <View>
           <Text style={styles.name}>{item.name}</Text>
           {(item.isAdmin || item.role === 'POLICE') && (

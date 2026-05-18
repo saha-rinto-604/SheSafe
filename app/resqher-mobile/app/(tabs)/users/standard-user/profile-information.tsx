@@ -22,6 +22,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, displayName, formatDob, UserProfile } from '../../../../src/services/profile';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -114,14 +115,11 @@ export default function ProfileInformationScreen() {
                     {/* ── Photo ───────────────────────────────────────────── */}
                     <View style={s.photoSection}>
                         <View style={s.avatarWrap}>
-                            {profile?.photoUri ? (
-                                <Image source={{ uri: profile.photoUri }} style={s.avatar} />
-                            ) : (
-                                <Image
-                                    source={require('../../../../assets/images/icon.png')}
-                                    style={s.avatar}
-                                />
-                            )}
+                            <UserAvatar
+                                uri={profile?.photoUri}
+                                size={88}
+                                style={s.avatar}
+                            />
                         </View>
                         <Text style={s.avatarName}>{fullName}</Text>
                     </View>

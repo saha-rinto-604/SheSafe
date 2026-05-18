@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, saveUserProfile } from '../../../../src/services/profile';
@@ -169,7 +170,7 @@ export default function EditProfileScreen() {
     const [medicalInfo, setMedicalInfo] = useState<string[]>([]);
     const [medicalInput, setMedicalInput] = useState('');
     const [homeAddress, setHomeAddress] = useState('');
-    const [photoUri, setPhotoUri] = useState('');
+    const [photoUri, setPhotoUri] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     /** Controls the date picker visibility */
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -287,14 +288,11 @@ export default function EditProfileScreen() {
                     {/* ── Profile Photo ─────────────────────────────────────── */}
                     <View style={s.photoSection}>
                         <View style={s.avatarWrap}>
-                            {photoUri ? (
-                                <Image source={{ uri: photoUri }} style={s.avatar} />
-                            ) : (
-                                <Image
-                                    source={require('../../../../assets/images/icon.png')}
-                                    style={s.avatar}
-                                />
-                            )}
+                            <UserAvatar
+                                uri={photoUri}
+                                size={88}
+                                style={s.avatar}
+                            />
                             <TouchableOpacity
                                 style={s.cameraBtn}
                                 onPress={handleChangePhoto}

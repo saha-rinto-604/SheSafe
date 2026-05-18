@@ -29,7 +29,7 @@ export type UserProfile = {
   firstName: string;
   lastName: string;
   phoneNumber: string;
-  photoUrl: string;
+  photoUrl: string | null;
   dobISO: string;
   gender: string;
   bloodGroup: string;
@@ -52,7 +52,7 @@ type ProfileState = {
   loading: boolean;
 
   /** Derived avatar URI with cache buster. */
-  avatarUri: string;
+  avatarUri: string | null;
 
   // ── Actions ─────────────────────────────────────────────────────────────
   /** Fetch profile from backend GET /api/users/me. */
@@ -65,15 +65,15 @@ type ProfileState = {
   patchProfile: (patch: Partial<UserProfile>) => void;
 
   /** Set photo URL and bump version (e.g., after photo upload response). */
-  setPhoto: (url: string) => void;
+  setPhoto: (url: string | null) => void;
 
   /** Clear profile on logout. */
   clearProfile: () => void;
 };
 
 // ── Helper: build avatar URI with cache buster ───────────────────────────────
-function buildAvatarUri(photoUrl: string, version: number): string {
-  if (!photoUrl) return '';
+function buildAvatarUri(photoUrl: string | null, version: number): string | null {
+  if (!photoUrl) return null;
   const separator = photoUrl.includes('?') ? '&' : '?';
   return `${photoUrl}${separator}v=${version}`;
 }
@@ -83,7 +83,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   profile: null,
   photoVersion: 1,
   loading: false,
-  avatarUri: '',
+  avatarUri: null,
 
   fetchProfile: async () => {
     set({ loading: true });
@@ -137,6 +137,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   },
 
   clearProfile: () => {
-    set({ profile: null, photoVersion: 1, avatarUri: '' });
+    set({ profile: null, photoVersion: 1, avatarUri: null });
   },
 }));

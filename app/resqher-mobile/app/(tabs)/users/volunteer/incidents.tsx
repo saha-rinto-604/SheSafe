@@ -235,7 +235,7 @@ function EmptyState({ isMyEmergency }: { isMyEmergency: boolean }) {
 export default function VolunteerIncidents() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const [segment, setSegment] = useState<Segment>('Assisting');
+    const [segment, setSegment] = useState<Segment>('Assisted');
     const [segmentWidth, setSegmentWidth] = useState(0);
     const indicator = useRef(new Animated.Value(0)).current;
 

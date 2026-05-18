@@ -27,7 +27,7 @@ export type UserProfile = {
     medicalInfo: string[];
     homeAddress: string;
     /** Cloudinary URL from backend, or local URI from image picker */
-    photoUri: string;
+    photoUri: string | null;
 };
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -39,7 +39,7 @@ const DEFAULT_PROFILE: UserProfile = {
     bloodGroup: '',
     medicalInfo: [],
     homeAddress: '',
-    photoUri: '',
+    photoUri: null,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ function apiToProfile(apiUser: any): UserProfile {
         bloodGroup: apiUser.bloodGroup || '',
         medicalInfo: Array.isArray(apiUser.medicalInfo) ? apiUser.medicalInfo : [],
         homeAddress: apiUser.homeAddress || '',
-        photoUri: apiUser.photoUrl || '',
+        photoUri: apiUser.photoUrl || null,
     };
 }
 

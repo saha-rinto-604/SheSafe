@@ -296,8 +296,8 @@ const PulseRadar = memo(function PulseRadar() {
 });
 const rdr = StyleSheet.create({
     wrap: { position: 'absolute', alignSelf: 'center', top: height * 0.3, alignItems: 'center', zIndex: 5 },
-    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: T.brandGlow },
-    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
+    ring: { position: 'absolute', width: 72, height: 72, borderRadius: 36, borderWidth: 1.5, borderColor: T.brandGlow, overflow: 'hidden' },
+    dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface, overflow: 'hidden' },
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
@@ -340,6 +340,7 @@ const scanStyles = StyleSheet.create({
     ring: {
         position: 'absolute', width: 100, height: 100,
         borderRadius: 50, borderWidth: 1.5, borderColor: T.violet,
+        overflow: 'hidden',
     },
     label: { marginTop: 20, fontSize: 13, fontWeight: '700', color: T.violet, letterSpacing: 0.3 },
     sub: { marginTop: 4, fontSize: 11, fontWeight: '500', color: T.ink3 },
@@ -409,6 +410,7 @@ const dr = StyleSheet.create({
         width: 50, height: 50, borderRadius: 25,
         backgroundColor: `${T.onPrimary}2E`, borderWidth: 2, borderColor: `${T.onPrimary}47`,
         alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+        overflow: 'hidden',
     },
     appName: { color: T.onPrimary, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
     sub: { color: `${T.onPrimary}A6`, fontSize: 12, marginTop: 2, fontWeight: '500' },
@@ -471,8 +473,11 @@ export default function ExploreScreen() {
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
-    const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('driving');
+    const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('walking');
     const [isLiveNav, setIsLiveNav] = useState(false);
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
     const [audioEnabled, setAudioEnabled] = useState(false);
     const [address, setAddress] = useState('');
     const [searchActive, setSearchActive] = useState(false);
@@ -610,7 +615,19 @@ export default function ExploreScreen() {
                 }
             }
         }
-    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav]);
+
+        // Progress polyline update
+        if (routeCoords.length > 0) {
+            let closestIdx = 0;
+            let minD = Infinity;
+            routeCoords.forEach((pt, i) => {
+                const d = haversineDistance(userLoc, pt);
+                if (d < minD) { minD = d; closestIdx = i; }
+            });
+            setCompletedRouteCoords(routeCoords.slice(0, closestIdx + 1));
+            setRemainingRouteCoords(routeCoords.slice(closestIdx));
+        }
+    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav, routeCoords]);
 
     // Audio Guidance
     useEffect(() => {
@@ -644,60 +661,6 @@ export default function ExploreScreen() {
             useNativeDriver: false,
         }).start();
     }, [searchProgress]);
-
-    const resetExploreState = useCallback(() => {
-        deactivateSearch(true);
-        setSearchSuggestions([]);
-        setSearchStatus(null);
-        searchSessionTokenRef.current = null;
-        searchRequestIdRef.current = 0;
-
-        setStartSearchActive(false);
-        setStartSearchText('');
-        setStartSuggestions([]);
-        setStartStatus(null);
-        startSessionTokenRef.current = null;
-        startRequestIdRef.current = 0;
-
-        if (placeSheetOpen) closePlaceSheet();
-        if (showLocationCard) closeLocationCard();
-
-        setSelectedPlace(null);
-        setPlaceIncidents([]);
-        setEndLocation(null);
-
-        if (directionsMode) {
-            exitDirectionsMode();
-        } else {
-            setRouteCoords([]);
-            setNavInstructions([]);
-            setCurrentStepIdx(0);
-            setRouteUnsafe(false);
-            setBlockedZoneName(null);
-            setShowSafePath(false);
-            setIsScanAnimating(false);
-            setSafeRouteCoords([]);
-            setUnsafeRouteCoords([]);
-        }
-
-        if (userLoc) {
-            mapRef.current?.animateToRegion(
-                { latitude: userLoc.latitude, longitude: userLoc.longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 },
-                700
-            );
-        } else {
-            mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
-        }
-    }, [
-        closeLocationCard,
-        closePlaceSheet,
-        deactivateSearch,
-        directionsMode,
-        exitDirectionsMode,
-        placeSheetOpen,
-        showLocationCard,
-        userLoc,
-    ]);
 
     const query = searchText.trim();
     const startQuery = startSearchText.trim();
@@ -825,6 +788,8 @@ export default function ExploreScreen() {
 
                 // Display shortest route immediately as violet
                 setRouteCoords(chosenCoords);
+                setCompletedRouteCoords([]);
+                setRemainingRouteCoords(chosenCoords);
                 setUnsafeRouteCoords(chosenCoords);
 
                 // Extract turn-by-turn instructions
@@ -1044,6 +1009,8 @@ export default function ExploreScreen() {
             // F. Update state...
             setSafeRouteCoords(finalCoords);
             setRouteCoords(finalCoords);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords(finalCoords);
             setNavInstructions(instructions);
             setCurrentStepIdx(0);
             setRouteUnsafe(bestScore > 0);
@@ -1223,6 +1190,60 @@ export default function ExploreScreen() {
         }).start();
     }, [directionsProgress]);
 
+    const resetExploreState = useCallback(() => {
+        deactivateSearch(true);
+        setSearchSuggestions([]);
+        setSearchStatus(null);
+        searchSessionTokenRef.current = null;
+        searchRequestIdRef.current = 0;
+
+        setStartSearchActive(false);
+        setStartSearchText('');
+        setStartSuggestions([]);
+        setStartStatus(null);
+        startSessionTokenRef.current = null;
+        startRequestIdRef.current = 0;
+
+        if (placeSheetOpen) closePlaceSheet();
+        if (showLocationCard) closeLocationCard();
+
+        setSelectedPlace(null);
+        setPlaceIncidents([]);
+        setEndLocation(null);
+
+        if (directionsMode) {
+            exitDirectionsMode();
+        } else {
+            setRouteCoords([]);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
+            setRouteUnsafe(false);
+            setBlockedZoneName(null);
+            setShowSafePath(false);
+            setIsScanAnimating(false);
+            setSafeRouteCoords([]);
+            setUnsafeRouteCoords([]);
+        }
+
+        if (userLoc) {
+            mapRef.current?.animateToRegion(
+                { latitude: userLoc.latitude, longitude: userLoc.longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 },
+                700
+            );
+        } else {
+            mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
+        }
+    }, [
+        closeLocationCard,
+        closePlaceSheet,
+        deactivateSearch,
+        directionsMode,
+        exitDirectionsMode,
+        placeSheetOpen,
+        showLocationCard,
+        userLoc,
+    ]);
+
     const handleStartSelect = useCallback((place: PlaceSuggestion) => {
         setStartLocation(place);
         setStartSearchText(place.name);
@@ -1293,7 +1314,7 @@ export default function ExploreScreen() {
                     style={StyleSheet.absoluteFillObject}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
-                    showsUserLocation
+                    showsUserLocation={!isLiveNav}
                     showsMyLocationButton={false}
                     showsCompass={false}
                     moveOnMarkerPress={false}
@@ -1337,11 +1358,33 @@ export default function ExploreScreen() {
                             strokeWidth={3}
                             lineDashPattern={[8, 6]}
                             lineCap="round"
+                            lineJoin="round"
                         />
                     )}
 
                     {/* Violet = primary route (shortest initially, safest after recalculation) */}
-                    {routeCoords.length > 1 && (
+                    {/* Completed route (green) */}
+                    {completedRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={completedRouteCoords}
+                            strokeColor="#3B82F6"
+                            strokeWidth={5}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Remaining route (violet) */}
+                    {remainingRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={remainingRouteCoords}
+                            strokeColor={T.violet}
+                            strokeWidth={4}
+                            lineCap="round"
+                            lineJoin="round"
+                        />
+                    )}
+                    {/* Fallback: full route if no progress split yet */}
+                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
                             coordinates={routeCoords}
                             strokeColor={T.violet}
@@ -2016,6 +2059,14 @@ export default function ExploreScreen() {
                                         <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />
                                         <Text style={ns.goLiveBtnText}>GO LIVE</Text>
                                     </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[ns.goLiveBtn, { backgroundColor: 'rgba(138,56,246,0.15)', borderColor: 'rgba(138,56,246,0.3)' }]}
+                                        onPress={() => setIsReviewMode(!isReviewMode)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="list" size={14} color={T.violet} style={{ marginRight: 4 }} />
+                                        <Text style={[ns.goLiveBtnText, { color: T.violet }]}>{isReviewMode ? 'CLOSE' : 'REVIEW'}</Text>
+                                    </TouchableOpacity>
                                 </View>
                             ) : (
                                 <TouchableOpacity
@@ -2048,7 +2099,7 @@ export default function ExploreScreen() {
                                 isActive={tab.id === 'Explore'}
                                 onPress={() => {
                                     if (tab.id === 'Home') {
-                                        router.replace('/(tabs)/users/sos_screen');
+                                        router.replace('/(tabs)/users/standard-user/sos_screen' as any);
                                     } else if (tab.id === 'Chat') {
                                         router.push('/(tabs)/users/standard-user/chat_home');
                                     } else if (tab.id === 'Medical') {

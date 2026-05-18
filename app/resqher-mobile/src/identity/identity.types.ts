@@ -25,7 +25,7 @@ export type Identity = {
   medicalInfo: string[];
   homeAddress: string;
   /** Local URI from image picker */
-  photoUri: string;
+  photoUri: string | null;
   /** Authenticated role for this session */
   role: Role;
 };

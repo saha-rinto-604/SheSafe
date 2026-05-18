@@ -45,14 +45,14 @@ async function nextSeq(): Promise<number> {
 }
 
 export const notificationStore = {
-    async add(payload: Omit<AppNotification, 'n' | 'id' | 'read'> & { createdAt?: string }): Promise<void> {
+    async add(payload: Omit<AppNotification, 'n' | 'id' | 'read' | 'createdAt'> & { createdAt?: string }): Promise<void> {
         const n = await nextSeq();
         const notif: AppNotification = {
             n,
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            createdAt: payload.createdAt ?? new Date().toISOString(),
             read: false,
             ...payload,
+            createdAt: payload.createdAt ?? new Date().toISOString(),
         };
         await SecureStore.setItemAsync(recordKey(n), JSON.stringify(notif));
         let idx = await getIndex();
