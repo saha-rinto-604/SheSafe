@@ -9,12 +9,33 @@
  * Header: 1px rgba(255,255,255,0.1) stroke — matches SOS screen exactly.
  */
 
-import React, { useState, useRef, useCallback, memo } from 'react';
+/**
+ * MedicalDashboard.tsx — ResQher Medical Hub Launchpad
+ * ─────────────────────────────────────────────────────────────────────────
+ * 2-column Bulky Glass category grid with Sheba-style shift filter.
+ * NO navbar — this is a Launchpad. Back button returns to SOS/Explore.
+ * Floating Gradient Pill "Find" button (absolute-positioned, 30px from bottom).
+ *
+ * Design: Atmospheric Shell + Bulky Glass material.
+ * Header: 1px rgba(255,255,255,0.1) stroke — matches SOS screen exactly.
+ * Physics: Powered by React Native Reanimated for AAA-tier fluidity.
+ */
+
+import React, { useState, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
     Dimensions, Platform, ScrollView,
 } from 'react-native';
-import { Animated as RNAnimated } from 'react-native';
+import Animated, {
+    useSharedValue,
+    useAnimatedStyle,
+    withTiming,
+    withSequence,
+    withSpring,
+    FadeInUp,
+    FadeOutUp,
+    LinearTransition,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,7 +55,7 @@ const { width } = Dimensions.get('window');
 // DESIGN TOKENS — Medical Module
 // ═══════════════════════════════════════════════════════════════════════════════
 const D = {
-    cardFill: T.surfaceBulky,               // #1E153A
+    cardFill: T.surfaceBulky,           // #1E153A
     cardFillActive: T.surfaceBulkyActive,    // #251B48
     hairline: 'rgba(255, 255, 255, 0.1)',
     hairlineActive: 'rgba(255, 255, 255, 0.1)',
@@ -60,14 +81,21 @@ const SHIFTS: { id: ShiftFilter; label: string; icon: React.ComponentProps<typeo
 const CategoryCard = memo(function CategoryCard({
     item, isSelected, onPress,
 }: { item: CategoryItem; isSelected: boolean; onPress: () => void }) {
-    const scale = useRef(new RNAnimated.Value(1)).current;
+    const scale = useSharedValue(1);
+
+    // Modern Reanimated Gesture Scale
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: scale.value }],
+    }));
 
     const handlePress = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        RNAnimated.sequence([
-            RNAnimated.timing(scale, { toValue: 0.95, duration: 80, useNativeDriver: true }),
-            RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
-        ]).start();
+
+        // Snappy scale-down then spring back up organically
+        scale.value = withSequence(
+            withTiming(0.94, { duration: 70 }),
+            withSpring(1, { damping: 12, stiffness: 280 })
+        );
         onPress();
     }, [onPress]);
 
@@ -75,12 +103,12 @@ const CategoryCard = memo(function CategoryCard({
         <TouchableOpacity
             style={st.categoryCardWrap}
             onPress={handlePress}
-            activeOpacity={0.85}
+            activeOpacity={0.9}
         >
-            <RNAnimated.View style={[
+            <Animated.View style={[
                 st.categoryCard,
                 isSelected && st.categoryCardActive,
-                { transform: [{ scale }] },
+                animatedStyle,
             ]}>
                 {/* Icon Circle */}
                 <View style={[st.categoryIconWrap, isSelected && st.categoryIconWrapActive]}>
@@ -99,7 +127,7 @@ const CategoryCard = memo(function CategoryCard({
                 </Text>
                 {/* Selection indicator */}
                 {isSelected && <View style={st.categoryDot} />}
-            </RNAnimated.View>
+            </Animated.View>
         </TouchableOpacity>
     );
 });
@@ -121,7 +149,7 @@ export default function MedicalDashboard() {
     const handleFind = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push({
-            pathname: '/(tabs)/users/volunteer/MedicalMapView',
+            pathname: '/(tabs)/users/standard-user/MedicalMapView',
             params: { category: selectedCategory, shift: selectedShift },
         } as any);
     }, [selectedCategory, selectedShift, router]);
@@ -153,7 +181,7 @@ export default function MedicalDashboard() {
                         <TouchableOpacity
                             style={st.headerBtn}
                             activeOpacity={0.7}
-                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
+                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/standard-user/notifications'); }}
                         >
                             <Feather name="bell" size={18} color={D.subtitle} />
                         </TouchableOpacity>
@@ -161,7 +189,11 @@ export default function MedicalDashboard() {
 
                     {/* ── Shift Filter ── */}
                     {selectedCategory === 'specialists' && (
-                        <View style={st.filterSection}>
+                        <Animated.View
+                            entering={FadeInUp.duration(250).springify().damping(18)}
+                            exiting={FadeOutUp.duration(200)}
+                            style={st.filterSection}
+                        >
                             <Text style={st.sectionLabel}>WORKLOAD / SHIFT</Text>
                             <View style={st.filterRow}>
                                 {SHIFTS.map(shift => (
@@ -191,11 +223,15 @@ export default function MedicalDashboard() {
                                     </TouchableOpacity>
                                 ))}
                             </View>
-                        </View>
+                        </Animated.View>
                     )}
 
                     {/* ── Category Grid ── */}
-                    <View style={st.gridSection}>
+                    {/* The Layout prop automatically interpolates structural position changes via Native Springs */}
+                    <Animated.View
+                        layout={LinearTransition.springify().damping(16).stiffness(140)}
+                        style={st.gridSection}
+                    >
                         <Text style={st.sectionLabel}>SELECT CATEGORY</Text>
                         <View style={st.grid}>
                             {medicalCategories.map(cat => (
@@ -207,7 +243,7 @@ export default function MedicalDashboard() {
                                 />
                             ))}
                         </View>
-                    </View>
+                    </Animated.View>
                 </ScrollView>
 
                 {/* ── Floating Gradient Pill — Find Button ── */}

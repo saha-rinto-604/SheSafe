@@ -1,9 +1,10 @@
 /**
  * app/(tabs)/users/standard-user/ExploreScreen.tsx
  * Explore — Map view with animated search header, location card, and nav bar.
+ * Upgraded with dynamic Yellow/Red zoning rules and custom glass scan UI overlay.
  */
 
-import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
@@ -23,10 +24,11 @@ import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
-import { DHAKA_INCIDENTS, type PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { incidentService, type IncidentZone } from '../../../../src/services/incidentService';
+import api from '../../../../src/services/api';
+import type { PlaceIncident } from '../../../../src/data/dhakaIncidents';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
-
 const { width, height } = Dimensions.get('window');
 
 const NAV_HEIGHT = 58;
@@ -37,18 +39,42 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// ── Red Zones (No-Go Areas) ─────────────────────────────────────────────────
-const RED_ZONES: { id: string; name: string; latitude: number; longitude: number; radius: number }[] = [
-    { id: 'rz1', name: 'Pragati Sarani Area', latitude: 23.813546, longitude: 90.421659, radius: 100 },
-    { id: 'rz2', name: 'Kawran Bazar', latitude: 23.8155, longitude: 90.4255, radius: 100 }
-];
+/** Zero-trust coordinate sanitizer — validates lat/lng before forwarding to any external service. */
+function sanitizeCoordinate(lat: number, lng: number): { latitude: number; longitude: number } | null {
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { latitude: Number(lat.toFixed(7)), longitude: Number(lng.toFixed(7)) };
+}
+
+/** Exponential backoff retry for network requests. */
+async function fetchWithRetry<T>(
+    fn: () => Promise<T>,
+    maxRetries = 3,
+    baseDelayMs = 500,
+): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastError = err;
+            if (attempt < maxRetries - 1) {
+                await new Promise(r => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
+            }
+        }
+    }
+    throw lastError;
+}
+
+/** Debounce cache layer for high-frequency reads. */
+const _zoneCache: { data: IncidentZone[] | null; ts: number } = { data: null, ts: 0 };
+const ZONE_CACHE_TTL_MS = 30_000;
 
 const EARTH_RADIUS_M = 6_371_000;
 
-/**
- * Haversine distance in metres.
- * d = 2R · arcsin( √( sin²((φ₂−φ₁)/2) + cos(φ₁)·cos(φ₂)·sin²((λ₂−λ₁)/2) ) )
- */
+type LatLng = { latitude: number; longitude: number };
+
+/** Haversine distance in metres. */
 function haversineDistance(a: LatLng, b: LatLng): number {
     const toRad = (deg: number) => (deg * Math.PI) / 180;
     const dLat = toRad(b.latitude - a.latitude);
@@ -62,26 +88,21 @@ function haversineDistance(a: LatLng, b: LatLng): number {
 }
 
 /** Returns an object indicating safety and the name of the avoided zone if applicable. */
-/** Returns an object indicating safety and the name of the avoided zone if applicable. */
-function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZoneName?: string } {
+function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolean; blockedZoneName?: string } {
     if (coordinates.length === 0) return { isSafe: true };
 
     for (let i = 0; i < coordinates.length - 1; i++) {
         const p1 = coordinates[i];
         const p2 = coordinates[i + 1];
 
-        // 1. Check the explicit vertex
-        for (const zone of RED_ZONES) {
+        for (const zone of zones) {
             if (haversineDistance(p1, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
         }
 
-        /** Returns a risk score based on how many 20m interval points land inside a Red Zone */
-
-        // 2. Interpolate points along the segment to catch straight lines passing through
         const dist = haversineDistance(p1, p2);
-        const SEGMENT_CHECK_INTERVAL_M = 20; // Sample a point every 20 meters
+        const SEGMENT_CHECK_INTERVAL_M = 20;
 
         if (dist > SEGMENT_CHECK_INTERVAL_M) {
             const steps = Math.ceil(dist / SEGMENT_CHECK_INTERVAL_M);
@@ -92,7 +113,7 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
 
-                for (const zone of RED_ZONES) {
+                for (const zone of zones) {
                     if (haversineDistance(interpPoint, zone) <= zone.radius) {
                         return { isSafe: false, blockedZoneName: zone.name };
                     }
@@ -101,9 +122,8 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
         }
     }
 
-    // Check the final destination vertex
     const lastPoint = coordinates[coordinates.length - 1];
-    for (const zone of RED_ZONES) {
+    for (const zone of zones) {
         if (haversineDistance(lastPoint, zone) <= zone.radius) {
             return { isSafe: false, blockedZoneName: zone.name };
         }
@@ -112,7 +132,8 @@ function checkRouteSafety(coordinates: LatLng[]): { isSafe: boolean; blockedZone
     return { isSafe: true };
 }
 
-function getRouteRiskScore(coordinates: LatLng[]): number {
+/** Computes route risk dynamically — heavily penalizes Red blocks while tracking Yellow cells gently */
+function getRouteRiskScore(coordinates: LatLng[], zones: any[]): number {
     let score = 0;
     if (coordinates.length === 0) return 0;
 
@@ -120,8 +141,10 @@ function getRouteRiskScore(coordinates: LatLng[]): number {
         const p1 = coordinates[i];
         const p2 = coordinates[i + 1];
 
-        for (const zone of RED_ZONES) {
-            if (haversineDistance(p1, zone) <= zone.radius) score++;
+        for (const zone of zones) {
+            if (haversineDistance(p1, zone) <= zone.radius) {
+                score += zone.isYellow ? 1 : 5;
+            }
         }
 
         const dist = haversineDistance(p1, p2);
@@ -133,8 +156,10 @@ function getRouteRiskScore(coordinates: LatLng[]): number {
                     latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
                     longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
                 };
-                for (const zone of RED_ZONES) {
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) score++;
+                for (const zone of zones) {
+                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
+                        score += zone.isYellow ? 1 : 5;
+                    }
                 }
             }
         }
@@ -142,7 +167,6 @@ function getRouteRiskScore(coordinates: LatLng[]): number {
     return score;
 }
 
-/** Strip HTML tags from Google's html_instructions. */
 const stripHtml = (html: string): string => html.replace(/<[^>]*>/g, '');
 
 type NavStep = {
@@ -152,7 +176,6 @@ type NavStep = {
     endLocation?: LatLng;
 };
 
-/** Map Google maneuver strings → Ionicons names with string-contains fallback. */
 function getManeuverIcon(maneuver?: string): string {
     if (!maneuver) return 'arrow-up';
     const m = maneuver.toLowerCase();
@@ -175,7 +198,6 @@ const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: st
     { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline' },
 ];
 
-// ── PremiumBar — identical to SOS screen ────────────────────────────────────
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
 }: { style?: ViewStyle | ViewStyle[]; contentStyle?: ViewStyle; children: React.ReactNode }) {
@@ -192,8 +214,6 @@ const pb = StyleSheet.create({
     tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
-
-type LatLng = { latitude: number; longitude: number };
 
 type PlacePrediction = {
     id: string;
@@ -212,7 +232,6 @@ type PlaceSuggestion = {
 };
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 260;
-
 const createSessionToken = () => Math.random().toString(36).slice(2);
 
 const buildAutocompleteUrl = (input: string, sessionToken: string, bias: LatLng) => {
@@ -227,15 +246,11 @@ const buildPlaceDetailsUrl = (placeId: string, sessionToken: string) => (
 );
 
 function decodePolyline(encoded: string): LatLng[] {
-    let index = 0;
-    let lat = 0;
-    let lng = 0;
+    let index = 0, lat = 0, lng = 0;
     const coordinates: LatLng[] = [];
 
     while (index < encoded.length) {
-        let result = 0;
-        let shift = 0;
-        let byte = 0;
+        let result = 0, shift = 0, byte = 0;
         do {
             byte = encoded.charCodeAt(index++) - 63;
             result |= (byte & 0x1f) << shift;
@@ -244,8 +259,7 @@ function decodePolyline(encoded: string): LatLng[] {
         const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
         lat += deltaLat;
 
-        result = 0;
-        shift = 0;
+        result = 0; shift = 0;
         do {
             byte = encoded.charCodeAt(index++) - 63;
             result |= (byte & 0x1f) << shift;
@@ -256,11 +270,9 @@ function decodePolyline(encoded: string): LatLng[] {
 
         coordinates.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
     }
-
     return coordinates;
 }
 
-// ── PulseRadar — identical to SOS screen (locating state) ───────────────────
 const PulseRadar = memo(function PulseRadar() {
     const a0 = useRef(new RNAnimated.Value(0)).current;
     const a1 = useRef(new RNAnimated.Value(0)).current;
@@ -301,52 +313,159 @@ const rdr = StyleSheet.create({
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
-// ── SafetyScanOverlay — radar + spinning shield during recalculation ────────
+// ── Redesigned Premium Safety Scan Overlay (Unified Glassmorphic UI Modal System) ──
+type ScanState = 'SCANNING' | 'PARTIAL_SAFETY' | 'NO_ROUTE' | 'TRANSIT_ERROR' | null;
+
 const SafetyScanOverlay = memo(function SafetyScanOverlay({
-    visible,
-    spinAnim,
-    r0, r1, r2,
-    zoneName,
+    scanState, spinAnim, r0, r1, r2, zoneName, onClose
 }: {
-    visible: boolean;
-    spinAnim: RNAnimated.Value;
+    scanState: ScanState; spinAnim: RNAnimated.Value;
     r0: RNAnimated.Value; r1: RNAnimated.Value; r2: RNAnimated.Value;
     zoneName: string | null;
+    onClose: () => void;
 }) {
-    if (!visible) return null;
+    if (!scanState) return null;
+
+    const isScanning = scanState === 'SCANNING';
+
+    let icon = 'shield-checkmark';
+    let color = '#8A38F6';
+    let title = 'Safety Scan Running';
+    let subtitle = `Checking safe route around ${zoneName ?? 'current path'}...`;
+
+    if (scanState === 'PARTIAL_SAFETY') {
+        icon = 'warning';
+        color = '#E25B3A';
+        title = 'Partial Safety';
+        subtitle = 'No fully safe route found. Showing the least risky option.';
+    } else if (scanState === 'NO_ROUTE') {
+        icon = 'close-circle';
+        color = '#EF4444';
+        title = 'No Safe Route';
+        subtitle = 'All available routes pass through restricted zones.';
+    } else if (scanState === 'TRANSIT_ERROR') {
+        icon = 'bus';
+        color = '#E25B3A';
+        title = 'Fixed Transit Lines';
+        subtitle = 'Public transit follows fixed routes and cannot be detoured around this Red Zone.';
+    }
+
     return (
-        <View style={scanStyles.wrap} pointerEvents="none">
-            {[r0, r1, r2].map((a, i) => (
-                <RNAnimated.View key={i} style={[scanStyles.ring, {
-                    transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.3, 2.0] }) }],
-                    opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.7, 0.35, 0] }),
-                }]} />
-            ))}
-            <RNAnimated.View style={{
-                transform: [{ rotate: spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }],
-            }}>
-                <Ionicons name="shield-checkmark" size={48} color={T.violet} />
-            </RNAnimated.View>
-            <Text style={scanStyles.label}>Calculating safest route…</Text>
-            {zoneName && <Text style={scanStyles.sub}>Avoiding {zoneName}</Text>}
+        <View style={scanStyles.backdrop}>
+            <BlurView intensity={12} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={scanStyles.card}>
+                <BlurView intensity={35} tint="dark" style={StyleSheet.absoluteFill} />
+                <View style={scanStyles.cardTint} />
+
+                {/* Concentric Glow Sonar Assembly */}
+                <View style={scanStyles.iconOuterContainer}>
+                    {isScanning && [r0, r1, r2].map((a, i) => (
+                        <RNAnimated.View key={i} style={[scanStyles.pulseRing, {
+                            borderColor: color,
+                            transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.45] }) }],
+                            opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.65, 0.3, 0] }),
+                        }]} />
+                    ))}
+                    <View style={[scanStyles.iconCircle, { backgroundColor: color }]}>
+                        <Ionicons name={icon as any} size={26} color="#FFFFFF" />
+                    </View>
+                </View>
+
+                <Text style={scanStyles.title}>{title}</Text>
+                <Text style={scanStyles.subtitle}>{subtitle}</Text>
+
+                {!isScanning && (
+                    <TouchableOpacity style={[scanStyles.btn, { backgroundColor: color }]} onPress={onClose}>
+                        <Text style={scanStyles.btnText}>Acknowledge</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
         </View>
     );
 });
+
 const scanStyles = StyleSheet.create({
-    wrap: {
-        position: 'absolute', alignSelf: 'center',
-        top: height * 0.28, alignItems: 'center', zIndex: 400,
+    backdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(3, 2, 6, 0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 9999,
     },
-    ring: {
-        position: 'absolute', width: 100, height: 100,
-        borderRadius: 50, borderWidth: 1.5, borderColor: T.violet,
+    card: {
+        width: width * 0.82,
+        paddingVertical: 36,
+        paddingHorizontal: 24,
+        borderRadius: 24,
         overflow: 'hidden',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 24, shadowOffset: { width: 0, height: 10 } },
+            android: { elevation: 12 },
+        }),
     },
-    label: { marginTop: 20, fontSize: 13, fontWeight: '700', color: T.violet, letterSpacing: 0.3 },
-    sub: { marginTop: 4, fontSize: 11, fontWeight: '500', color: T.ink3 },
+    cardTint: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(15, 11, 28, 0.88)',
+        zIndex: -1,
+    },
+    iconOuterContainer: {
+        width: 90,
+        height: 90,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    iconCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#8A38F6',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 2,
+    },
+    pulseRing: {
+        position: 'absolute',
+        width: 76,
+        height: 76,
+        borderRadius: 38,
+        borderWidth: 1.5,
+        borderColor: '#8A38F6',
+    },
+    title: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        textAlign: 'center',
+        letterSpacing: -0.2,
+        marginBottom: 8,
+    },
+    subtitle: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: '#C4C1D4',
+        textAlign: 'center',
+        lineHeight: 18,
+    },
+    btn: {
+        marginTop: 24,
+        paddingVertical: 12,
+        paddingHorizontal: 24,
+        borderRadius: 999,
+        width: '100%',
+        alignItems: 'center',
+    },
+    btnText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
 });
 
-// ── Side Drawer ─────────────────────────────────────────────────────────────
 const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
     { icon: 'user', label: 'Edit Profile' },
     { icon: 'phone-call', label: 'Emergency Contacts' },
@@ -398,8 +517,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
 const dr = StyleSheet.create({
     overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
     drawer: {
-        position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
-        backgroundColor: T.surface,
+        position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76, backgroundColor: T.surface,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 28, shadowOffset: { width: 4, height: 0 } },
             android: { elevation: 20 },
@@ -409,16 +527,11 @@ const dr = StyleSheet.create({
     avatarRing: {
         width: 50, height: 50, borderRadius: 25,
         backgroundColor: `${T.onPrimary}2E`, borderWidth: 2, borderColor: `${T.onPrimary}47`,
-        alignItems: 'center', justifyContent: 'center', marginBottom: 10,
-        overflow: 'hidden',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 10, overflow: 'hidden',
     },
     appName: { color: T.onPrimary, fontSize: 20, fontWeight: '800', letterSpacing: -0.4 },
     sub: { color: `${T.onPrimary}A6`, fontSize: 12, marginTop: 2, fontWeight: '500' },
-    row: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingVertical: 13, paddingHorizontal: 18,
-        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid,
-    },
+    row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 18, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.lineMid },
     iconBox: { width: 36, height: 36, borderRadius: 8, backgroundColor: T.violetDim, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
     iconBoxDanger: { backgroundColor: `${T.danger}18` },
     label: { flex: 1, fontSize: 14, color: T.ink, fontWeight: '600' },
@@ -426,7 +539,6 @@ const dr = StyleSheet.create({
     divider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
 });
 
-// ── NavTab — identical to SOS screen ────────────────────────────────────────
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
@@ -463,7 +575,6 @@ const NavTab = memo(function NavTab({
     );
 });
 
-// ── ExploreScreen ────────────────────────────────────────────────────────────
 export default function ExploreScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
@@ -506,16 +617,37 @@ export default function ExploreScreen() {
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
 
+    // ── Live Navigation Audio Engine ──
+    const lastSpokenStepRef = useRef<number>(-1);
+    useEffect(() => {
+        if (isLiveNav && audioEnabled && navInstructions.length > 0 && currentStepIdx !== lastSpokenStepRef.current) {
+            const instruction = navInstructions[currentStepIdx]?.instruction;
+            if (instruction) {
+                Speech.stop();
+                setTimeout(() => {
+                    Speech.speak(instruction, {
+                        language: 'en',
+                        pitch: 1.0,
+                        rate: Platform.OS === 'android' ? 0.9 : 0.95,
+                    });
+                }, 100);
+                lastSpokenStepRef.current = currentStepIdx;
+            }
+        }
+        if (!isLiveNav) {
+            lastSpokenStepRef.current = -1;
+        }
+    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
+
     const [placeSheetMode, setPlaceSheetMode] = useState<'incidents' | 'safe_place'>('incidents');
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
     const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
 
-    // ── Safety-First Routing State ──────────────────────────────────────
     const [routeUnsafe, setRouteUnsafe] = useState(false);
     const [blockedZoneName, setBlockedZoneName] = useState<string | null>(null);
-    const [isScanAnimating, setIsScanAnimating] = useState(false);
+    const [scanState, setScanState] = useState<ScanState>(null);
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
     const [showSafePath, setShowSafePath] = useState(false);
@@ -526,15 +658,61 @@ export default function ExploreScreen() {
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
 
-    // Load profile picture on screen focus
+    const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
+    const [zonesLoading, setZonesLoading] = useState(true);
+
+    // ── CRITICAL FIX: Evaluate Incident Count for Red/Yellow Zoning Rules ──
+    const RED_ZONES = useMemo(() => {
+        return (incidentZones || []).map(z => {
+            const incidentCount = (z?.incidents || []).length;
+            return {
+                id: z?.id ?? `live-${Math.random().toString(36).slice(2)}`,
+                name: z?.name ?? 'Incident Zone',
+                latitude: Number(z?.latitude) || 0,
+                longitude: Number(z?.longitude) || 0,
+                radius: Number(z?.radius) || 200,
+                isYellow: incidentCount < 5, // Rule enforced: Less than 5 incidents locks container as Yellow Zone
+            };
+        });
+    }, [incidentZones]);
+
+    const fetchLiveZones = useCallback(async () => {
+        const now = Date.now();
+        if (_zoneCache.data && (now - _zoneCache.ts) < ZONE_CACHE_TTL_MS) {
+            setIncidentZones(_zoneCache.data);
+            setZonesLoading(false);
+            return;
+        }
+        try {
+            const zones = await fetchWithRetry(() => incidentService.getZones(), 3, 500);
+            const sanitized = (zones || []).filter(z => {
+                const valid = sanitizeCoordinate(Number(z?.latitude), Number(z?.longitude));
+                return valid !== null;
+            });
+            _zoneCache.data = sanitized;
+            _zoneCache.ts = Date.now();
+            setIncidentZones(sanitized);
+        } catch (err) {
+            console.warn('[ExploreScreen] Failed to fetch incident zones:', err);
+        } finally {
+            setZonesLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchLiveZones();
+        const interval = setInterval(fetchLiveZones, 60_000);
+        return () => clearInterval(interval);
+    }, [fetchLiveZones]);
+
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
-        }, []),
+            fetchLiveZones();
+        }, [fetchLiveZones]),
     );
 
-    // Animation values
-    const searchProgress = useRef(new RNAnimated.Value(0)).current; // 0 collapsed → 1 expanded
+    const searchProgress = useRef(new RNAnimated.Value(0)).current;
     const locationCardY = useRef(new RNAnimated.Value(300)).current;
     const locationCardOpacity = useRef(new RNAnimated.Value(0)).current;
     const placeSheetY = useRef(new RNAnimated.Value(height)).current;
@@ -544,7 +722,6 @@ export default function ExploreScreen() {
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
-    // Location
     useEffect(() => {
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -572,6 +749,9 @@ export default function ExploreScreen() {
                 setAddress('Current location');
             }
 
+            let lastTelemetryTs = 0;
+            const TELEMETRY_INTERVAL_MS = 10_000;
+
             locationSubRef.current = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.BestForNavigation,
@@ -579,11 +759,24 @@ export default function ExploreScreen() {
                     distanceInterval: 5,
                 },
                 (loc) => {
-                    setUserLoc({
+                    const newLoc = {
                         latitude: loc.coords.latitude,
                         longitude: loc.coords.longitude,
                         heading: loc.coords.heading ?? undefined,
-                    });
+                    };
+                    setUserLoc(newLoc);
+
+                    const now = Date.now();
+                    if (now - lastTelemetryTs >= TELEMETRY_INTERVAL_MS) {
+                        lastTelemetryTs = now;
+                        const sanitized = sanitizeCoordinate(newLoc.latitude, newLoc.longitude);
+                        if (sanitized) {
+                            api.post('/api/locations', {
+                                latitude: sanitized.latitude,
+                                longitude: sanitized.longitude,
+                            }).catch(() => { });
+                        }
+                    }
                 }
             );
         })();
@@ -595,7 +788,6 @@ export default function ExploreScreen() {
         };
     }, []);
 
-    // Auto-Camera & Auto-Step Advance
     useEffect(() => {
         if (!directionsMode || !userLoc || !isLiveNav) return;
 
@@ -616,7 +808,6 @@ export default function ExploreScreen() {
             }
         }
 
-        // Progress polyline update
         if (routeCoords.length > 0) {
             let closestIdx = 0;
             let minD = Infinity;
@@ -629,36 +820,37 @@ export default function ExploreScreen() {
         }
     }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav, routeCoords]);
 
-    // Audio Guidance
+    // ── Decoupled Audio Alert Engine: Standalone thread — always stops previous utterance first ──
     useEffect(() => {
-        if (isLiveNav && audioEnabled && navInstructions.length > 0 && currentStepIdx < navInstructions.length) {
-            Speech.speak(navInstructions[currentStepIdx].instruction);
-        }
+        if (!isLiveNav || !audioEnabled) return;
+        if (navInstructions.length === 0 || currentStepIdx >= navInstructions.length) return;
+        // Stop any previous utterance before queueing the next to prevent TTS buildup on Android/iOS
+        Speech.stop();
+        const tid = setTimeout(() => {
+            Speech.speak(navInstructions[currentStepIdx].instruction, {
+                language: 'en',
+                pitch: 1.0,
+                rate: Platform.OS === 'android' ? 0.9 : 0.95,
+            });
+        }, 80);
+        return () => clearTimeout(tid);
     }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
 
-    // Animate search bar expand
     const activateSearch = useCallback(() => {
         if (searchActive) return;
         setSearchActive(true);
         setTimeout(() => searchInputRef.current?.focus(), 60);
         RNAnimated.timing(searchProgress, {
-            toValue: 1,
-            duration: 300,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
+            toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
     }, [searchActive, searchProgress]);
 
-    // Animate search bar collapse
     const deactivateSearch = useCallback((clearText: boolean) => {
         Keyboard.dismiss();
         setSearchActive(false);
         if (clearText) setSearchText('');
         RNAnimated.timing(searchProgress, {
-            toValue: 0,
-            duration: 260,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
+            toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
     }, [searchProgress]);
 
@@ -672,9 +864,6 @@ export default function ExploreScreen() {
         try {
             const res = await fetch(buildAutocompleteUrl(input, sessionToken, bias));
             const data = await res.json();
-
-            console.log(`[Google Places API] Autocomplete status for "${input}":`, data?.status);
-
             if (data?.status !== 'OK') {
                 return { results: [] as PlacePrediction[], status: data?.status ?? 'ERROR' };
             }
@@ -693,7 +882,7 @@ export default function ExploreScreen() {
     }, []);
 
     const resolvePlaceDetails = useCallback(async (prediction: PlacePrediction, sessionToken: string) => {
-        if (!GOOGLE_MAPS_API_KEY) return null as PlaceSuggestion | null;
+        if (!GOOGLE_MAPS_API_KEY) return null;
         try {
             const res = await fetch(buildPlaceDetailsUrl(prediction.placeId, sessionToken));
             const data = await res.json();
@@ -782,17 +971,41 @@ export default function ExploreScreen() {
                     return;
                 }
 
-                // Always take routes[0] as the shortest path
                 const chosenRoute = data.routes[0];
                 const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
-                // Display shortest route immediately as violet
+                // ── Dynamic Hazard Whitelisting: filter out zones the user is currently inside ──
+                // This is computed BEFORE setting any coords so we can decide the safety split accurately.
+                const startPoint = chosenCoords[0];
+                const effectiveZones = startPoint
+                    ? RED_ZONES.filter(z => haversineDistance(startPoint, z) > z.radius)
+                    : RED_ZONES;
+
+                const safetyCheck = checkRouteSafety(chosenCoords, effectiveZones);
+
+                // routeCoords = the primary draw path (may be unsafe initially)
+                // unsafeRouteCoords = permanent snapshot of original unsafe route (shown as crimson ghost)
+                // safeRouteCoords = only populated after a confirmed detour; starts empty
                 setRouteCoords(chosenCoords);
                 setCompletedRouteCoords([]);
                 setRemainingRouteCoords(chosenCoords);
-                setUnsafeRouteCoords(chosenCoords);
 
-                // Extract turn-by-turn instructions
+                if (safetyCheck.isSafe) {
+                    // Route is clean — no crimson ghost, no safe path needed
+                    setUnsafeRouteCoords([]);
+                    setSafeRouteCoords([]);
+                    setRouteUnsafe(false);
+                    setBlockedZoneName(null);
+                    setShowSafePath(false);
+                } else {
+                    // Route intersects a danger zone — snapshot the original as the crimson ghost
+                    setUnsafeRouteCoords(chosenCoords);
+                    setSafeRouteCoords([]);
+                    setRouteUnsafe(true);
+                    setBlockedZoneName(safetyCheck.blockedZoneName ?? null);
+                    setShowSafePath(true);
+                }
+
                 const steps = chosenRoute?.legs?.[0]?.steps ?? [];
                 const instructions: NavStep[] = steps.map((step: any) => ({
                     instruction: stripHtml(step.html_instructions ?? ''),
@@ -803,19 +1016,6 @@ export default function ExploreScreen() {
                 setNavInstructions(instructions);
                 setCurrentStepIdx(0);
 
-                // Run safety check on the shortest route
-                const safetyCheck = checkRouteSafety(chosenCoords);
-                if (!safetyCheck.isSafe) {
-                    setRouteUnsafe(true);
-                    setBlockedZoneName(safetyCheck.blockedZoneName ?? null);
-                    setShowSafePath(true);
-                } else {
-                    setRouteUnsafe(false);
-                    setBlockedZoneName(null);
-                    setShowSafePath(false);
-                }
-
-                // Fit map to route
                 if (chosenCoords.length > 1) {
                     mapRef.current?.fitToCoordinates(chosenCoords, {
                         edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
@@ -836,7 +1036,6 @@ export default function ExploreScreen() {
         }
     }, [directionsMode, endLocation, startLocation, travelMode]);
 
-    // ── Scan animation helpers ──────────────────────────────────────────
     const startScanAnimation = useCallback(() => {
         const radarAnims = [radarAnim0, radarAnim1, radarAnim2];
         radarAnims.forEach((a, i) => {
@@ -853,9 +1052,7 @@ export default function ExploreScreen() {
         const spinLoop = () => {
             scanAnim.setValue(0);
             RNAnimated.timing(scanAnim, {
-                toValue: 1, duration: 1500,
-                easing: Easing.linear,
-                useNativeDriver: true,
+                toValue: 1, duration: 1500, easing: Easing.linear, useNativeDriver: true,
             }).start(() => spinLoop());
         };
         spinLoop();
@@ -865,19 +1062,15 @@ export default function ExploreScreen() {
         [radarAnim0, radarAnim1, radarAnim2, scanAnim].forEach(a => a.stopAnimation());
     }, [radarAnim0, radarAnim1, radarAnim2, scanAnim]);
 
-    // ── Phase 3: Safety Recalculation ───────────────────────────────────
     const triggerSafetyRecalculation = useCallback(async () => {
         if (!startLocation || !endLocation || !GOOGLE_MAPS_API_KEY) return;
 
-        // A. Begin scan animation
-        setIsScanAnimating(true);
+        setScanState('SCANNING');
         setShowSafePath(false);
         startScanAnimation();
 
-        // B. Wait 1.8s for animation to feel intentional
         await new Promise(r => setTimeout(r, 1800));
 
-        // C. Re-fetch all alternative routes
         const origin = `${startLocation.latitude},${startLocation.longitude}`;
         const destination = `${endLocation.latitude},${endLocation.longitude}`;
         const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
@@ -889,18 +1082,20 @@ export default function ExploreScreen() {
 
             if (!data?.routes?.length) {
                 stopScanAnimation();
-                setIsScanAnimating(false);
-                Alert.alert('No safe route found', 'All available routes pass through restricted zones.');
+                setScanState('NO_ROUTE');
                 return;
             }
 
-            // D. Score each route by red zone intersection count (UPDATED)
+            // Dynamic Hazard Whitelisting: filter out zones that the user is currently inside
+            const initialStartPoint = { latitude: startLocation.latitude, longitude: startLocation.longitude };
+            const effectiveZones = RED_ZONES.filter(z => haversineDistance(initialStartPoint, z) > z.radius);
+
             let bestRoute: { route: any; coords: LatLng[]; score: number } | null = null;
             let bestScore = Infinity;
 
             for (const route of data.routes) {
                 const coords = decodePolyline(route.overview_polyline?.points ?? '');
-                const score = getRouteRiskScore(coords); // Uses interpolation now
+                const score = getRouteRiskScore(coords, effectiveZones);
 
                 if (score < bestScore) {
                     bestScore = score;
@@ -908,53 +1103,59 @@ export default function ExploreScreen() {
                 }
             }
 
-            // E. Waypoint injection fallback if all routes still intersect
             if (bestScore > 0) {
                 if (travelMode === 'transit') {
-                    // Google Maps blocks waypoints for transit. Abort and warn the user.
                     stopScanAnimation();
-                    setIsScanAnimating(false);
-                    Alert.alert(
-                        '🚍 Fixed Transit Lines',
-                        'Public transit follows fixed routes and cannot be detoured around this Red Zone. Please switch to Driving, Walking, or Bike mode to calculate a custom safe path.'
-                    );
-
                     if (bestRoute) {
                         setSafeRouteCoords(bestRoute.coords);
                         setRouteCoords(bestRoute.coords);
                     }
                     setRouteUnsafe(true);
+                    setScanState('TRANSIT_ERROR');
                     return;
                 }
 
-                // TypeScript safety check
                 if (bestRoute) {
-                    const firstBadPoint = bestRoute.coords.find(p =>
-                        RED_ZONES.some(z => haversineDistance(p, z) <= z.radius)
+                    const firstBadPoint = bestRoute.coords.find((p: LatLng) =>
+                        effectiveZones.some((z: any) => haversineDistance(p, z) <= z.radius)
                     );
 
                     if (firstBadPoint) {
-                        const matchedZone = RED_ZONES.find(z => haversineDistance(firstBadPoint, z) <= z.radius);
+                        const matchedZone = effectiveZones.find((z: any) => haversineDistance(firstBadPoint, z) <= z.radius);
 
                         if (matchedZone) {
-                            // The Radial Search Strategy: Check N, E, S, W
                             const directions = [
-                                { lat: 0, lng: 1 },   // East (Best for N/S roads like Pragati Sarani)
-                                { lat: 0, lng: -1 },  // West
-                                { lat: 1, lng: 0 },   // North
-                                { lat: -1, lng: 0 }   // South
+                                { lat: 0, lng: 1 },
+                                { lat: 0, lng: -1 },
+                                { lat: 1, lng: 0 },
+                                { lat: -1, lng: 0 }
                             ];
 
                             let foundPerfectDetour = false;
-                            // Push the waypoint 3x the radius away to ensure it grabs a different street
                             const pushDistanceMeters = matchedZone.radius * 3;
 
                             for (const dir of directions) {
-                                if (foundPerfectDetour) break; // Stop searching if we found a completely safe route
+                                if (foundPerfectDetour) break;
 
-                                // Calculate the offset coordinate
-                                const wpLat = matchedZone.latitude + (dir.lat * pushDistanceMeters) / 111320;
-                                const wpLng = matchedZone.longitude + (dir.lng * pushDistanceMeters) / (111320 * Math.cos(matchedZone.latitude * (Math.PI / 180)));
+                                const rawWpLat = matchedZone.latitude + (dir.lat * pushDistanceMeters) / 111320;
+                                const rawWpLng = matchedZone.longitude + (dir.lng * pushDistanceMeters) / (111320 * Math.cos(matchedZone.latitude * (Math.PI / 180)));
+
+                                let wpLat = rawWpLat;
+                                let wpLng = rawWpLng;
+                                try {
+                                    const roadsUrl = `https://roads.googleapis.com/v1/nearestRoads?points=${rawWpLat},${rawWpLng}&key=${GOOGLE_MAPS_API_KEY}`;
+                                    const roadsRes = await fetch(roadsUrl);
+                                    const roadsData = await roadsRes.json();
+                                    if (roadsData?.snappedPoints?.length > 0) {
+                                        const snapped = roadsData.snappedPoints[0]?.location;
+                                        if (snapped?.latitude && snapped?.longitude) {
+                                            wpLat = Number(snapped.latitude);
+                                            wpLng = Number(snapped.longitude);
+                                        }
+                                    }
+                                } catch (snapErr) {
+                                    console.log('[Roads API] Snap failed, using raw offset:', snapErr);
+                                }
 
                                 const wpUrl = `${url}&waypoints=via:${wpLat},${wpLng}`;
 
@@ -965,16 +1166,13 @@ export default function ExploreScreen() {
                                     if (wpData?.routes?.length) {
                                         const wpRoute = wpData.routes[0];
                                         const wpCoords = decodePolyline(wpRoute.overview_polyline?.points ?? '');
+                                        const wpScore = getRouteRiskScore(wpCoords, effectiveZones);
 
-                                        const wpScore = getRouteRiskScore(wpCoords);
-
-                                        // If this direction perfectly bypasses the zone
                                         if (wpScore === 0) {
                                             bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
                                             bestScore = wpScore;
                                             foundPerfectDetour = true;
                                         } else if (wpScore < bestScore) {
-                                            // If it's not perfect, but it's an improvement, hold onto it
                                             bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
                                             bestScore = wpScore;
                                         }
@@ -988,12 +1186,9 @@ export default function ExploreScreen() {
                 }
             }
 
-
-            // --- FINAL TYPESCRIPT SAFETY CHECK ---
-            // Tell TS we are 100% sure bestRoute exists before grabbing finalCoords
             if (!bestRoute) {
                 stopScanAnimation();
-                setIsScanAnimating(false);
+                setScanState('NO_ROUTE');
                 return;
             }
 
@@ -1006,35 +1201,113 @@ export default function ExploreScreen() {
                 endLocation: step.end_location ? { latitude: step.end_location.lat, longitude: step.end_location.lng } : undefined,
             }));
 
-            // F. Update state...
+            // ── Polyline Isolation ──
+            // safeRouteCoords = the new detour (purple with glow)
+            // unsafeRouteCoords = original route snapshot (stays as crimson ghost ONLY if still partially risky)
+            // If a perfect safe detour was found (score === 0), clear the crimson ghost entirely.
             setSafeRouteCoords(finalCoords);
             setRouteCoords(finalCoords);
             setCompletedRouteCoords([]);
             setRemainingRouteCoords(finalCoords);
             setNavInstructions(instructions);
             setCurrentStepIdx(0);
-            setRouteUnsafe(bestScore > 0);
             setShowSafePath(false);
-            stopScanAnimation();
-            setIsScanAnimating(false);
 
-            // G. Map + feedback
+            stopScanAnimation(); // Always stop animation before setting result state
+
             mapRef.current?.fitToCoordinates(finalCoords, {
                 edgePadding: { top: 120, right: 40, bottom: height * 0.45, left: 40 },
                 animated: true,
             });
 
             if (bestScore === 0) {
-                Speech.speak('Safety update: Safest route selected, avoiding high risk areas.');
+                // Perfect detour found — erase the crimson ghost, mark route as safe
+                setUnsafeRouteCoords([]);
+                setRouteUnsafe(false);
+                setScanState(null);
+                Speech.stop();
+                setTimeout(() => {
+                    Speech.speak('Safety update: Safest route selected, avoiding all high risk areas.', {
+                        language: 'en', pitch: 1.0, rate: Platform.OS === 'android' ? 0.9 : 0.95,
+                    });
+                }, 80);
             } else {
-                Alert.alert('⚠️ Partial safety', 'No fully safe route found. Showing the least risky option.');
+                // Partial detour — keep crimson ghost visible, show partial safety modal
+                setRouteUnsafe(true);
+                setScanState('PARTIAL_SAFETY');
             }
         } catch {
             stopScanAnimation();
-            setIsScanAnimating(false);
-            Alert.alert('Error', 'Failed to calculate safe route.');
+            setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, RED_ZONES]);
+
+    const closePlaceSheet = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+        ]).start(() => {
+            setPlaceSheetOpen(false);
+            setTimeout(() => setPlaceSheetMode('incidents'), 200);
+        });
+        placeSheetDragY.setValue(0);
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const closeLocationCard = useCallback(() => {
+        RNAnimated.parallel([
+            RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+        ]).start(() => setShowLocationCard(false));
+    }, []);
+
+    const openLocationCard = useCallback(() => {
+        if (!userLoc) return;
+        if (placeSheetOpen) closePlaceSheet();
+        setShowLocationCard(true);
+        locationCardY.setValue(300);
+        locationCardOpacity.setValue(0);
+        mapRef.current?.animateToRegion(
+            { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
+        );
+        RNAnimated.parallel([
+            RNAnimated.spring(locationCardY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }),
+            RNAnimated.timing(locationCardOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        ]).start();
+    }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
+
+    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
+        setPlaceSheetOpen(true);
+        placeSheetY.setValue(height);
+        placeSheetOpacity.setValue(0);
+        placeSheetDragY.setValue(0);
+        (async () => {
+            try {
+                const zones = await incidentService.getZones();
+                const nearby = (zones || []).filter((z: IncidentZone) => {
+                    const dist = haversineDistance(
+                        { latitude: place.latitude, longitude: place.longitude },
+                        { latitude: Number(z?.latitude) || 0, longitude: Number(z?.longitude) || 0 }
+                    );
+                    return dist <= 500;
+                });
+                const incidents: PlaceIncident[] = nearby.flatMap((z: IncidentZone) =>
+                    (z?.incidents || []).map((inc: any) => ({
+                        id: String(inc?.id ?? Math.random()),
+                        reporter: String(inc?.reporter ?? 'Unknown'),
+                        time: String(inc?.time ?? 'Recently'),
+                        status: (inc?.status as PlaceIncident['status']) ?? 'ACTIVE',
+                    }))
+                );
+                setPlaceIncidents(incidents);
+            } catch {
+                setPlaceIncidents([]);
+            }
+        })();
+        RNAnimated.parallel([
+            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
+            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
+        ]).start();
+    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
@@ -1072,53 +1345,6 @@ export default function ExploreScreen() {
         handleResolvedPlaceSelect(place);
     }, [handleResolvedPlaceSelect, resolvePlaceDetails]);
 
-    // Show location card
-    const openLocationCard = useCallback(() => {
-        if (!userLoc) return;
-        if (placeSheetOpen) closePlaceSheet();
-        setShowLocationCard(true);
-        locationCardY.setValue(300);
-        locationCardOpacity.setValue(0);
-        mapRef.current?.animateToRegion(
-            { ...userLoc, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 600
-        );
-        RNAnimated.parallel([
-            RNAnimated.spring(locationCardY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }),
-            RNAnimated.timing(locationCardOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
-        ]).start();
-    }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
-
-    // Hide location card
-    const closeLocationCard = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
-        ]).start(() => setShowLocationCard(false));
-    }, []);
-
-    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
-        setPlaceSheetOpen(true);
-        placeSheetY.setValue(height);
-        placeSheetOpacity.setValue(0);
-        placeSheetDragY.setValue(0);
-        setPlaceIncidents(DHAKA_INCIDENTS[place.id] ?? []);
-        RNAnimated.parallel([
-            RNAnimated.spring(placeSheetY, { toValue: height * 0.5, useNativeDriver: true, tension: 70, friction: 12 }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
-        ]).start();
-    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
-
-    const closePlaceSheet = useCallback(() => {
-        RNAnimated.parallel([
-            RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
-            RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-        ]).start(() => {
-            setPlaceSheetOpen(false);
-            setTimeout(() => setPlaceSheetMode('incidents'), 200);
-        });
-        placeSheetDragY.setValue(0);
-    }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
-
     const openAddSafePlace = useCallback(() => {
         setPlaceSheetMode('safe_place');
         setSafePlaceAnswer('');
@@ -1133,35 +1359,49 @@ export default function ExploreScreen() {
         setSafePlaceError(null);
     }, []);
 
-    const submitAddSafePlace = useCallback(() => {
+    const submitAddSafePlace = useCallback(async () => {
         if (safePlaceAnswer.trim().length === 0) {
             setSafePlaceError('Please provide a brief description.');
             return;
         }
+        if (!selectedPlace) {
+            setSafePlaceError('No place selected.');
+            return;
+        }
+        const sanitized = sanitizeCoordinate(selectedPlace.latitude, selectedPlace.longitude);
+        if (!sanitized) {
+            setSafePlaceError('Invalid location coordinates.');
+            return;
+        }
+
         setSafePlaceSubmitState('submitting');
-        setTimeout(() => {
+        try {
+            await api.post('/api/safe-places', {
+                latitude: sanitized.latitude,
+                longitude: sanitized.longitude,
+                name: selectedPlace.name || 'Safe Place',
+                description: safePlaceAnswer.trim(),
+                address: selectedPlace.address || null,
+            });
             setSafePlaceSubmitState('success');
             RNAnimated.timing(safePlaceSuccessAnim, {
-                toValue: 1,
-                duration: 400,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
+                toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true,
             }).start();
             setTimeout(() => {
                 closePlaceSheet();
             }, 2500);
-        }, 1200);
-    }, [safePlaceAnswer, closePlaceSheet, safePlaceSuccessAnim]);
+        } catch (err: any) {
+            setSafePlaceSubmitState('idle');
+            setSafePlaceError(err?.message ?? 'Failed to submit safe place. Please try again.');
+        }
+    }, [safePlaceAnswer, selectedPlace, closePlaceSheet, safePlaceSuccessAnim]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
         setDirectionsMode(true);
         setEndLocation(destination);
         setRouteCoords([]);
         RNAnimated.timing(directionsProgress, {
-            toValue: 1,
-            duration: 260,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
+            toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
         closePlaceSheet();
     }, [closePlaceSheet, directionsProgress]);
@@ -1175,18 +1415,14 @@ export default function ExploreScreen() {
         setRouteCoords([]);
         setNavInstructions([]);
         setCurrentStepIdx(0);
-        // Phase 8 — reset safety state on exit
         setRouteUnsafe(false);
         setBlockedZoneName(null);
         setShowSafePath(false);
-        setIsScanAnimating(false);
+        setScanState(null);
         setSafeRouteCoords([]);
         setUnsafeRouteCoords([]);
         RNAnimated.timing(directionsProgress, {
-            toValue: 0,
-            duration: 220,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: false,
+            toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
     }, [directionsProgress]);
 
@@ -1220,7 +1456,7 @@ export default function ExploreScreen() {
             setRouteUnsafe(false);
             setBlockedZoneName(null);
             setShowSafePath(false);
-            setIsScanAnimating(false);
+            setScanState(null);
             setSafeRouteCoords([]);
             setUnsafeRouteCoords([]);
         }
@@ -1233,16 +1469,7 @@ export default function ExploreScreen() {
         } else {
             mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
         }
-    }, [
-        closeLocationCard,
-        closePlaceSheet,
-        deactivateSearch,
-        directionsMode,
-        exitDirectionsMode,
-        placeSheetOpen,
-        showLocationCard,
-        userLoc,
-    ]);
+    }, [closeLocationCard, closePlaceSheet, deactivateSearch, directionsMode, exitDirectionsMode, placeSheetOpen, showLocationCard, userLoc]);
 
     const handleStartSelect = useCallback((place: PlaceSuggestion) => {
         setStartLocation(place);
@@ -1306,9 +1533,8 @@ export default function ExploreScreen() {
         <AtmosphericShell>
             <View style={s.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-                {/* ── Map ─────────────────────────────────────────────────────── */}
+                {/* ── Map Framework ── */}
                 <MapView
                     ref={mapRef}
                     style={StyleSheet.absoluteFillObject}
@@ -1320,13 +1546,14 @@ export default function ExploreScreen() {
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
                 >
+                    {/* ── Dynamic Circle Color Mapping: Handles Red vs Yellow Thresholds ── */}
                     {RED_ZONES.map(zone => (
                         <Circle
                             key={zone.id}
                             center={{ latitude: zone.latitude, longitude: zone.longitude }}
                             radius={zone.radius}
-                            fillColor="rgba(255, 60, 60, 0.15)"
-                            strokeColor="rgba(255, 60, 60, 0.5)"
+                            fillColor={zone.isYellow ? "rgba(250, 204, 21, 0.12)" : "rgba(255, 60, 60, 0.15)"}
+                            strokeColor={zone.isYellow ? "rgba(250, 204, 21, 0.4)" : "rgba(255, 60, 60, 0.5)"}
                             strokeWidth={1}
                         />
                     ))}
@@ -1350,20 +1577,67 @@ export default function ExploreScreen() {
                         </Marker>
                     )}
 
-                    {/* Gray dashed = original unsafe route (shown only after recalculation) */}
-                    {safeRouteCoords.length > 0 && unsafeRouteCoords.length > 0 && (
+                    {/* ── Live Navigation Modern Tracking Arrow ── */}
+                    {isLiveNav && userLoc && (
+                        <Marker
+                            coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
+                            anchor={{ x: 0.5, y: 0.5 }}
+                            rotation={userLoc.heading || 0}
+                            flat={true}
+                            zIndex={1000}
+                        >
+                            <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                                <View style={{
+                                    position: 'absolute', width: 48, height: 48, borderRadius: 24,
+                                    backgroundColor: 'rgba(138,56,246,0.2)',
+                                    borderWidth: 1, borderColor: 'rgba(138,56,246,0.4)',
+                                }} />
+                                <View style={{
+                                    width: 28, height: 28, borderRadius: 14, backgroundColor: '#FFF',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    shadowColor: '#8A38F6', shadowOpacity: 0.8, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
+                                    elevation: 8,
+                                }}>
+                                    <Ionicons name="navigate" size={18} color="#8A38F6" style={{ transform: [{ rotate: '-45deg' }, { translateY: -1 }] }} />
+                                </View>
+                            </View>
+                        </Marker>
+                    )}
+
+                    {/*
+                     * ── Polyline Rendering Architecture ──
+                     * LAYER 1 (bottom): unsafeRouteCoords — Crimson ghost of the ORIGINAL dangerous route.
+                     *   Shown only when a safe detour exists alongside it. Never shares data with safe path.
+                     * LAYER 2 (middle): completedRouteCoords — Blue progress trail during live navigation.
+                     * LAYER 3 (top):   remainingRouteCoords / routeCoords — Purple core + translucent glow.
+                     *   This is the active navigation path (safe detour or clean original route).
+                     */}
+
+                    {/* LAYER 1 — Crimson ghost: original unsafe route snapshot (only if a safe detour also exists) */}
+                    {unsafeRouteCoords.length > 1 && safeRouteCoords.length > 1 && (
                         <Polyline
                             coordinates={unsafeRouteCoords}
-                            strokeColor="rgba(160,160,175,0.45)"
-                            strokeWidth={3}
-                            lineDashPattern={[8, 6]}
+                            strokeColor="rgba(185, 28, 28, 0.12)"
+                            strokeWidth={9}
                             lineCap="round"
                             lineJoin="round"
+                            zIndex={1}
+                        />
+                    )}
+                    {/* Muted crimson core, dashed */}
+                    {unsafeRouteCoords.length > 1 && safeRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={unsafeRouteCoords}
+                            strokeColor="rgba(220, 38, 38, 0.55)"
+                            strokeWidth={2.5}
+                            lineDashPattern={[5, 5]}
+                            lineCap="round"
+                            lineJoin="round"
+                            zIndex={2}
                         />
                     )}
 
-                    {/* Violet = primary route (shortest initially, safest after recalculation) */}
-                    {/* Completed route (green) */}
+                    {/* LAYER 2 — Blue progress trail (live nav: completed segments) */}
                     {completedRouteCoords.length > 1 && (
                         <Polyline
                             coordinates={completedRouteCoords}
@@ -1371,9 +1645,22 @@ export default function ExploreScreen() {
                             strokeWidth={5}
                             lineCap="round"
                             lineJoin="round"
+                            zIndex={3}
                         />
                     )}
-                    {/* Remaining route (violet) */}
+
+                    {/* LAYER 3 — Active safe track: remaining path during live nav */}
+                    {remainingRouteCoords.length > 1 && (
+                        <Polyline
+                            coordinates={remainingRouteCoords}
+                            strokeColor="rgba(138, 56, 246, 0.22)"
+                            strokeWidth={10}
+                            lineCap="round"
+                            lineJoin="round"
+                            zIndex={4}
+                        />
+                    )}
+                    {/* High-contrast purple core */}
                     {remainingRouteCoords.length > 1 && (
                         <Polyline
                             coordinates={remainingRouteCoords}
@@ -1381,9 +1668,22 @@ export default function ExploreScreen() {
                             strokeWidth={4}
                             lineCap="round"
                             lineJoin="round"
+                            zIndex={5}
                         />
                     )}
-                    {/* Fallback: full route if no progress split yet */}
+
+                    {/* LAYER 3 — Active safe track: static preview (before live nav starts) */}
+                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
+                        <Polyline
+                            coordinates={routeCoords}
+                            strokeColor="rgba(138, 56, 246, 0.22)"
+                            strokeWidth={10}
+                            lineCap="round"
+                            lineJoin="round"
+                            zIndex={4}
+                        />
+                    )}
+                    {/* High-contrast purple core */}
                     {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
                             coordinates={routeCoords}
@@ -1391,16 +1691,14 @@ export default function ExploreScreen() {
                             strokeWidth={4}
                             lineCap="round"
                             lineJoin="round"
+                            zIndex={5}
                         />
                     )}
                 </MapView>
 
                 {locationStatus === 'idle' && <PulseRadar />}
 
-
-
-
-                {/* ── Header with Animated Search ──────────────────────────────── */}
+                {/* ── Header with Animated Search ── */}
                 {!isLiveNav && (
                     <PremiumBar
                         style={[s.header, { top: insets.top + 8 }]}
@@ -1452,7 +1750,6 @@ export default function ExploreScreen() {
                                         </View>
                                     </View>
 
-                                    {/* Travel Mode Selector */}
                                     <View style={s.travelModeWrap}>
                                         {(['driving', 'walking', 'motorcycle', 'transit'] as const).map((mode) => (
                                             <TouchableOpacity
@@ -1475,7 +1772,6 @@ export default function ExploreScreen() {
                             )
                         ) : (
                             <>
-                                {/** Back button — animates in when search expands */}
                                 <RNAnimated.View
                                     style={{
                                         width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 36] }),
@@ -1496,7 +1792,6 @@ export default function ExploreScreen() {
                                     </TouchableOpacity>
                                 </RNAnimated.View>
 
-                                {/* Search bar — always visible, expands on focus */}
                                 <TouchableOpacity
                                     style={s.searchBarWrap}
                                     activeOpacity={1}
@@ -1521,7 +1816,6 @@ export default function ExploreScreen() {
                                     )}
                                 </TouchableOpacity>
 
-                                {/** Notification + burger — animate out AND release space so search expands */}
                                 <RNAnimated.View
                                     style={{
                                         width: searchProgress.interpolate({ inputRange: [0, 1], outputRange: [88, 0] }),
@@ -1565,7 +1859,7 @@ export default function ExploreScreen() {
                     </PremiumBar>
                 )}
 
-                {/* ── Top Live Banner ────────────────────────────────────────── */}
+                {/* ── Top Live Banner ── */}
                 {isLiveNav && navInstructions.length > 0 && (
                     <PremiumBar
                         style={[lb.bannerWrap, { top: insets.top + 8 }]}
@@ -1602,7 +1896,7 @@ export default function ExploreScreen() {
                     </PremiumBar>
                 )}
 
-                {/* ── Search Overlay — suggestions + recent (map hidden) ───────── */}
+                {/* ── Search Overlay ── */}
                 {searchActive && (
                     <View style={s.searchOverlay}>
                         <Pressable
@@ -1670,7 +1964,7 @@ export default function ExploreScreen() {
                     </View>
                 )}
 
-                {/* ── Start Location Overlay ─────────────────────────────── */}
+                {/* ── Start Location Overlay ── */}
                 {startSearchActive && (
                     <View style={s.searchOverlay}>
                         <Pressable
@@ -1678,8 +1972,7 @@ export default function ExploreScreen() {
                             onPress={() => setStartSearchActive(false)}
                             pointerEvents="box-only"
                         />
-                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 56 }]}
-                        >
+                        <View style={[s.searchOverlayContent, { paddingTop: insets.top + 56 }]}>
                             <View style={s.startSearchHeader}>
                                 <Ionicons name="search-outline" size={16} color={T.ink4} style={s.searchIcon} />
                                 <TextInput
@@ -1775,7 +2068,7 @@ export default function ExploreScreen() {
                     </View>
                 )}
 
-                {/* ── Current location button (35% from top) ───────────────────── */}
+                {/* ── Current location control button ── */}
                 {!directionsMode && !selectedPlace && (
                     <View style={s.mapControls}>
                         <TouchableOpacity
@@ -1789,7 +2082,7 @@ export default function ExploreScreen() {
                     </View>
                 )}
 
-                {/* ── Location Card — slides up from bottom ───────────────────── */}
+                {/* ── Location Card ── */}
                 {showLocationCard && (
                     <>
                         <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}>
@@ -1830,7 +2123,7 @@ export default function ExploreScreen() {
                     </>
                 )}
 
-                {/* ── Place Detail Sheet — half screen ─────────────────────── */}
+                {/* ── Place Detail Sheet ── */}
                 {placeSheetOpen && selectedPlace && (
                     <>
                         <RNAnimated.View style={[s.placeSheetBackdrop, { opacity: placeSheetOpacity }]}>
@@ -1988,13 +2281,12 @@ export default function ExploreScreen() {
                     </>
                 )}
 
-                {/* ── Step-by-Step Instruction Card ────────────────────────────── */}
+                {/* ── Step-by-Step Instruction Card ── */}
                 {directionsMode && navInstructions.length > 0 && (
                     <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                         <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={ns.cardTint} pointerEvents="none" />
-                        {/* Route warning badge */}
-                        {routeUnsafe && !isScanAnimating && blockedZoneName && (
+                        {routeUnsafe && scanState !== 'SCANNING' && blockedZoneName && (
                             <View style={ns.warningBadge}>
                                 <Ionicons name="warning" size={12} color="#E25B3A" style={{ marginRight: 4 }} />
                                 <Text style={ns.warningBadgeText}>Route passes through {blockedZoneName}</Text>
@@ -2023,7 +2315,7 @@ export default function ExploreScreen() {
                             </Text>
                             {!isLiveNav ? (
                                 <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                                    {showSafePath && !isScanAnimating && (
+                                    {showSafePath && scanState !== 'SCANNING' && (
                                         <TouchableOpacity
                                             style={ns.safePathBtn}
                                             onPress={triggerSafetyRecalculation}
@@ -2081,16 +2373,17 @@ export default function ExploreScreen() {
                     </View>
                 )}
 
-                {/* ── Safety Scan Overlay ─────────────────────────────────────── */}
+                {/* ── Redesigned Architecture Scan Overlay Container ── */}
                 <SafetyScanOverlay
-                    visible={isScanAnimating}
+                    scanState={scanState}
                     spinAnim={scanAnim}
                     r0={radarAnim0} r1={radarAnim1} r2={radarAnim2}
                     zoneName={blockedZoneName}
+                    onClose={() => setScanState(null)}
                 />
 
-                {/* ── Bottom Navbar ─────────────────────────────────────────────── */}
-                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
+                {/* ── Bottom Navbar ── */}
+                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                         {NAV_TABS.map(tab => (
                             <NavTab
@@ -2115,7 +2408,6 @@ export default function ExploreScreen() {
     );
 }
 
-// ── Tactical Map Style — identical to SOS screen ─────────────────────────────
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -2139,596 +2431,145 @@ const TACTICAL_MAP_STYLE = [
     { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
-// ── StyleSheet ────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
     root: { flex: 1 },
-
-    // ── Crosshair ──────────────────────────────────────────────────────────
     crosshairWrap: {
         position: 'absolute', alignSelf: 'center',
-        top: height * 0.29, // higher than center, closer to SOS screen feel
+        top: height * 0.29, zIndex: 10, width: 40, height: 40,
         alignItems: 'center', justifyContent: 'center',
-        zIndex: 10, width: 40, height: 40,
     },
-    crosshairH: {
-        position: 'absolute', width: 28, height: 1.5,
-        backgroundColor: T.violet, opacity: 0.85, borderRadius: 1,
-    },
-    crosshairV: {
-        position: 'absolute', width: 1.5, height: 28,
-        backgroundColor: T.violet, opacity: 0.85, borderRadius: 1,
-    },
-    crosshairDot: {
-        width: 5, height: 5, borderRadius: 2.5,
-        backgroundColor: T.violet,
-    },
-
-    // ── Header ─────────────────────────────────────────────────────────────
+    crosshairH: { position: 'absolute', width: 28, height: 1.5, backgroundColor: T.violet, opacity: 0.85, borderRadius: 1 },
+    crosshairV: { position: 'absolute', width: 1.5, height: 28, backgroundColor: T.violet, opacity: 0.85, borderRadius: 1 },
+    crosshairDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: T.violet },
     header: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: 28, zIndex: 300,
+        position: 'absolute', left: 14, right: 14, borderRadius: 28, zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
             android: { elevation: 6 },
         }),
     },
-    headerContent: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingVertical: 11,
-    },
-    directionsHeaderWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        width: '100%',
-    },
-    directionsFields: {
-        flex: 1,
-        backgroundColor: T.surfaceBulky,
-        borderRadius: R.md,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        paddingVertical: 6,
-        paddingHorizontal: 10,
-        gap: 6,
-    },
-    directionsInput: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        paddingVertical: 4,
-    },
-    directionsInputText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: T.ink,
-    },
-    directionsIcon: {
-        width: 16,
-        textAlign: 'center',
-    },
-    directionsDivider: {
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: 'rgba(255,255,255,0.12)',
-        marginVertical: 2,
-    },
-    travelModeWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginTop: 10,
-        gap: 8,
-    },
-    travelModeBtn: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-        paddingVertical: 8,
-        backgroundColor: T.surfaceBulky,
-        borderRadius: R.md,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
-    },
-    travelModeBtnActive: {
-        backgroundColor: T.violet,
-        borderColor: `${T.violet}80`,
-    },
-    travelModeText: {
-        fontSize: 11,
-        fontWeight: '600',
-        color: T.ink3,
-    },
-    travelModeTextActive: {
-        color: T.onPrimary,
-    },
-
-    // ── Start search input ─────────────────────────────────────────────
-    startSearchHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: T.surfaceBulky,
-        borderRadius: R.md,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        paddingHorizontal: 10,
-        height: 38,
-        marginBottom: 12,
-    },
-    startSearchInput: {
-        flex: 1,
-        fontSize: 13,
-        fontWeight: '500',
-        color: T.ink,
-        height: 38,
-        padding: 0,
-    },
+    headerContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: 11 },
+    directionsHeaderWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
+    directionsFields: { flex: 1, backgroundColor: T.surfaceBulky, borderRadius: R.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingVertical: 6, paddingHorizontal: 10, gap: 6 },
+    directionsInput: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+    directionsInputText: { fontSize: 13, fontWeight: '600', color: T.ink },
+    directionsIcon: { width: 16, textAlign: 'center' },
+    directionsDivider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.12)', marginVertical: 2 },
+    travelModeWrap: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 8 },
+    travelModeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, backgroundColor: T.surfaceBulky, borderRadius: R.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+    travelModeBtnActive: { backgroundColor: T.violet, borderColor: `${T.violet}80` },
+    travelModeText: { fontSize: 11, fontWeight: '600', color: T.ink3 },
+    travelModeTextActive: { color: T.onPrimary },
+    startSearchHeader: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.surfaceBulky, borderRadius: R.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, height: 38, marginBottom: 12 },
+    startSearchInput: { flex: 1, fontSize: 13, fontWeight: '500', color: T.ink, height: 38, padding: 0 },
     headerBtns: { flexDirection: 'row', gap: S.s2, alignItems: 'center', marginLeft: S.s2 },
-    hBtn: {
-        width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
+    hBtn: { width: 36, height: 36, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
     profileBtn: {
-        width: 40, height: 40, borderRadius: 20,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-        alignItems: 'center', justifyContent: 'center',
+        width: 40, height: 40, borderRadius: 20, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } },
             android: { elevation: 6, shadowColor: '#8A38F6' },
         }),
     },
-    profileAvatar: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
-    },
-    notifDot: {
-        position: 'absolute', top: 7, right: 7,
-        width: 7, height: 7, borderRadius: 3.5,
-        backgroundColor: T.danger, borderWidth: 1.5, borderColor: T.surface,
-    },
-
-    // ── Search Bar ─────────────────────────────────────────────────────────
-    searchBarWrap: {
-        flex: 1,
-        flexDirection: 'row', alignItems: 'center',
-        backgroundColor: T.surfaceBulky,
-        borderRadius: R.md,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        paddingHorizontal: 10,
-        height: 38,
-    },
+    profileAvatar: { width: 38, height: 38, borderRadius: 19 },
+    notifDot: { position: 'absolute', top: 7, right: 7, width: 7, height: 7, borderRadius: 3.5, backgroundColor: T.danger, borderWidth: 1.5, borderColor: T.surface },
+    searchBarWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: T.surfaceBulky, borderRadius: R.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, height: 38 },
     searchIcon: { marginRight: 6 },
-    searchInput: {
-        flex: 1,
-        fontSize: 13, fontWeight: '500',
-        color: T.ink,
-        height: 38,
-        padding: 0,
-    },
-
-    // ── Search Overlay ───────────────────────────────────────────────────
-    searchOverlay: {
-        position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: '#0B0716',
-        zIndex: 240,
-    },
-    searchOverlayBackdrop: {
-        ...StyleSheet.absoluteFillObject,
-    },
-    searchOverlayContent: {
-        paddingHorizontal: 16,
-        gap: 12,
-    },
-    searchSectionTitle: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: T.ink3,
-        letterSpacing: 1.1,
-        textTransform: 'uppercase',
-        marginBottom: 4,
-    },
-    searchRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 10,
-        paddingHorizontal: 10,
-        borderRadius: 12,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        marginBottom: 8,
-    },
-    searchIconWrap: {
-        width: 30,
-        height: 30,
-        borderRadius: 10,
-        backgroundColor: T.violetDim,
-        borderWidth: 1,
-        borderColor: `${T.violet}35`,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 10,
-    },
+    searchInput: { flex: 1, fontSize: 13, fontWeight: '500', color: T.ink, height: 38, padding: 0 },
+    searchOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0B0716', zIndex: 240 },
+    searchOverlayBackdrop: { ...StyleSheet.absoluteFillObject },
+    searchOverlayContent: { paddingHorizontal: 16, gap: 12 },
+    searchSectionTitle: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 1.1, textTransform: 'uppercase', marginBottom: 4 },
+    searchRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 10, borderRadius: 12, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 8 },
+    searchIconWrap: { width: 30, height: 30, borderRadius: 10, backgroundColor: T.violetDim, borderWidth: 1, borderColor: `${T.violet}35`, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
     searchTextWrap: { flex: 1 },
-    searchTitle: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: T.ink,
-        letterSpacing: -0.2,
-    },
-    searchSubtitle: {
-        fontSize: 12,
-        fontWeight: '500',
-        color: T.ink3,
-        marginTop: 2,
-    },
-    searchEmptyText: {
-        fontSize: 13,
-        color: T.ink4,
-        marginTop: 4,
-    },
-
-    // ── Map controls ───────────────────────────────────────────────────────
+    searchTitle: { fontSize: 14, fontWeight: '700', color: T.ink, letterSpacing: -0.2 },
+    searchSubtitle: { fontSize: 12, fontWeight: '500', color: T.ink3, marginTop: 2 },
+    searchEmptyText: { fontSize: 13, color: T.ink4, marginTop: 4 },
     mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     ctrlBtn: {
-        width: 44, height: 44, borderRadius: 12,
-        backgroundColor: T.surfaceBulky,
-        alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        width: 44, height: 44, borderRadius: 12, backgroundColor: T.surfaceBulky, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.15, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 4 },
         }),
     },
-
-    // ── Selected Place Marker ───────────────────────────────────────────
-    placeMarkerWrap: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 26,
-        height: 26,
-    },
+    placeMarkerWrap: { alignItems: 'center', justifyContent: 'center', width: 26, height: 26 },
     placeMarkerIconWrap: {
-        alignItems: 'center',
-        justifyContent: 'center',
+        alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.45, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
             android: { elevation: 7, shadowColor: '#8A38F6' },
         }),
     },
-    placeMarkerStem: {
-        width: 0,
-        height: 0,
-    },
-
-    // ── Place Detail Sheet ──────────────────────────────────────────────
-    placeSheetBackdrop: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(3,3,8,0.35)',
-        zIndex: 230,
-    },
+    placeMarkerStem: { width: 0, height: 0 },
+    placeSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,3,8,0.35)', zIndex: 230 },
     placeSheet: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        height: height * 0.5,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        overflow: 'hidden',
-        zIndex: 240,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
+        position: 'absolute', left: 0, right: 0, height: height * 0.5, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', zIndex: 240, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
         ...Platform.select({
             ios: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 18, shadowOffset: { width: 0, height: -4 } },
             android: { elevation: 12 },
         }),
     },
-    placeSheetTint: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(12,9,22,0.92)',
-    },
-    placeSheetHandleWrap: {
-        alignItems: 'center',
-        paddingTop: 10,
-    },
-    placeSheetHandle: {
-        width: 44,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: T.lineBold,
-        opacity: 0.6,
-    },
-    placeSheetHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 18,
-        paddingTop: 8,
-        paddingBottom: 12,
-    },
-    placeSheetTitle: {
-        fontSize: 18,
-        fontWeight: '800',
-        color: T.ink,
-        letterSpacing: -0.3,
-    },
-    placeSheetSubtitle: {
-        fontSize: 12,
-        fontWeight: '500',
-        color: T.ink3,
-        marginTop: 4,
-    },
-    placeSheetActions: {
-        flexDirection: 'row',
-        gap: 10,
-        paddingHorizontal: 18,
-        paddingBottom: 12,
-    },
-    placeSheetActionBtn: {
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingVertical: 10,
-        borderRadius: 999,
-        borderWidth: 1,
-    },
-    placeSheetActionBtnPrimary: {
-        backgroundColor: T.violet,
-        borderColor: `${T.violet}70`,
-    },
-    placeSheetActionBtnSecondary: {
-        backgroundColor: T.surfaceBulky,
-        borderColor: `${T.violet}45`,
-    },
-    placeSheetActionBtnTextPrimary: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: T.onPrimary,
-        letterSpacing: 0.2,
-    },
-    placeSheetActionBtnTextSecondary: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: T.violet,
-        letterSpacing: 0.2,
-    },
-    safePlaceQuestion: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: T.ink3,
-        lineHeight: 16,
-    },
-    safePlaceInput: {
-        minHeight: 96,
-        borderRadius: 14,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.12)',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        fontSize: 13,
-        fontWeight: '600',
-        color: T.ink,
-    },
-    safePlaceError: {
-        fontSize: 12,
-        fontWeight: '600',
-        color: T.danger,
-        marginTop: -4,
-    },
-    safePlaceActions: {
-        flexDirection: 'row',
-        gap: 10,
-        marginTop: 4,
-    },
-    safePlaceSuccessWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-        borderRadius: 16,
-        backgroundColor: `${T.success}14`,
-        borderWidth: 1,
-        borderColor: `${T.success}35`,
-        marginTop: 6,
-    },
-    safePlaceSuccessIcon: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: T.success,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    safePlaceSuccessTitle: {
-        fontSize: 13,
-        fontWeight: '800',
-        color: T.ink,
-        letterSpacing: -0.2,
-    },
-    safePlaceSuccessSubtitle: {
-        marginTop: 2,
-        fontSize: 12,
-        fontWeight: '600',
-        color: T.ink3,
-        lineHeight: 16,
-    },
-    safePlaceBtn: {
-        flex: 1,
-        height: 40,
-        borderRadius: 999,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-    },
-    safePlaceBtnSecondary: {
-        backgroundColor: T.surfaceBulky,
-        borderColor: `${T.violet}45`,
-    },
-    safePlaceBtnCancel: {
-        backgroundColor: T.dangerLight,
-        borderColor: T.dangerBorder,
-    },
-    safePlaceBtnPrimary: {
-        backgroundColor: T.violet,
-        borderColor: `${T.violet}70`,
-    },
-    safePlaceBtnPrimaryDisabled: {
-        backgroundColor: `${T.violet}40`,
-        borderColor: `${T.violet}40`,
-    },
-    safePlaceBtnTextSecondary: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: T.violet,
-        letterSpacing: 0.2,
-    },
-    safePlaceBtnTextCancel: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: T.danger,
-        letterSpacing: 0.2,
-    },
-    safePlaceBtnTextPrimary: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: T.onPrimary,
-        letterSpacing: 0.2,
-    },
-    safePlaceKeyboardAvoiding: {
-        width: '100%',
-    },
-    placeSheetSection: {
-        paddingHorizontal: 18,
-        paddingTop: 6,
-        gap: 10,
-    },
-    placeSheetSectionTitle: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: T.ink3,
-        letterSpacing: 1.0,
-        textTransform: 'uppercase',
-    },
-    placeSheetEmpty: {
-        fontSize: 13,
-        color: T.ink4,
-    },
-    placeIncidentRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        borderRadius: 12,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
-    },
-    placeIncidentInfo: {
-        flex: 1,
-    },
-    placeIncidentName: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: T.ink,
-    },
-    placeIncidentTime: {
-        fontSize: 11,
-        fontWeight: '500',
-        color: T.ink3,
-        marginTop: 2,
-    },
-    placeIncidentPill: {
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 999,
-        borderWidth: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    placeIncidentPillActive: {
-        backgroundColor: T.violetDim,
-        borderColor: `${T.violet}55`,
-    },
-    placeIncidentPillResolved: {
-        backgroundColor: T.safeLight,
-        borderColor: `${T.success}40`,
-    },
-    placeIncidentPillCancelled: {
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderColor: 'rgba(255,255,255,0.15)',
-    },
-    placeIncidentPillText: {
-        fontSize: 10,
-        fontWeight: '700',
-        color: T.ink,
-        letterSpacing: 0.6,
-    },
-
-    // ── Location Card ──────────────────────────────────────────────────────
-    locationBackdrop: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(3,3,8,0.26)',
-        zIndex: 220,
-    },
+    placeSheetTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(12,9,22,0.92)' },
+    placeSheetHandleWrap: { alignItems: 'center', paddingTop: 10 },
+    placeSheetHandle: { width: 44, height: 4, borderRadius: 2, backgroundColor: T.lineBold, opacity: 0.6 },
+    placeSheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12 },
+    placeSheetTitle: { fontSize: 18, fontWeight: '800', color: T.ink, letterSpacing: -0.3 },
+    placeSheetSubtitle: { fontSize: 12, fontWeight: '500', color: T.ink3, marginTop: 4 },
+    placeSheetActions: { flexDirection: 'row', gap: 10, paddingHorizontal: 18, paddingBottom: 12 },
+    placeSheetActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 999, borderWidth: 1 },
+    placeSheetActionBtnPrimary: { backgroundColor: T.violet, borderColor: `${T.violet}70` },
+    placeSheetActionBtnSecondary: { backgroundColor: T.surfaceBulky, borderColor: `${T.violet}45` },
+    placeSheetActionBtnTextPrimary: { fontSize: 12, fontWeight: '800', color: T.onPrimary, letterSpacing: 0.2 },
+    placeSheetActionBtnTextSecondary: { fontSize: 12, fontWeight: '800', color: T.violet, letterSpacing: 0.2 },
+    safePlaceQuestion: { fontSize: 12, fontWeight: '600', color: T.ink3, lineHeight: 16 },
+    safePlaceInput: { minHeight: 96, borderRadius: 14, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontWeight: '600', color: T.ink },
+    safePlaceError: { fontSize: 12, fontWeight: '600', color: T.danger, marginTop: -4 },
+    safePlaceActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+    safePlaceSuccessWrap: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 16, backgroundColor: `${T.success}14`, borderWidth: 1, borderColor: `${T.success}35`, marginTop: 6 },
+    safePlaceSuccessIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: T.success, alignItems: 'center', justifyContent: 'center' },
+    safePlaceSuccessTitle: { fontSize: 13, fontWeight: '800', color: T.ink, letterSpacing: -0.2 },
+    safePlaceSuccessSubtitle: { marginTop: 2, fontSize: 12, fontWeight: '600', color: T.ink3, lineHeight: 16 },
+    safePlaceBtn: { flex: 1, height: 40, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+    safePlaceBtnSecondary: { backgroundColor: T.surfaceBulky, borderColor: `${T.violet}45` },
+    safePlaceBtnCancel: { backgroundColor: T.dangerLight, borderColor: T.dangerBorder },
+    safePlaceBtnPrimary: { backgroundColor: T.violet, borderColor: `${T.violet}70` },
+    safePlaceBtnPrimaryDisabled: { backgroundColor: `${T.violet}40`, borderColor: `${T.violet}40` },
+    safePlaceBtnTextSecondary: { fontSize: 12, fontWeight: '800', color: T.violet, letterSpacing: 0.2 },
+    safePlaceBtnTextCancel: { fontSize: 12, fontWeight: '800', color: T.danger, letterSpacing: 0.2 },
+    safePlaceBtnTextPrimary: { fontSize: 12, fontWeight: '800', color: T.onPrimary, letterSpacing: 0.2 },
+    safePlaceKeyboardAvoiding: { width: '100%' },
+    placeSheetSection: { paddingHorizontal: 18, paddingTop: 6, gap: 10 },
+    placeSheetSectionTitle: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 1.0, textTransform: 'uppercase' },
+    placeSheetEmpty: { fontSize: 13, color: T.ink4 },
+    placeIncidentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+    placeIncidentInfo: { flex: 1 },
+    placeIncidentName: { fontSize: 13, fontWeight: '700', color: T.ink },
+    placeIncidentTime: { fontSize: 11, fontWeight: '500', color: T.ink3, marginTop: 2 },
+    placeIncidentPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+    placeIncidentPillActive: { backgroundColor: T.violetDim, borderColor: `${T.violet}55` },
+    placeIncidentPillResolved: { backgroundColor: T.safeLight, borderColor: `${T.success}40` },
+    placeIncidentPillCancelled: { backgroundColor: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' },
+    placeIncidentPillText: { fontSize: 10, fontWeight: '700', color: T.ink, letterSpacing: 0.6 },
+    locationBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,3,8,0.26)', zIndex: 220 },
     locationCard: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, overflow: 'hidden',
-        borderWidth: 1, borderColor: `${T.violet}30`,
-        zIndex: 250,
+        position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: `${T.violet}30`, zIndex: 250,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
             android: { elevation: 10 },
         }),
     },
-    locationCardGrabberWrap: {
-        alignItems: 'center',
-        paddingTop: 10,
-    },
-    locationCardGrabber: {
-        width: 42,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: T.lineBold,
-        opacity: 0.75,
-    },
+    locationCardGrabberWrap: { alignItems: 'center', paddingTop: 10 },
+    locationCardGrabber: { width: 42, height: 4, borderRadius: 2, backgroundColor: T.lineBold, opacity: 0.75 },
     locationCardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.80)' },
-    locationCardContent: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: 10, paddingBottom: 14,
-        gap: S.s3,
-    },
+    locationCardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: 10, paddingBottom: 14, gap: S.s3 },
     locationCardLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.s3 },
-    locationCardIconWrap: {
-        width: 40, height: 40, borderRadius: R.hBtn,
-        backgroundColor: `${T.violet}18`,
-        borderWidth: 1, borderColor: `${T.violet}30`,
-        alignItems: 'center', justifyContent: 'center',
-    },
+    locationCardIconWrap: { width: 40, height: 40, borderRadius: R.hBtn, backgroundColor: `${T.violet}18`, borderWidth: 1, borderColor: `${T.violet}30`, alignItems: 'center', justifyContent: 'center' },
     locationCardTitle: { fontSize: 11, fontWeight: '700', color: T.ink4, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 2 },
     locationCardAddr: { fontSize: 13, fontWeight: '600', color: T.ink, letterSpacing: -0.1, lineHeight: 18 },
-    locationCardClose: {
-        width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-
-    // ── Nav Bar ────────────────────────────────────────────────────────────
-    navWrap: {
-        position: 'absolute', left: 0, right: 0,
-        alignItems: 'center', zIndex: 200,
-    },
+    locationCardClose: { width: 36, height: 36, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+    navWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 200 },
     navBar: {
         width: width * 0.88, borderRadius: R.pill,
         ...Platform.select({
@@ -2736,157 +2577,48 @@ const s = StyleSheet.create({
             android: { elevation: 6 },
         }),
     },
-    navBarContent: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-around',
-        paddingHorizontal: 8, paddingVertical: 8,
-    },
+    navBarContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 8, paddingVertical: 8 },
     navTab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
     navTabInner: { alignItems: 'center', gap: 0 },
     navUnderline: { width: 16, height: 3, borderRadius: 1.5, marginTop: 5 },
-    navIconBox: {
-        width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    navIconBoxActive: {
-        backgroundColor: 'rgba(138,56,246,0.12)',
-        borderColor: `${T.violet}40`,
-    },
+    navIconBox: { width: 36, height: 36, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+    navIconBoxActive: { backgroundColor: 'rgba(138,56,246,0.12)', borderColor: `${T.violet}40` },
 });
 
-// ── Navigation Instruction Card Styles ───────────────────────────────────────
 const ns = StyleSheet.create({
     cardWrap: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, overflow: 'hidden',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        zIndex: 260,
+        position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 260,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
             android: { elevation: 10 },
         }),
     },
-    cardTint: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,10,18,0.88)',
-    },
-    cardBody: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2,
-        gap: S.s3,
-    },
-    iconWrap: {
-        width: 44, height: 44, borderRadius: R.sm,
-        backgroundColor: T.violetDim,
-        borderWidth: 1, borderColor: `${T.violet}35`,
-        alignItems: 'center', justifyContent: 'center',
-    },
+    cardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.88)' },
+    cardBody: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2, gap: S.s3 },
+    iconWrap: { width: 44, height: 44, borderRadius: R.sm, backgroundColor: T.violetDim, borderWidth: 1, borderColor: `${T.violet}35`, alignItems: 'center', justifyContent: 'center' },
     textWrap: { flex: 1 },
-    instrText: {
-        fontSize: 14, fontWeight: '700',
-        color: T.ink, letterSpacing: -0.2,
-        lineHeight: 20,
-    },
-    distText: {
-        fontSize: 12, fontWeight: '600',
-        color: T.ink3, marginTop: 2,
-    },
-    cardFooter: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2,
-    },
-    stepCounter: {
-        fontSize: 11, fontWeight: '600',
-        color: T.ink4, letterSpacing: 0.4,
-    },
-    autoAdvanceText: {
-        fontSize: 11, fontWeight: '500',
-        color: T.violet, letterSpacing: 0.2,
-    },
-    navBtn: {
-        width: 32, height: 32, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    goLiveBtn: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 12, height: 32,
-        borderRadius: R.pill,
-        backgroundColor: T.violet,
-        borderWidth: 1, borderColor: `${T.violet}70`,
-    },
-    goLiveBtnText: {
-        fontSize: 11, fontWeight: '700',
-        color: T.onPrimary, letterSpacing: 0.2,
-    },
-    endLiveBtn: {
-        paddingHorizontal: 14, paddingVertical: 8,
-        borderRadius: R.pill,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-    },
-    endLiveBtnText: {
-        fontSize: 11, fontWeight: '700',
-        color: T.onPrimary, letterSpacing: 0.2,
-    },
-    safePathBtn: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 12, height: 32,
-        borderRadius: R.pill,
-        backgroundColor: '#E25B3A',
-        borderWidth: 1, borderColor: 'rgba(226,91,58,0.6)',
-    },
-    safePathBtnText: {
-        fontSize: 11, fontWeight: '700',
-        color: T.onPrimary, letterSpacing: 0.3,
-    },
-    warningBadge: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2,
-    },
-    warningBadgeText: {
-        fontSize: 11, fontWeight: '600',
-        color: '#E25B3A', letterSpacing: 0.2,
-    },
+    instrText: { fontSize: 14, fontWeight: '700', color: T.ink, letterSpacing: -0.2, lineHeight: 20 },
+    distText: { fontSize: 12, fontWeight: '600', color: T.ink3, marginTop: 2 },
+    cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2 },
+    stepCounter: { fontSize: 11, fontWeight: '600', color: T.ink4, letterSpacing: 0.4 },
+    autoAdvanceText: { fontSize: 11, fontWeight: '500', color: T.violet, letterSpacing: 0.2 },
+    navBtn: { width: 32, height: 32, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+    goLiveBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: T.violet, borderWidth: 1, borderColor: `${T.violet}70` },
+    goLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+    endLiveBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: R.pill, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+    endLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+    safePathBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: '#E25B3A', borderWidth: 1, borderColor: 'rgba(226,91,58,0.6)' },
+    safePathBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.3 },
+    warningBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s2, paddingBottom: 2 },
+    warningBadgeText: { fontSize: 11, fontWeight: '600', color: '#E25B3A', letterSpacing: 0.2 },
 });
 
-// ── Top Live Banner Styles ───────────────────────────────────────────
 const lb = StyleSheet.create({
-    bannerWrap: {
-        position: 'absolute', left: 14, right: 14,
-        borderRadius: R.lg, overflow: 'hidden',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        zIndex: 360,
-    },
-    bannerTint: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(10,10,18,0.85)',
-    },
-    bannerBody: {
-        width: '100%',
-        flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: S.s4, paddingVertical: S.s4,
-        gap: S.s4,
-    },
+    bannerWrap: { position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 360 },
+    bannerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    bannerBody: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: S.s4, gap: S.s4 },
     textWrap: { flex: 1 },
-    distText: {
-        fontSize: 16, fontWeight: '800',
-        color: T.violet, marginBottom: 4, letterSpacing: -0.2,
-    },
-    instrText: {
-        fontSize: 18, fontWeight: '700',
-        color: T.ink, letterSpacing: -0.3,
-        lineHeight: 22,
-    },
-    audioBtn: {
-        width: 44, height: 44, borderRadius: R.hBtn,
-        backgroundColor: `${T.violet}10`,
-        borderWidth: 1, borderColor: `${T.violet}25`,
-        alignItems: 'center', justifyContent: 'center',
-    },
+    distText: { fontSize: 16, fontWeight: '800', color: T.violet, marginBottom: 4, letterSpacing: -0.2 },
+    instrText: { fontSize: 18, fontWeight: '700', color: T.ink, letterSpacing: -0.3, lineHeight: 22 },
+    audioBtn: { width: 44, height: 44, borderRadius: R.hBtn, backgroundColor: `${T.violet}10`, borderWidth: 1, borderColor: `${T.violet}25`, alignItems: 'center', justifyContent: 'center' },
 });
-

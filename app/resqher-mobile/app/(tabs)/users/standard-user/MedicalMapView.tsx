@@ -5,7 +5,7 @@
  *  • Interactive provider pins (contextual to selected category)
  *  • Horizontal Quick Selector Chips above navbar
  *  • Bulky Glass callout bottom sheet on pin tap
- *  • Auto-triggered Electric Violet safe route polyline + Red Zone circles
+ *  • Auto-triggered Electric Violet safe route polyline
  *  • Persistent Medical navbar tab glow
  *
  * Design: AtmosphericShell + Bulky Glass material + Tactical Dark Map.
@@ -17,12 +17,13 @@ import {
     Dimensions, Platform, ScrollView, ViewStyle, Image, Alert, Linking,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import * as Speech from 'expo-speech';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -31,10 +32,9 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
+import { medicalService } from '../../../../src/services/api';
 import {
-    DOCTORS, HOSPITALS, PHARMACIES, AMBULANCES,
-    RED_ZONES,
-    SPECIALIST_CHIPS, AMBULANCE_CHIPS, GENERIC_CHIPS,
+    SPECIALIST_CHIPS, GENERIC_CHIPS,
 } from '../../../../src/data/medicalMockData';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
 
@@ -93,7 +93,6 @@ const D = {
     subtitle: '#C4C1D4',
     muted: '#A09CB2',
     safeColor: '#3B82F6',
-    dangerColor: 'rgba(255,59,48,0.3)',
     cardRadius: 16,
 } as const;
 
@@ -130,7 +129,7 @@ const TACTICAL_MAP_STYLE = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PremiumBar — Bulky Glass bar (identical pattern across screens)
+// PremiumBar — Bulky Glass bar
 // ═══════════════════════════════════════════════════════════════════════════════
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
@@ -325,11 +324,30 @@ export default function MedicalMapView() {
     const [isLiveNav, setIsLiveNav] = useState(false);
     const [medProfile, setMedProfile] = useState<UserProfile | null>(null);
 
+    // Animations
+    const calloutY = useRef(new RNAnimated.Value(400)).current;
+    const calloutOpacity = useRef(new RNAnimated.Value(0)).current;
+
+    // Reset UI state when filter chips or categories change to avoid mapping dead nodes
     useEffect(() => {
-        getUserProfile().then(setMedProfile).catch(() => {});
+        setSelectedChip('all');
+        setSelectedPin(null);
+        setShowCallout(false);
+        calloutY.setValue(400);
+        calloutOpacity.setValue(0);
+    }, [category]);
+
+    useEffect(() => {
+        setSelectedPin(null);
+        setShowCallout(false);
+        calloutY.setValue(400);
+        calloutOpacity.setValue(0);
+    }, [selectedChip]);
+
+    useEffect(() => {
+        getUserProfile().then(setMedProfile).catch(() => { });
     }, []);
     const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
-    const [isReviewMode, setIsReviewMode] = useState(false);
     const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
     const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
     const [locationPermitted, setLocationPermitted] = useState(false);
@@ -339,6 +357,60 @@ export default function MedicalMapView() {
     const lastRerouteOriginRef = useRef<LatLng | null>(null);
     const routeOverlaySlideY = useRef(new RNAnimated.Value(0)).current;
 
+    // ── Live Nav & Review Mode States ──
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [isAudioMuted, setIsAudioMuted] = useState(false);
+    const liveHeaderY = useRef(new RNAnimated.Value(-150)).current;
+    const liveFooterY = useRef(new RNAnimated.Value(150)).current;
+
+    useEffect(() => {
+        if (isLiveNav) {
+            RNAnimated.parallel([
+                RNAnimated.spring(liveHeaderY, { toValue: 0, useNativeDriver: true, tension: 70, friction: 10 }),
+                RNAnimated.spring(liveFooterY, { toValue: 0, useNativeDriver: true, tension: 70, friction: 10 }),
+            ]).start();
+        } else {
+            RNAnimated.parallel([
+                RNAnimated.timing(liveHeaderY, { toValue: -150, duration: 250, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+                RNAnimated.timing(liveFooterY, { toValue: 150, duration: 250, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+            ]).start();
+            setIsReviewMode(false); // Reset review mode when exiting live
+        }
+    }, [isLiveNav, liveHeaderY, liveFooterY]);
+
+    // ── Live Backend Data ──────────────────────────────────────────────────
+    const [liveDoctors, setLiveDoctors] = useState<any[]>([]);
+    const [liveHospitals, setLiveHospitals] = useState<any[]>([]);
+    const [livePharmacies, setLivePharmacies] = useState<any[]>([]);
+    const [liveAmbulances, setLiveAmbulances] = useState<any[]>([]);
+    const [providersLoading, setProvidersLoading] = useState(true);
+
+    // Fetch all providers from backend on mount
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const allProviders = await medicalService.getProviders();
+                if (cancelled) return;
+                // Categorize backend providers by type
+                const doctors = allProviders.filter((p: any) => p?.type === 'specialists');
+                const hospitals = allProviders.filter((p: any) => p?.type === 'hospital');
+                const pharmacies = allProviders.filter((p: any) => p?.type === 'pharmacy');
+                const ambulances = allProviders.filter((p: any) => p?.type === 'ambulance');
+
+                setLiveDoctors(doctors);
+                setLiveHospitals(hospitals);
+                setLivePharmacies(pharmacies);
+                setLiveAmbulances(ambulances);
+            } catch (err) {
+                console.warn('[MedicalMapView] Failed to fetch providers:', err);
+            } finally {
+                if (!cancelled) setProvidersLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
     // Load profile picture on screen focus
     useFocusEffect(
         useCallback(() => {
@@ -346,102 +418,100 @@ export default function MedicalMapView() {
         }, []),
     );
 
-    // Animations
-    const calloutY = useRef(new RNAnimated.Value(400)).current;
-    const calloutOpacity = useRef(new RNAnimated.Value(0)).current;
-
     // ── Contextual chips ────────────────────────────────────────────────────
     const chips = useMemo(() => {
         if (category === 'specialists') return SPECIALIST_CHIPS;
-        if (category === 'ambulance') return AMBULANCE_CHIPS;
+        if (category === 'ambulance') {
+            return [{ id: 'all', label: 'All Ambulances', icon: 'car' }];
+        }
         return GENERIC_CHIPS;
     }, [category]);
 
-    useEffect(() => {
-        if (category !== 'specialists' && selectedChip !== 'all') {
-            setSelectedChip('all');
-        }
-    }, [category, selectedChip]);
-
-    // ── Provider pins data ──────────────────────────────────────────────────
+    // ── Provider pins data (LIVE from backend) ────────────────────────
     const providers = useMemo<ProviderCard[]>(() => {
         switch (category) {
             case 'specialists': {
-                const doctor = DOCTORS[0];
-                return [
-                    {
-                        id: 'jamuna-doctor',
-                        name: doctor?.name ?? 'Dr. Sarah Ahmed',
-                        latitude: JAMUNA_FUTURE_PARK.latitude,
-                        longitude: JAMUNA_FUTURE_PARK.longitude,
-                        rating: doctor?.rating ?? 4.8,
-                        affiliation: doctor?.affiliation ?? 'Jamuna Future Park Area',
-                        degree: doctor?.degree ?? 'MBBS, FCPS',
-                        specialty: doctor?.specialty ?? 'Cardiologist',
-                        hospital: doctor?.hospital ?? 'Jamuna Future Park Medical Wing',
-                        shift,
-                        phone: doctor?.phone ?? '01XXXXXXXXX',
-                        type: 'specialists',
-                    },
-                ];
-            }
-            case 'hospital':
-                {
-                    const hospital = HOSPITALS[0];
-                    return hospital
-                        ? [
-                            {
-                                id: 'jamuna-hospital',
-                                name: hospital.name,
-                                latitude: JAMUNA_FUTURE_PARK.latitude,
-                                longitude: JAMUNA_FUTURE_PARK.longitude,
-                                rating: hospital.rating ?? 0,
-                                affiliation: hospital.affiliation ?? '',
-                                address: hospital.address,
-                                type: 'hospital',
-                            },
-                        ]
-                        : [];
-                }
-            case 'ambulance': {
-                let ambs = [...AMBULANCES];
-                if (selectedChip !== 'all') {
-                    ambs = ambs.filter(a => a.type === selectedChip);
-                }
-                return ambs.map(a => ({
-                    id: a.id,
-                    name: a.affiliation ?? a.providerName,
+                // Use live data, fall back to a single placeholder if backend is empty
+                let docs = liveDoctors.length > 0 ? liveDoctors : [{
+                    id: 'placeholder-doc',
+                    name: 'Dr. Sarah Ahmed',
                     latitude: JAMUNA_FUTURE_PARK.latitude,
                     longitude: JAMUNA_FUTURE_PARK.longitude,
-                    rating: a.rating ?? 0,
-                    affiliation: a.affiliation ?? '',
-                    address: a.affiliation ?? '',
-                    hotline: a.contactNumber ?? '999 / 017XXXXXXXX',
-                    type: 'ambulance',
+                    rating: 4.8,
+                    affiliation: 'Jamuna Future Park Area',
+                    degree: 'MBBS, FCPS',
+                    specialty: 'Cardiologist',
+                    hospitalAffiliation: 'Jamuna Future Park Medical Wing',
+                }];
+
+                // Filter by specialty if a specific chip is chosen
+                if (selectedChip !== 'all') {
+                    docs = docs.filter((doctor: any) => {
+                        const specialty = (doctor?.specialty || '').toLowerCase();
+                        const chipId = selectedChip.toLowerCase();
+                        return specialty.includes(chipId) || chipId.includes(specialty) || doctor?.type === selectedChip;
+                    });
+                }
+
+                return docs.map((doctor: any) => ({
+                    id: String(doctor?.id ?? `doc-${Math.random()}`),
+                    name: doctor?.name ?? 'Doctor',
+                    latitude: Number(doctor?.latitude) || JAMUNA_FUTURE_PARK.latitude,
+                    longitude: Number(doctor?.longitude) || JAMUNA_FUTURE_PARK.longitude,
+                    rating: Number(doctor?.rating) || 0,
+                    affiliation: doctor?.affiliation ?? doctor?.hospitalAffiliation ?? '',
+                    degree: doctor?.degree ?? '',
+                    specialty: doctor?.specialty ?? '',
+                    hospital: doctor?.hospitalAffiliation ?? doctor?.hospital ?? '',
+                    shift,
+                    phone: doctor?.contactNumber ?? '01XXXXXXXXX',
+                    type: 'specialists' as const,
                 }));
             }
-            case 'pharmacy':
-                {
-                    const pharmacy = PHARMACIES[0];
-                    return pharmacy
-                        ? [
-                            {
-                                id: 'jamuna-pharmacy',
-                                name: pharmacy.name,
-                                latitude: JAMUNA_FUTURE_PARK.latitude,
-                                longitude: JAMUNA_FUTURE_PARK.longitude,
-                                rating: pharmacy.rating ?? 0,
-                                affiliation: pharmacy.affiliation ?? '',
-                                address: pharmacy.address,
-                                type: 'pharmacy',
-                            },
-                        ]
-                        : [];
-                }
+            case 'hospital': {
+                const hosps = liveHospitals.length > 0 ? liveHospitals : [];
+                return hosps.map((hospital: any) => ({
+                    id: String(hospital?.id ?? `hosp-${Math.random()}`),
+                    name: hospital?.name ?? 'Hospital',
+                    latitude: Number(hospital?.latitude) || JAMUNA_FUTURE_PARK.latitude,
+                    longitude: Number(hospital?.longitude) || JAMUNA_FUTURE_PARK.longitude,
+                    rating: Number(hospital?.rating) || 0,
+                    affiliation: hospital?.affiliation ?? '',
+                    address: hospital?.address ?? '',
+                    type: 'hospital' as const,
+                }));
+            }
+            case 'ambulance': {
+                let ambs = liveAmbulances.length > 0 ? [...liveAmbulances] : [];
+                return ambs.map((a: any) => ({
+                    id: String(a?.id ?? `amb-${Math.random()}`),
+                    name: a?.affiliation ?? a?.name ?? 'Ambulance',
+                    latitude: Number(a?.latitude) || JAMUNA_FUTURE_PARK.latitude,
+                    longitude: Number(a?.longitude) || JAMUNA_FUTURE_PARK.longitude,
+                    rating: Number(a?.rating) || 0,
+                    affiliation: a?.affiliation ?? '',
+                    address: a?.affiliation ?? '',
+                    hotline: a?.contactNumber ?? '999 / 017XXXXXXXX',
+                    type: 'ambulance' as const,
+                }));
+            }
+            case 'pharmacy': {
+                const pharms = livePharmacies.length > 0 ? livePharmacies : [];
+                return pharms.map((pharmacy: any) => ({
+                    id: String(pharmacy?.id ?? `pharm-${Math.random()}`),
+                    name: pharmacy?.name ?? 'Pharmacy',
+                    latitude: Number(pharmacy?.latitude) || JAMUNA_FUTURE_PARK.latitude,
+                    longitude: Number(pharmacy?.longitude) || JAMUNA_FUTURE_PARK.longitude,
+                    rating: Number(pharmacy?.rating) || 0,
+                    affiliation: pharmacy?.affiliation ?? '',
+                    address: pharmacy?.address ?? '',
+                    type: 'pharmacy' as const,
+                }));
+            }
             default:
                 return [];
         }
-    }, [category, shift, selectedChip]);
+    }, [category, shift, selectedChip, liveDoctors, liveHospitals, liveAmbulances, livePharmacies]);
 
     // ── Selected provider details ───────────────────────────────────────────
     const selectedProvider = useMemo(() =>
@@ -567,7 +637,7 @@ export default function MedicalMapView() {
             const route = data?.routes?.[0];
 
             if (!route) {
-                Alert.alert('Route unavailable', 'No route found for this doctor right now.');
+                Alert.alert('Route unavailable', 'No route found for this provider right now.');
                 return;
             }
 
@@ -613,9 +683,9 @@ export default function MedicalMapView() {
         } finally {
             setIsRouting(false);
         }
-    }, []);
+    }, [travelMode]);
 
-    // ── Pin tap handler — auto-trigger safe route ───────────────────────────
+    // ── Pin tap handler — auto-trigger callout ───────────────────────────
     const handlePinPress = useCallback((providerId: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setSelectedPin(providerId);
@@ -629,7 +699,7 @@ export default function MedicalMapView() {
             RNAnimated.timing(calloutOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
 
-    }, [providers, userLoc, calloutY, calloutOpacity]);
+    }, [calloutY, calloutOpacity]);
 
     // ── Close callout ───────────────────────────────────────────────────────
     const closeCallout = useCallback(() => {
@@ -673,7 +743,7 @@ export default function MedicalMapView() {
         });
     }, [getDistanceKm, selectedProvider]);
 
-    // ── Book Now → WebView ──────────────────────────────────────────────────
+    // ── Book Now → Route Preview ──────────────────────────────────────────────
     const handleDirections = useCallback(() => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -806,7 +876,29 @@ export default function MedicalMapView() {
         safeRoute,
     ]);
 
-    // ── Nav press ───────────────────────────────────────────────────────────
+    // ── Live Navigation Audio Engine ──
+    const lastSpokenStepRef = useRef<number>(-1);
+    useEffect(() => {
+        if (isLiveNav && !isAudioMuted && navInstructions.length > 0 && currentStepIdx !== lastSpokenStepRef.current) {
+            const instruction = navInstructions[currentStepIdx]?.instruction;
+            if (instruction) {
+                Speech.stop();
+                setTimeout(() => {
+                    Speech.speak(instruction, {
+                        language: 'en',
+                        pitch: 1.0,
+                        rate: Platform.OS === 'android' ? 0.9 : 0.95,
+                    });
+                }, 100);
+                lastSpokenStepRef.current = currentStepIdx;
+            }
+        }
+        if (!isLiveNav) {
+            lastSpokenStepRef.current = -1;
+        }
+    }, [isLiveNav, isAudioMuted, currentStepIdx, navInstructions]);
+
+    // ── Handlers ───────────────────────────────────────────────────────────
     const handleNavPress = useCallback((tabId: string) => {
         if (tabId === 'Home') {
             router.replace('/(tabs)/users/sos_screen' as any);
@@ -825,7 +917,6 @@ export default function MedicalMapView() {
         router.back();
     }, [router]);
 
-    
     // Re-fetch route when travel mode changes
     useEffect(() => {
         if (showRouteOverview && selectedProvider) {
@@ -835,8 +926,9 @@ export default function MedicalMapView() {
                 true
             );
         }
-    }, [travelMode]);
-return (
+    }, [travelMode, buildLiveRoute, selectedProvider, showRouteOverview]);
+
+    return (
         <AtmosphericShell>
             <View style={st.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -906,20 +998,8 @@ return (
                         </Marker>
                     ))}
 
-                    {/* Red Zone Circles — Always visible */}
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radiusMeters}
-                            fillColor={D.dangerColor}
-                            strokeColor="rgba(255,59,48,0.6)"
-                            strokeWidth={1.5}
-                        />
-                    ))}
-
                     {/* Safe Route Polyline — Auto-triggered on pin select */}
-                    {/* Completed route (green) */}
+                    {/* Completed route (blue) */}
                     {completedRouteCoords.length > 1 && (
                         <Polyline
                             coordinates={completedRouteCoords}
@@ -952,7 +1032,7 @@ return (
                 </MapView>
 
                 {/* ── Route Overview Header (Floating Capsule) ── */}
-                {showRouteOverview && (
+                {showRouteOverview && !isLiveNav && (
                     <RNAnimated.View style={[st.routeOverlayWrap, { top: insets.top + 8, transform: [{ translateY: routeOverlaySlideY }] }]}>
                         <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={st.routeOverlayTint} pointerEvents="none" />
@@ -968,34 +1048,40 @@ return (
 
                             <Text style={st.routeOverlayTitle}>Route Overview</Text>
                         </View>
-                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 12, paddingHorizontal: 16 }}>
-                                {(['walking', 'driving', 'motorcycle', 'transit'] as const).map(mode => (
-                                    <TouchableOpacity
-                                        key={mode}
-                                        style={{
-                                            flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
-                                            paddingVertical: 8, borderRadius: 999,
-                                            backgroundColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.06)',
-                                            borderWidth: 1, borderColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.08)',
-                                        }}
-                                        onPress={() => setTravelMode(mode)}
-                                    >
-                                        <Ionicons
-                                            name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
-                                            size={16}
-                                            color={travelMode === mode ? T.onPrimary : T.ink3}
-                                        />
-                                        <Text style={{ color: travelMode === mode ? '#fff' : '#A09CB2', fontSize: 11, fontWeight: '700' }}>
-                                            {mode === 'motorcycle' ? 'Bike' : mode.charAt(0).toUpperCase() + mode.slice(1)}
-                                        </Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
+                    </RNAnimated.View>
+                )}
+
+                {/* ── Floating Travel Modes Bar ── */}
+                {showRouteOverview && !isLiveNav && (
+                    <RNAnimated.View style={[st.travelModeBarWrap, { top: insets.top + 72, transform: [{ translateY: routeOverlaySlideY }] }]}>
+                        <View style={st.travelModeBar}>
+                            {(['walking', 'driving', 'motorcycle', 'transit'] as const).map(mode => (
+                                <TouchableOpacity
+                                    key={mode}
+                                    style={{
+                                        flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+                                        paddingVertical: 8, borderRadius: 999,
+                                        backgroundColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.06)',
+                                        borderWidth: 1, borderColor: travelMode === mode ? T.violet : 'rgba(255,255,255,0.08)',
+                                    }}
+                                    onPress={() => setTravelMode(mode)}
+                                >
+                                    <Ionicons
+                                        name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
+                                        size={16}
+                                        color={travelMode === mode ? T.onPrimary : T.ink3}
+                                    />
+                                    <Text style={{ color: travelMode === mode ? '#fff' : '#A09CB2', fontSize: 11, fontWeight: '700' }}>
+                                        {mode === 'motorcycle' ? 'Bike' : mode.charAt(0).toUpperCase() + mode.slice(1)}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
                     </RNAnimated.View>
                 )}
 
                 {/* ── Top Header ── */}
-                {!showRouteOverview && (
+                {!showRouteOverview && !isLiveNav && (
                     <View style={[st.topBar, { top: insets.top + 8 }]}>
                         <TouchableOpacity
                             style={st.headerBtn}
@@ -1033,8 +1119,8 @@ return (
                 <View style={{ marginTop: 12 }} />
 
                 {/* ── GPS / Recenter — Right-side floating glass container (SOS standard) ── */}
-                {!showRouteOverview && (
-                    <View style={[st.mapControls, { top: '35%' }]}> 
+                {!showRouteOverview && !isLiveNav && (
+                    <View style={[st.mapControls, { top: '35%' }]}>
                         <TouchableOpacity
                             style={st.ctrlBtn}
                             onPress={() => {
@@ -1054,7 +1140,7 @@ return (
                 )}
 
                 {/* ── Results Count Badge — 12px below header for breathing room ── */}
-                {!showRouteOverview && (
+                {!showRouteOverview && !isLiveNav && (
                     <View style={[st.resultsBadge, { top: insets.top + 8 + 58 + 12 }]}>
                         <Text style={st.resultsBadgeText}>
                             {providers.length} {providers.length === 1 ? 'result' : 'results'}
@@ -1062,59 +1148,104 @@ return (
                     </View>
                 )}
 
-                {safeRoute && selectedProvider && (
-                    <View style={[st.livePanel, { bottom: navBottom + NAV_HEIGHT + (category === 'specialists' ? 80 : 12) }]}>
-                        <Text style={st.livePanelTitle}>Route to {selectedProvider.name}</Text>
-                        {(routeEta || routeDistanceKm != null) ? (
-                            <View style={st.livePanelMetaRow}>
-                                {routeEta && (
-                                    <View style={st.routeMetaItem}>
-                                        <Ionicons name="time-outline" size={14} color={T.violet} />
-                                        <Text style={st.routeMetaText}>{routeEta}</Text>
-                                    </View>
-                                )}
-                                {routeDistanceKm != null && (
-                                    <View style={st.routeMetaItem}>
-                                        <Ionicons name="location-outline" size={14} color={T.violet} />
-                                        <Text style={st.routeMetaText}>{routeDistanceKm} km</Text>
-                                    </View>
-                                )}
-                            </View>
-                        ) : null}
-                        {navInstructions.length > 0 ? (
-                            <View style={st.liveStepRow}>
+                {/* ── Step-by-Step Instruction Card (Replaces Live Panel) ── */}
+                {safeRoute && selectedProvider && navInstructions.length > 0 && (
+                    <RNAnimated.View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + (!isLiveNav && category === 'specialists' ? 80 : 16) }]}>
+                        <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={ns.cardTint} pointerEvents="none" />
+                        <View style={ns.cardBody}>
+                            <View style={ns.iconWrap}>
                                 <Ionicons
                                     name={getManeuverIcon(navInstructions[currentStepIdx]?.maneuver)}
-                                    size={16}
+                                    size={22}
                                     color={T.violet}
                                 />
-                                <Text style={st.liveStepText} numberOfLines={2}>
-                                    {navInstructions[currentStepIdx]?.instruction || 'Continue on the route'}
+                            </View>
+                            <View style={ns.textWrap}>
+                                <Text style={ns.instrText} numberOfLines={2}>
+                                    {navInstructions[currentStepIdx]?.instruction}
+                                </Text>
+                                <Text style={ns.distText}>
+                                    {navInstructions[currentStepIdx]?.distance}
                                 </Text>
                             </View>
-                        ) : null}
-                        <View style={st.liveActionsRow}>
+                        </View>
+                        <View style={ns.cardFooter}>
+                            <Text style={ns.stepCounter}>
+                                Step {currentStepIdx + 1} of {navInstructions.length}
+                            </Text>
                             {!isLiveNav ? (
-                                <TouchableOpacity
-                                    style={st.liveActionBtn}
-                                    onPress={handleStartLive}
-                                    activeOpacity={0.8}
-                                >
-                                    <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 6 }} />
-                                    <Text style={st.liveActionText}>GO LIVE</Text>
-                                </TouchableOpacity>
+                                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                    {currentStepIdx > 0 && (
+                                        <TouchableOpacity
+                                            style={ns.navBtn}
+                                            onPress={() => setCurrentStepIdx(prev => Math.max(prev - 1, 0))}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="chevron-back" size={16} color={T.ink2} />
+                                        </TouchableOpacity>
+                                    )}
+                                    {currentStepIdx < navInstructions.length - 1 && (
+                                        <TouchableOpacity
+                                            style={ns.navBtn}
+                                            onPress={() => setCurrentStepIdx(prev => Math.min(prev + 1, navInstructions.length - 1))}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Ionicons name="chevron-forward" size={16} color={T.ink2} />
+                                        </TouchableOpacity>
+                                    )}
+                                    <TouchableOpacity
+                                        style={ns.goLiveBtn}
+                                        onPress={handleStartLive}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />
+                                        <Text style={ns.goLiveBtnText}>GO LIVE</Text>
+                                    </TouchableOpacity>
+                                </View>
                             ) : (
                                 <TouchableOpacity
-                                    style={[st.liveActionBtn, st.liveActionExit]}
+                                    style={ns.endLiveBtn}
                                     onPress={handleExitLive}
-                                    activeOpacity={0.8}
+                                    activeOpacity={0.7}
                                 >
-                                    <Ionicons name="close-circle" size={14} color={T.onPrimary} />
-                                    <Text style={st.liveActionText}>Exit Live Mode</Text>
+                                    <Text style={ns.endLiveBtnText}>Exit Live Mode</Text>
                                 </TouchableOpacity>
                             )}
                         </View>
-                    </View>
+                    </RNAnimated.View>
+                )}
+
+                {/* ── Immersive Live Navigation Top Banner ── */}
+                {isLiveNav && navInstructions.length > 0 && (
+                    <RNAnimated.View style={[lb.bannerWrap, { top: insets.top + 10, transform: [{ translateY: liveHeaderY }] }]}>
+                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={lb.bannerTint} pointerEvents="none" />
+                        <View style={lb.bannerBody}>
+                            <View style={ns.iconWrap}>
+                                <Ionicons
+                                    name={getManeuverIcon(navInstructions[currentStepIdx]?.maneuver)}
+                                    size={28}
+                                    color={T.violet}
+                                />
+                            </View>
+                            <View style={lb.textWrap}>
+                                <Text style={lb.distText}>
+                                    {navInstructions[currentStepIdx]?.distance}
+                                </Text>
+                                <Text style={lb.instrText} numberOfLines={2}>
+                                    {navInstructions[currentStepIdx]?.instruction}
+                                </Text>
+                            </View>
+                            <TouchableOpacity
+                                style={lb.audioBtn}
+                                onPress={() => setIsAudioMuted(!isAudioMuted)}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons name={!isAudioMuted ? 'volume-high' : 'volume-mute'} size={22} color={!isAudioMuted ? T.violet : T.ink4} />
+                            </TouchableOpacity>
+                        </View>
+                    </RNAnimated.View>
                 )}
 
                 {/* ── Callout Bottom Sheet ── */}
@@ -1238,7 +1369,7 @@ return (
                 )}
 
                 {/* ── Quick Selector Chips ── */}
-                {(category === 'specialists' || category === 'ambulance') && (
+                {(category === 'specialists' || category === 'ambulance') && !isLiveNav && (
                     <View style={[st.chipContainer, { bottom: navBottom + NAV_HEIGHT + 12 }]}>
                         <QuickChipRow
                             chips={chips}
@@ -1249,18 +1380,20 @@ return (
                 )}
 
                 {/* ── Bottom Navbar ── */}
-                <View style={[st.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
-                    <PremiumBar style={st.navBar} contentStyle={st.navBarContent}>
-                        {NAV_TABS.map(tab => (
-                            <NavTab
-                                key={tab.id}
-                                tab={tab}
-                                isActive={tab.id === 'Medical'}
-                                onPress={() => handleNavPress(tab.id)}
-                            />
-                        ))}
-                    </PremiumBar>
-                </View>
+                {!isLiveNav && (
+                    <View style={[st.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
+                        <PremiumBar style={st.navBar} contentStyle={st.navBarContent}>
+                            {NAV_TABS.map(tab => (
+                                <NavTab
+                                    key={tab.id}
+                                    tab={tab}
+                                    isActive={tab.id === 'Medical'}
+                                    onPress={() => handleNavPress(tab.id)}
+                                />
+                            ))}
+                        </PremiumBar>
+                    </View>
+                )}
             </View>
         </AtmosphericShell>
     );
@@ -1456,6 +1589,7 @@ const st = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 14, paddingVertical: 10,
         borderRadius: 12,
+        justifyContent: 'center',
     },
     bookNowText: {
         fontSize: 13, fontWeight: '800', color: T.onPrimary,
@@ -1607,12 +1741,18 @@ const st = StyleSheet.create({
         alignItems: 'center',
         gap: 4,
     },
-    routeMetaText: {
-        fontSize: 11,
-        color: T.violet,
-        fontWeight: '600',
+    travelModeBarWrap: {
+        position: 'absolute', left: 14, right: 14, zIndex: 290,
     },
-
+    travelModeBar: {
+        flexDirection: 'row', padding: 6, gap: 6,
+        backgroundColor: 'rgba(30,21,58,0.7)', borderRadius: 20,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        ...Platform.select({
+            ios: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 6 },
+        }),
+    },
     // ── Quick Selector Chips ────────────────────────────────────────────────
     chipContainer: {
         position: 'absolute', left: 0, right: 0,
@@ -1680,4 +1820,39 @@ const st = StyleSheet.create({
         backgroundColor: 'rgba(138,56,246,0.12)',
         borderColor: `${T.violet}40`,
     },
+});
+
+// ── Navigation Instruction Card Styles (ns) ──
+const ns = StyleSheet.create({
+    cardWrap: {
+        position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 260,
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.20, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+            android: { elevation: 10 },
+        }),
+    },
+    cardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.88)' },
+    cardBody: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2, gap: S.s3 },
+    iconWrap: { width: 44, height: 44, borderRadius: R.sm, backgroundColor: T.violetDim, borderWidth: 1, borderColor: `${T.violet}35`, alignItems: 'center', justifyContent: 'center' },
+    textWrap: { flex: 1 },
+    instrText: { fontSize: 14, fontWeight: '700', color: T.ink, letterSpacing: -0.2, lineHeight: 20 },
+    distText: { fontSize: 12, fontWeight: '600', color: T.ink3, marginTop: 2 },
+    cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.s4, paddingBottom: S.s3, paddingTop: S.s2 },
+    stepCounter: { fontSize: 11, fontWeight: '600', color: T.ink4, letterSpacing: 0.4 },
+    navBtn: { width: 32, height: 32, borderRadius: R.hBtn, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+    goLiveBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 32, borderRadius: R.pill, backgroundColor: T.violet, borderWidth: 1, borderColor: `${T.violet}70` },
+    goLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+    endLiveBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: R.pill, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+    endLiveBtnText: { fontSize: 11, fontWeight: '700', color: T.onPrimary, letterSpacing: 0.2 },
+});
+
+// ── Top Live Banner Styles (lb) ──
+const lb = StyleSheet.create({
+    bannerWrap: { position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 360 },
+    bannerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    bannerBody: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: S.s4, gap: S.s4 },
+    textWrap: { flex: 1 },
+    distText: { fontSize: 16, fontWeight: '800', color: T.violet, marginBottom: 4, letterSpacing: -0.2 },
+    instrText: { fontSize: 18, fontWeight: '700', color: T.ink, letterSpacing: -0.3, lineHeight: 22 },
+    audioBtn: { width: 44, height: 44, borderRadius: R.hBtn, backgroundColor: `${T.violet}10`, borderWidth: 1, borderColor: `${T.violet}25`, alignItems: 'center', justifyContent: 'center' },
 });
