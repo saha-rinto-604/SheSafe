@@ -58,6 +58,9 @@ type CaseDetailsForm = {
     actionsTaken: string;
 };
 
+type RoutePoint = { latitude: number; longitude: number; heading?: number };
+type TravelMode = 'walking' | 'driving' | 'motorcycle' | 'transit';
+
 function isActiveStatus(status?: string): boolean {
     return status === 'ACTIVE' || status === 'LIVE';
 }
@@ -448,6 +451,27 @@ function haversineDistance(a: { latitude: number; longitude: number }, b: { lati
     return 2 * earthRadiusM * Math.asin(Math.sqrt(h));
 }
 
+function sanitizeCoordinate(lat: number, lng: number): RoutePoint | null {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { latitude: Number(lat.toFixed(7)), longitude: Number(lng.toFixed(7)) };
+}
+
+function routeModeForApi(mode: TravelMode): string {
+    return mode === 'motorcycle' ? 'two_wheeler' : mode;
+}
+
+function routeModeLabel(mode: TravelMode): string {
+    if (mode === 'motorcycle') return 'bike';
+    if (mode === 'driving') return 'drive';
+    if (mode === 'transit') return 'transit';
+    return 'walk';
+}
+
+function stripHtml(html: string): string {
+    return html.replace(/<[^>]*>/g, '');
+}
+
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -467,19 +491,24 @@ export default function ChatRoom() {
 
     // Map Overlay State
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
-    const [mapRouteCoords, setMapRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [mapRouteCoords, setMapRouteCoords] = useState<RoutePoint[]>([]);
     const [mapDistance, setMapDistance] = useState('');
     const [mapDuration, setMapDuration] = useState('');
     const [isLiveNavMode, setIsLiveNavMode] = useState(false);
     const [audioEnabled, setAudioEnabled] = useState(false);
-    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
+    const [userLoc, setUserLoc] = useState<RoutePoint | null>(null);
+    const [victimLocation, setVictimLocation] = useState<RoutePoint | null>(null);
+    const [victimName, setVictimName] = useState('Victim');
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+    const routeRequestIdRef = useRef(0);
+    const victimPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const lastVictimRouteRefreshRef = useRef(0);
     const [isReviewMode, setIsReviewMode] = useState(false);
     const [selectedResponderId, setSelectedResponderId] = useState('');
     const mapRef = useRef<MapView>(null);
 
     // Travel Mode
-    const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
+    const [travelMode, setTravelMode] = useState<TravelMode>('walking');
     const [travelModeDropdownOpen, setTravelModeDropdownOpen] = useState(false);
 
     // Nav Instructions (for live/review mode)
@@ -488,8 +517,8 @@ export default function ChatRoom() {
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
 
     // Route Progress (completed portion turns green)
-    const [completedRouteCoords, setCompletedRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
-    const [remainingRouteCoords, setRemainingRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<RoutePoint[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<RoutePoint[]>([]);
 
     // Responders list modal state (local mock list of 5)
     const [isRespondersOpen, setRespondersOpen] = useState(false);
@@ -638,93 +667,182 @@ export default function ChatRoom() {
         [respondersList, selectedResponderId]
     );
 
-    const loadRouteForResponder = useCallback(async (responder: Responder) => {
-        if (!incident) return;
-        const originLocation = responder.location ?? userLoc ?? incident.location;
-        const origin = `${originLocation.latitude},${originLocation.longitude}`;
-        const destination = `${incident.location.latitude},${incident.location.longitude}`;
-        const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
-        const modeLabel = travelMode === 'motorcycle' ? 'ride' : travelMode === 'driving' ? 'drive' : travelMode === 'transit' ? 'transit' : 'walk';
+    const clearRouteOverview = useCallback(() => {
+        routeRequestIdRef.current += 1;
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
+        if (victimPollRef.current) {
+            clearInterval(victimPollRef.current);
+            victimPollRef.current = null;
+        }
+        setMapRouteCoords([]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setIsLiveNavMode(false);
+        setIsReviewMode(false);
+        setMapDistance('');
+        setMapDuration('');
+    }, []);
+
+    const fitRouteToMap = useCallback((coords: RoutePoint[]) => {
+        if (coords.length <= 1) return;
+        setTimeout(() => {
+            mapRef.current?.fitToCoordinates(coords, {
+                edgePadding: { top: 140, right: 60, bottom: 300, left: 60 },
+                animated: true,
+            });
+        }, 250);
+    }, []);
+
+    const loadRouteForIncident = useCallback(async (
+        originLocation: RoutePoint,
+        destinationLocation: RoutePoint,
+        mode: TravelMode,
+        options: { fit?: boolean } = {},
+    ) => {
+        const requestId = ++routeRequestIdRef.current;
+        const fallbackRoute = [originLocation, destinationLocation];
+        const modeLabel = routeModeLabel(mode);
+
+        const applyRoute = (coords: RoutePoint[], distance = '', duration = '', instructions: NavStep[] = []) => {
+            if (routeRequestIdRef.current !== requestId) return;
+            const visibleCoords = coords.length > 1 ? coords : fallbackRoute;
+            setMapRouteCoords(visibleCoords);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords(visibleCoords);
+            setNavInstructions(instructions);
+            setCurrentStepIdx(0);
+            setMapDistance(distance);
+            setMapDuration(duration);
+            if (options.fit !== false) fitRouteToMap(visibleCoords);
+        };
 
         if (!GOOGLE_MAPS_API_KEY) {
-            let mockMins = 23;
-            if (travelMode === 'walking') mockMins = 75;
-            else if (travelMode === 'motorcycle') mockMins = 18;
-            else if (travelMode === 'transit') mockMins = 35;
-
-            setMapRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
-            setMapDistance(responder.fallbackDistance ?? '');
-            setMapDuration(`~${mockMins} mins ${modeLabel}`);
-            setNavInstructions([]);
-            setCompletedRouteCoords([]);
-            setRemainingRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
             return;
         }
 
         try {
-            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${apiMode}&key=${GOOGLE_MAPS_API_KEY}`;
+            const origin = `${originLocation.latitude},${originLocation.longitude}`;
+            const destination = `${destinationLocation.latitude},${destinationLocation.longitude}`;
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${routeModeForApi(mode)}&key=${GOOGLE_MAPS_API_KEY}`;
             const res = await fetch(url);
             const data = await res.json();
-            if (data?.routes?.length > 0) {
-                const points = data.routes[0].overview_polyline.points;
-                const coords = polylineDecode(points);
-                const leg = data.routes[0].legs?.[0];
-                setMapRouteCoords(coords);
-                setMapDistance(leg?.distance?.text ?? responder.fallbackDistance);
-                setMapDuration(`~${leg?.duration?.text ?? responder.fallbackDuration ?? ''} ${modeLabel}`);
-                setCompletedRouteCoords([]);
-                setRemainingRouteCoords(coords);
+            if (routeRequestIdRef.current !== requestId) return;
 
-                // Extract turn-by-turn instructions
+            if (data?.routes?.length > 0) {
+                const route = data.routes[0];
+                const coords = polylineDecode(route.overview_polyline?.points ?? '');
+                const leg = route.legs?.[0];
                 const steps = leg?.steps ?? [];
-                const stripHtml = (html: string) => html.replace(/<[^>]*>/g, '');
                 const instructions: NavStep[] = steps.map((step: any) => ({
                     instruction: stripHtml(step.html_instructions ?? ''),
                     distance: step.distance?.text ?? '',
                     maneuver: step.maneuver,
                     endLocation: step.end_location ? { latitude: step.end_location.lat, longitude: step.end_location.lng } : undefined,
                 }));
-                setNavInstructions(instructions);
-                setCurrentStepIdx(0);
-
-                setTimeout(() => {
-                    mapRef.current?.fitToCoordinates(coords, {
-                        edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
-                        animated: true,
-                    });
-                }, 400);
+                applyRoute(
+                    coords.length > 1 ? coords : fallbackRoute,
+                    leg?.distance?.text ?? '',
+                    leg?.duration?.text ? `${leg.duration.text} ${modeLabel}` : modeLabel,
+                    instructions,
+                );
+                return;
             }
-        } catch (e) {
-            console.error(e);
-            Alert.alert('Error', 'Failed to load route');
+
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
+        } catch (error) {
+            console.warn('[VolunteerChatRoom] route load failed, using fallback:', error);
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
         }
-    }, [incident, travelMode, userLoc]);
+    }, [fitRouteToMap]);
 
     const handleSelectResponder = useCallback(async (responderId: string) => {
         if (responderId === selectedResponderId) return;
         Haptics.selectionAsync();
         setSelectedResponderId(responderId);
-        const responder = respondersList.find(item => item.id === responderId);
-        if (responder) {
-            await loadRouteForResponder(responder);
-        }
-    }, [loadRouteForResponder, respondersList, selectedResponderId]);
-
-
-    useEffect(() => {
-        if (isMapOverlayOpen && selectedResponder) {
-            loadRouteForResponder(selectedResponder);
-        }
-    }, [travelMode, isMapOverlayOpen, loadRouteForResponder, selectedResponder]);
+    }, [selectedResponderId]);
 
     const openMapOverlay = useCallback(async () => {
+        Keyboard.dismiss();
+        Haptics.selectionAsync();
         setIsMapOverlayOpen(true);
         setIsLiveNavMode(false);
         setIsReviewMode(false);
         setTravelModeDropdownOpen(false);
-        Haptics.selectionAsync();
-        if (selectedResponder) await loadRouteForResponder(selectedResponder);
-    }, [loadRouteForResponder, selectedResponder]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert('Location required', 'Please enable location access to view the route.');
+                return;
+            }
+
+            const [position, context] = await Promise.all([
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+                incidentService.getIncidentRouteContext(liveIncidentId),
+            ]);
+            const origin = sanitizeCoordinate(position.coords.latitude, position.coords.longitude);
+            const destination = sanitizeCoordinate(Number(context.victim.latitude), Number(context.victim.longitude));
+            if (!origin || !destination) {
+                Alert.alert('Route unavailable', 'Could not find valid volunteer or SOS location.');
+                return;
+            }
+            setUserLoc({ ...origin, heading: position.coords.heading ?? undefined });
+            setVictimLocation(destination);
+            setVictimName(context.victim.name || 'Victim');
+            await loadRouteForIncident(origin, destination, travelMode);
+        } catch (error: any) {
+            Alert.alert('Route unavailable', error?.message || 'Unable to load this route.');
+        }
+    }, [liveIncidentId, loadRouteForIncident, travelMode]);
+
+    useEffect(() => {
+        if (!isMapOverlayOpen || !userLoc || !victimLocation || isLiveNavMode) return;
+        Keyboard.dismiss();
+        setMapRouteCoords([]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        loadRouteForIncident(userLoc, victimLocation, travelMode);
+    }, [travelMode, isMapOverlayOpen, isLiveNavMode, userLoc, victimLocation, loadRouteForIncident]);
+
+    useEffect(() => {
+        if (!isMapOverlayOpen || !liveIncidentId) return;
+        if (victimPollRef.current) clearInterval(victimPollRef.current);
+        victimPollRef.current = setInterval(async () => {
+            try {
+                const context = await incidentService.getIncidentRouteContext(liveIncidentId);
+                const nextVictim = sanitizeCoordinate(Number(context.victim.latitude), Number(context.victim.longitude));
+                if (!nextVictim) return;
+                setVictimName(context.victim.name || 'Victim');
+                setVictimLocation(prev => {
+                    if (!prev) return nextVictim;
+                    const movedM = haversineDistance(prev, nextVictim);
+                    if (movedM < 5) return prev;
+                    if (movedM >= 40 && userLoc && Date.now() - lastVictimRouteRefreshRef.current > 15000) {
+                        lastVictimRouteRefreshRef.current = Date.now();
+                        loadRouteForIncident(userLoc, nextVictim, travelMode, { fit: !isLiveNavMode });
+                    }
+                    return nextVictim;
+                });
+            } catch {
+                // Polling is best effort; chat remains usable if route context refresh fails.
+            }
+        }, 8000);
+
+        return () => {
+            if (victimPollRef.current) {
+                clearInterval(victimPollRef.current);
+                victimPollRef.current = null;
+            }
+        };
+    }, [isMapOverlayOpen, isLiveNavMode, liveIncidentId, loadRouteForIncident, travelMode, userLoc]);
 
     useEffect(() => {
         if (!isLiveNavMode) {
@@ -805,6 +923,18 @@ export default function ChatRoom() {
             Speech.speak(navInstructions[currentStepIdx].instruction);
         }
     }, [isLiveNavMode, audioEnabled, currentStepIdx, navInstructions]);
+
+    useEffect(() => {
+        return () => {
+            locationSubRef.current?.remove();
+            locationSubRef.current = null;
+            if (victimPollRef.current) {
+                clearInterval(victimPollRef.current);
+                victimPollRef.current = null;
+            }
+            routeRequestIdRef.current += 1;
+        };
+    }, []);
 
 
     useEffect(() => {
@@ -1100,42 +1230,60 @@ export default function ChatRoom() {
                             )}
                             {/* Remaining route (violet) */}
                             {remainingRouteCoords.length > 1 && (
-                                <Polyline
-                                    coordinates={remainingRouteCoords}
-                                    strokeColor={T.violet}
-                                    strokeWidth={4}
-                                    lineCap="round"
-                                    lineJoin="round"
-                                />
+                                <>
+                                    <Polyline
+                                        coordinates={remainingRouteCoords}
+                                        strokeColor="rgba(138,56,246,0.28)"
+                                        strokeWidth={10}
+                                        lineCap="round"
+                                        lineJoin="round"
+                                    />
+                                    <Polyline
+                                        coordinates={remainingRouteCoords}
+                                        strokeColor={T.violet}
+                                        strokeWidth={4}
+                                        lineCap="round"
+                                        lineJoin="round"
+                                    />
+                                </>
                             )}
                             {/* Fallback: full route if no progress split yet */}
                             {completedRouteCoords.length === 0 && mapRouteCoords.length > 1 && (
-                                <Polyline
-                                    coordinates={mapRouteCoords}
-                                    strokeColor={T.violet}
-                                    strokeWidth={4}
-                                    lineCap="round"
-                                    lineJoin="round"
-                                />
+                                <>
+                                    <Polyline
+                                        coordinates={mapRouteCoords}
+                                        strokeColor="rgba(138,56,246,0.28)"
+                                        strokeWidth={10}
+                                        lineCap="round"
+                                        lineJoin="round"
+                                    />
+                                    <Polyline
+                                        coordinates={mapRouteCoords}
+                                        strokeColor={T.violet}
+                                        strokeWidth={4}
+                                        lineCap="round"
+                                        lineJoin="round"
+                                    />
+                                </>
                             )}
                             {mapRouteCoords.length > 0 && (
                                 <>
                                     {/* Volunteer Marker (origin) */}
                                     <Marker
                                         coordinate={isLiveNavMode && userLoc ? { latitude: userLoc.latitude, longitude: userLoc.longitude } : mapRouteCoords[0]}
-                                        anchor={{ x: 0.5, y: 0.5 }}
+                                        pinColor={T.violet}
+                                        title="You"
+                                        description="Volunteer location"
                                         zIndex={1000}
-                                    >
-                                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' }} />
-                                    </Marker>
+                                    />
                                     {/* Victim Marker (destination) */}
                                     <Marker
-                                        coordinate={mapRouteCoords[mapRouteCoords.length - 1]}
-                                        anchor={{ x: 0.5, y: 0.5 }}
+                                        coordinate={isLiveNavMode && victimLocation ? victimLocation : mapRouteCoords[mapRouteCoords.length - 1]}
+                                        pinColor="#EF4444"
+                                        title={victimName || 'Victim'}
+                                        description={incident?.address || 'SOS location'}
                                         zIndex={999}
-                                    >
-                                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.danger, borderWidth: 2, borderColor: '#fff' }} />
-                                    </Marker>
+                                    />
                                 </>
                             )}
                         </MapView>
@@ -1182,7 +1330,7 @@ export default function ChatRoom() {
                             <View style={[st.overlayHeader, { top: insets.top + 8 }]}>
                                 <TouchableOpacity
                                     style={st.headerBtn}
-                                    onPress={() => { setIsMapOverlayOpen(false); setIsLiveNavMode(false); setIsReviewMode(false); }}
+                                    onPress={() => { Keyboard.dismiss(); setIsMapOverlayOpen(false); clearRouteOverview(); }}
                                 >
                                     <Feather name="x" size={22} color={T.ink} />
                                 </TouchableOpacity>
@@ -1245,6 +1393,8 @@ export default function ChatRoom() {
                                             onPress={() => {
                                                 Haptics.selectionAsync();
                                                 setIsLiveNavMode(false);
+                                                setCompletedRouteCoords([]);
+                                                setRemainingRouteCoords(mapRouteCoords);
                                                 mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 });
                                                 mapRef.current?.fitToCoordinates(mapRouteCoords, {
                                                     edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
@@ -1291,10 +1441,11 @@ export default function ChatRoom() {
                                                 key={mode}
                                                 style={[st.travelModeBtn, travelMode === mode && st.travelModeBtnActive]}
                                                 onPress={() => {
+                                                    Keyboard.dismiss();
+                                                    Haptics.selectionAsync();
                                                     setTravelMode(mode);
-                                                    // Reload route with new mode
-
                                                 }}
+                                                activeOpacity={0.75}
                                             >
                                                 <Ionicons
                                                     name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
@@ -1329,16 +1480,21 @@ export default function ChatRoom() {
                                             <TouchableOpacity
                                                 style={st.startNavBtn}
                                                 onPress={() => {
+                                                    Keyboard.dismiss();
                                                     Haptics.selectionAsync();
-                                                    setIsLiveNavMode(true);
-                                                    if (mapRouteCoords.length > 0) {
-                                                        mapRef.current?.animateCamera({
-                                                            center: mapRouteCoords[0],
-                                                            pitch: 60,
-                                                            heading: 145,
-                                                            zoom: 18,
-                                                        }, { duration: 1000 });
+                                                    if (mapRouteCoords.length <= 1) {
+                                                        Alert.alert('Route unavailable', 'Please wait for the route to load.');
+                                                        return;
                                                     }
+                                                    setCompletedRouteCoords([]);
+                                                    setRemainingRouteCoords(mapRouteCoords);
+                                                    setIsLiveNavMode(true);
+                                                    mapRef.current?.animateCamera({
+                                                        center: mapRouteCoords[0],
+                                                        pitch: 60,
+                                                        heading: 145,
+                                                        zoom: 18,
+                                                    }, { duration: 1000 });
                                                 }}
                                             >
                                                 <Ionicons name="navigate" size={16} color={T.onPrimary} />

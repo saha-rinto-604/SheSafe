@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Image, StyleSheet, ViewStyle, ImageStyle } from 'react-native';
+import { View, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { T } from '../../constants/theme';
 
@@ -24,38 +24,37 @@ export default function UserAvatar({
         setFailed(false);
     }, [uri]);
 
-    // If the URI is missing, falsey, or includes the hardcoded pravatar fallback
-    if (failed || !uri || uri.trim() === '' || uri.includes('pravatar')) {
-        return (
-            <View style={[
-                styles.fallbackContainer, 
+    return (
+        <View
+            style={[
+                styles.avatarContainer,
                 style,
                 { width: size, height: size, borderRadius: size / 2, backgroundColor }
-            ]}>
-                <Ionicons name="person" size={size * 0.6} color={iconColor} />
-            </View>
-        );
-    }
-
-    return (
-        <Image 
-            source={{ uri }} 
-            style={[
-                style,
-                { width: size, height: size, borderRadius: size / 2 }
-            ]} 
-            resizeMode="cover"
-            onError={() => setFailed(true)}
-        />
+            ]}
+        >
+            {failed || !uri || uri.trim() === '' || uri.includes('pravatar') ? (
+                <Ionicons name="person" size={size * 0.58} color={iconColor} />
+            ) : (
+                <Image
+                    source={{ uri }}
+                    style={styles.avatarImage}
+                    resizeMode="cover"
+                    onError={() => setFailed(true)}
+                />
+            )}
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    fallbackContainer: {
+    avatarContainer: {
         alignItems: 'center',
         justifyContent: 'center',
         overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: T.lineMid,
-    }
+        backgroundColor: T.violetDim,
+    },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
+    },
 });

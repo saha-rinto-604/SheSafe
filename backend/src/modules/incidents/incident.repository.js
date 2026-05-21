@@ -134,6 +134,29 @@ async function ensureVolunteerDispatchSchema() {
   );
 
   await query(
+    `CREATE TABLE IF NOT EXISTS reviews (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+       incident_id BIGINT UNSIGNED NOT NULL,
+       reviewer_id BIGINT UNSIGNED NOT NULL,
+       volunteer_id BIGINT UNSIGNED NOT NULL,
+       rating TINYINT UNSIGNED NOT NULL,
+       feedback TEXT DEFAULT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       PRIMARY KEY (id),
+       UNIQUE KEY uq_incident_reviewer_volunteer (incident_id, reviewer_id, volunteer_id),
+       KEY idx_reviews_volunteer (volunteer_id),
+       KEY idx_reviews_reviewer (reviewer_id),
+       CONSTRAINT fk_reviews_incident FOREIGN KEY (incident_id)
+         REFERENCES incidents(id) ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_reviews_reviewer FOREIGN KEY (reviewer_id)
+         REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_reviews_volunteer FOREIGN KEY (volunteer_id)
+         REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE
+     )`
+  );
+
+  await query(
     `INSERT IGNORE INTO incident_volunteers (incident_id, volunteer_id, accepted_at, status)
      SELECT id, volunteer_id, COALESCE(accepted_at, created_at), 'ACCEPTED'
      FROM incidents
@@ -227,12 +250,12 @@ async function getIncidentRecordsForZones() {
  *
  * Algorithm:
  * 1. Fetch all valid safety-relevant incident records from the incidents table.
- * 2. Cluster them using a greedy 500-metre radius approach:
- *    - For each incident, check if it falls within 500m of an existing cluster centre.
+ * 2. Cluster them using a greedy 200-metre radius approach:
+ *    - For each incident, check if it falls within 200m of an existing cluster centre.
  *    - If yes, add it to that cluster. If no, start a new cluster centred on it.
  * 3. Return zones with centre coords, incident count, and a representative name.
  */
-const CLUSTER_RADIUS_M = 500;
+const CLUSTER_RADIUS_M = 200;
 const EARTH_RADIUS_M = 6_371_000;
 
 function haversineM(lat1, lon1, lat2, lon2) {
@@ -572,7 +595,14 @@ async function getIncidentResponders(incidentId) {
   );
 
   const volunteerRows = await query(
-    `SELECT u.id, u.first_name, u.last_name, u.photo_url, iv.accepted_at
+    `SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.photo_url,
+        u.latest_latitude,
+        u.latest_longitude,
+        iv.accepted_at
      FROM incident_volunteers iv
      JOIN users u ON iv.volunteer_id = u.id
      WHERE iv.incident_id = ? AND iv.status = 'ACCEPTED'
@@ -601,6 +631,41 @@ async function isIncidentMember(incidentId, userId) {
     [userId, incidentId, userId]
   );
   return rows.length > 0;
+}
+
+async function getIncidentRouteContext(incidentId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT
+       i.id,
+       i.status,
+       i.latitude AS incident_latitude,
+       i.longitude AS incident_longitude,
+       u.id AS victim_id,
+       u.first_name AS victim_first_name,
+       u.last_name AS victim_last_name,
+       u.photo_url AS victim_photo_url,
+       u.latest_latitude AS victim_latest_latitude,
+       u.latest_longitude AS victim_latest_longitude
+     FROM incidents i
+     JOIN users u ON i.user_id = u.id
+     WHERE i.id = ?
+     LIMIT 1`,
+    [incidentId]
+  );
+  return rows[0] || null;
+}
+
+async function getUserRouteLocation(userId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT id, first_name, last_name, photo_url, latest_latitude, latest_longitude
+     FROM users
+     WHERE id = ?
+     LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
 }
 
 async function getVolunteerCaseDetails(incidentId, volunteerId) {
@@ -676,6 +741,123 @@ async function updateUserCaseDetails(incidentId, details) {
     [JSON.stringify(details), incidentId]
   );
   return details;
+}
+
+async function createIncidentReview({ incidentId, reviewerId, volunteerId, rating, feedback }) {
+  await ensureVolunteerDispatchSchema();
+  const incidentRows = await query(
+    `SELECT id, user_id
+     FROM incidents
+     WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  const incident = incidentRows[0];
+  if (!incident) return { status: 'NOT_FOUND' };
+  if (Number(incident.user_id) !== Number(reviewerId)) return { status: 'FORBIDDEN' };
+
+  const responderRows = await query(
+    `SELECT id
+     FROM incident_volunteers
+     WHERE incident_id = ?
+       AND volunteer_id = ?
+       AND status = 'ACCEPTED'
+     LIMIT 1`,
+    [incidentId, volunteerId]
+  );
+  if (!responderRows.length) return { status: 'NOT_RESPONDER' };
+
+  await query(
+    `INSERT INTO reviews (incident_id, reviewer_id, volunteer_id, rating, feedback)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       rating = VALUES(rating),
+       feedback = VALUES(feedback),
+       updated_at = NOW()`,
+    [incidentId, reviewerId, volunteerId, rating, feedback || null]
+  );
+
+  const rows = await query(
+    `SELECT id, incident_id, reviewer_id, volunteer_id, rating, feedback, created_at, updated_at
+     FROM reviews
+     WHERE incident_id = ? AND reviewer_id = ? AND volunteer_id = ?
+     LIMIT 1`,
+    [incidentId, reviewerId, volunteerId]
+  );
+  return { status: 'OK', review: rows[0] || null };
+}
+
+async function getVolunteerActivityLogs(volunteerId) {
+  await ensureVolunteerDispatchSchema();
+  return query(
+    `SELECT
+       i.id AS incident_id,
+       i.status,
+       i.created_at,
+       i.updated_at,
+       iv.accepted_at,
+       v.id AS volunteer_id,
+       v.first_name AS volunteer_first_name,
+       v.last_name AS volunteer_last_name,
+       v.photo_url AS volunteer_photo_url,
+       u.id AS victim_id,
+       u.first_name AS victim_first_name,
+       u.last_name AS victim_last_name,
+       u.photo_url AS victim_photo_url
+     FROM incident_volunteers iv
+     JOIN incidents i ON i.id = iv.incident_id
+     JOIN users v ON v.id = iv.volunteer_id
+     JOIN users u ON u.id = i.user_id
+     WHERE iv.volunteer_id = ?
+       AND iv.status = 'ACCEPTED'
+       AND i.status IN ('ACTIVE', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED')
+     ORDER BY COALESCE(i.updated_at, iv.accepted_at, i.created_at) DESC, i.id DESC`,
+    [volunteerId]
+  );
+}
+
+async function getVolunteerLeaderboardRows() {
+  await ensureVolunteerDispatchSchema();
+  return query(
+    `SELECT
+       u.id,
+       u.first_name,
+       u.last_name,
+       u.photo_url,
+       COALESCE(inc_stats.assisted_incident_count, 0) AS assisted_incident_count,
+       COALESCE(inc_stats.resolved_incident_count, 0) AS resolved_incident_count,
+       COALESCE(review_stats.average_rating, 0) AS average_rating,
+       COALESCE(review_stats.rating_count, 0) AS rating_count
+     FROM users u
+     JOIN roles r ON r.id = u.role_id AND r.role_name = 'volunteer'
+     LEFT JOIN (
+       SELECT
+         iv.volunteer_id,
+         COUNT(DISTINCT iv.incident_id) AS assisted_incident_count,
+         COUNT(DISTINCT CASE WHEN i.status = 'RESOLVED' THEN iv.incident_id END) AS resolved_incident_count
+       FROM incident_volunteers iv
+       JOIN incidents i ON i.id = iv.incident_id
+       WHERE iv.status = 'ACCEPTED'
+       GROUP BY iv.volunteer_id
+     ) inc_stats ON inc_stats.volunteer_id = u.id
+     LEFT JOIN (
+       SELECT volunteer_id, AVG(rating) AS average_rating, COUNT(id) AS rating_count
+       FROM reviews
+       GROUP BY volunteer_id
+     ) review_stats ON review_stats.volunteer_id = u.id`
+  );
+}
+
+async function getVolunteerSummary(volunteerId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT u.id, u.first_name, u.last_name, u.photo_url
+     FROM users u
+     JOIN roles r ON r.id = u.role_id AND r.role_name = 'volunteer'
+     WHERE u.id = ?
+     LIMIT 1`,
+    [volunteerId]
+  );
+  return rows[0] || null;
 }
 
 async function ensureDefaultIncidentMessages(incidentId) {
@@ -756,11 +938,17 @@ module.exports = {
   getAssistedByVolunteer,
   getChatsByUser,
   getIncidentResponders,
+  getIncidentRouteContext,
+  getUserRouteLocation,
   isIncidentMember,
   getVolunteerCaseDetails,
   updateVolunteerCaseDetails,
   getUserCaseDetails,
   updateUserCaseDetails,
+  createIncidentReview,
+  getVolunteerActivityLogs,
+  getVolunteerLeaderboardRows,
+  getVolunteerSummary,
   ensureDefaultIncidentMessages,
   setUserOnlineStatus,
 };

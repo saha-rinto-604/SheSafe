@@ -100,11 +100,6 @@ type ReviewVolunteer = {
     avatarUri: string | null;
 };
 
-const REVIEW_VOLUNTEERS: ReviewVolunteer[] = [
-    { id: 'rv-1', name: 'John Doe', avatarUri: 'https://i.pravatar.cc/150?img=12&u=rv-1' },
-    { id: 'rv-2', name: 'Amin Rahman', avatarUri: 'https://i.pravatar.cc/150?img=15&u=rv-2' },
-    { id: 'rv-3', name: 'Nusrat Jahan', avatarUri: 'https://i.pravatar.cc/150?img=32&u=rv-3' },
-];
 const NAV_BOT_OFFSET = 14;
 const SOS_BOTTOM = NAV_BOT_OFFSET + NAV_HEIGHT + 28;
 
@@ -406,9 +401,9 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
         <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
             <View style={[s.sosBtn, s.sosBtnEmg]}>
                 <View style={s.sosBtnDangerFill}>
-                    <Ionicons name="pulse" size={32} color={T.onDanger} />
+                    <Ionicons name="location-sharp" size={24} color={T.onDanger} />
                     <Text style={s.sosTxt}>LIVE</Text>
-                    <Text style={s.sosSubTxt}>VOLUNTEER ACCEPTED</Text>
+                    <Text style={s.sosSubTxt}>TAP TO STOP</Text>
                 </View>
             </View>
         </TouchableOpacity>
@@ -602,10 +597,12 @@ export default function SOSScreen() {
 
     // Review Popup States
     const [reviewVisible, setReviewVisible] = useState(false);
-    const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>(REVIEW_VOLUNTEERS);
+    const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>([]);
+    const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
     const [reviewRating, setReviewRating] = useState(5);
     const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
+    const [reviewSubmitting, setReviewSubmitting] = useState(false);
     const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
 
     // Load profile picture on screen focus
@@ -905,28 +902,60 @@ export default function SOSScreen() {
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
-        setReviewQueue(REVIEW_VOLUNTEERS);
+        setReviewQueue([]);
+        setReviewIncidentId(null);
         setReviewFeedback('');
         setReviewRating(5);
         setReviewRemovingId(null);
+        setReviewSubmitting(false);
         reviewExitAnim.setValue(0);
     }, [reviewExitAnim]);
 
-    const openReviewPopup = useCallback(() => {
-        if (!REVIEW_VOLUNTEERS.length) return;
-        setReviewQueue(REVIEW_VOLUNTEERS);
-        setReviewVisible(true);
+    const loadReviewVolunteers = useCallback(async (incidentId: string) => {
+        const responders = await incidentService.getIncidentResponders(incidentId);
+        return (responders.volunteers || []).map((volunteer) => ({
+            id: String(volunteer.id),
+            name: volunteer.name || 'Volunteer',
+            avatarUri: volunteer.photoUri ?? null,
+        }));
     }, []);
+
+    const openReviewPopup = useCallback(async (incidentId: string | null) => {
+        if (!incidentId || incidentId.startsWith('temp-') || incidentId === 'sos-new') return;
+        try {
+            const volunteers = await loadReviewVolunteers(incidentId);
+            if (!isMountedRef.current || !volunteers.length) return;
+            setReviewIncidentId(incidentId);
+            setReviewQueue(volunteers);
+            setReviewVisible(true);
+        } catch (error) {
+            console.warn('[SOS] Unable to load responders for review:', error);
+        }
+    }, [loadReviewVolunteers]);
 
     const closeReviewPopup = useCallback(() => {
         setReviewVisible(false);
     }, []);
 
-    const submitVolunteerReview = useCallback(() => {
+    const submitVolunteerReview = useCallback(async () => {
         const currentVolunteer = reviewQueue[0];
         if (!currentVolunteer) {
             resetReviewFlow();
             return;
+        }
+        if (!reviewIncidentId || reviewSubmitting) return;
+
+        setReviewSubmitting(true);
+        try {
+            await incidentService.submitIncidentReview(reviewIncidentId, {
+                volunteerId: currentVolunteer.id,
+                rating: reviewRating,
+                feedback: reviewFeedback,
+            });
+        } catch (error) {
+            console.warn('[SOS] Unable to submit volunteer review:', error);
+        } finally {
+            if (isMountedRef.current) setReviewSubmitting(false);
         }
 
         setReviewRemovingId(currentVolunteer.id);
@@ -949,7 +978,7 @@ export default function SOSScreen() {
             setReviewRemovingId(null);
             reviewExitAnim.setValue(0);
         });
-    }, [resetReviewFlow, reviewExitAnim, reviewQueue]);
+    }, [resetReviewFlow, reviewExitAnim, reviewFeedback, reviewIncidentId, reviewQueue, reviewRating, reviewSubmitting]);
 
     const resolveSOSAndEnd = useCallback(async () => {
         // Full resolution: update backend status to RESOLVED, clear local state
@@ -985,7 +1014,7 @@ export default function SOSScreen() {
             }
         } catch { /* best-effort */ }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        openReviewPopup();
+        openReviewPopup(incId);
     }, [activeIncidentId, setSosLive, openReviewPopup]);
 
     const confirmStop = useCallback(() => {
@@ -1196,7 +1225,11 @@ export default function SOSScreen() {
                                                 animatedStyle,
                                             ]}
                                         >
-                                            <UserAvatar uri={volunteer.avatarUri} size={48} style={s.reviewAvatarImg} />
+                                            <UserAvatar
+                                                uri={volunteer.avatarUri}
+                                                size={isCurrent ? 68 : 56}
+                                                style={s.reviewAvatarImg}
+                                            />
                                         </RNAnimated.View>
                                     );
                                 })}
@@ -1496,7 +1529,7 @@ const s = StyleSheet.create({
     markerOut: { width: 26, height: 26, borderRadius: 13, backgroundColor: T.brandGlow, alignItems: 'center', justifyContent: 'center' },
     markerIn: { width: 12, height: 12, borderRadius: 6, backgroundColor: T.violet, borderWidth: 2, borderColor: T.surface },
 
-    sosSection: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 100 },
+    sosSection: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 390, elevation: 20 },
     sosWrap: { width: SOS_WRAP_SIZE, height: SOS_WRAP_SIZE, alignItems: 'center', justifyContent: 'center' },
     pulseRing: {
         position: 'absolute',
@@ -1530,26 +1563,23 @@ const s = StyleSheet.create({
     },
 
     sosTxt: { color: T.onPrimary, fontSize: 38, fontWeight: '900', letterSpacing: 1.5 },
-    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 8, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
+    sosSubTxt: { color: `${T.onPrimary}B3`, fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginTop: 4 },
 
     cancelBtn: {
         width: SOS_BTN_SIZE, height: SOS_BTN_SIZE, borderRadius: SOS_BTN_SIZE / 2,
-        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
         alignItems: 'center', justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#E23636', shadowOpacity: 0.20, shadowRadius: 18, shadowOffset: { width: 0, height: 5 } },
-            android: { elevation: 10 },
-        }),
     },
-    cancelLabel: { color: T.ink3, fontSize: 14, fontWeight: '900', letterSpacing: 1.5 },
-    cancelCount: { color: T.danger, fontSize: 48, fontWeight: '900', lineHeight: 52 },
-    cancelSub: { color: T.ink4, fontSize: 12, fontWeight: '700', marginTop: 3 },
+    cancelLabel: { color: T.ink, fontSize: 14, fontWeight: '900', letterSpacing: 0.5 },
+    cancelCount: { color: T.danger, fontSize: 24, fontWeight: '900', letterSpacing: -0.5, marginTop: 4 },
+    cancelSub: { color: T.ink3, fontSize: 10, fontWeight: '700', marginTop: 2 },
 
     statusPill: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         backgroundColor: T.surfaceBulky,
         borderRadius: R.full,
         paddingHorizontal: 16, paddingVertical: 8,
+        marginTop: 22,
         borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
@@ -1557,12 +1587,12 @@ const s = StyleSheet.create({
         }),
     },
     statusPillLive: {
-        backgroundColor: T.dangerBg,
-        borderColor: T.dangerBorder,
+        backgroundColor: `${T.danger}15`,
+        borderColor: `${T.danger}30`,
     },
     pillDot: { width: 7, height: 7, borderRadius: 3.5 },
-    pillTxt: { fontSize: 12, fontWeight: '700', color: T.ink3, letterSpacing: 0.4, textTransform: 'uppercase' },
-    pillTxtLive: { color: T.dangerText },
+    pillTxt: { fontSize: 12, fontWeight: '700', color: T.ink3, letterSpacing: 0.4, textAlign: 'center', flexShrink: 1, lineHeight: 15 },
+    pillTxtLive: { color: T.danger },
 
     navWrap: {
         position: 'absolute',
@@ -1863,6 +1893,8 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.18)',
         overflow: 'hidden',
         backgroundColor: T.violetDim,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     reviewAvatarWrapCurrent: {
         width: 68,
@@ -1874,8 +1906,7 @@ const s = StyleSheet.create({
         borderColor: `${T.danger}55`,
     },
     reviewAvatarImg: {
-        width: '100%',
-        height: '100%',
+        borderWidth: 0,
     },
     reviewSelectedName: {
         fontSize: 18,

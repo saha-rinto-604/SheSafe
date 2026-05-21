@@ -11,11 +11,17 @@ const {
   getAssistedByVolunteer,
   getChatsByUser,
   getIncidentResponders,
+  getIncidentRouteContext,
+  getUserRouteLocation,
   isIncidentMember,
   getVolunteerCaseDetails: getVolunteerCaseDetailsRepo,
   updateVolunteerCaseDetails: updateVolunteerCaseDetailsRepo,
   getUserCaseDetails: getUserCaseDetailsRepo,
   updateUserCaseDetails: updateUserCaseDetailsRepo,
+  createIncidentReview,
+  getVolunteerActivityLogs,
+  getVolunteerLeaderboardRows,
+  getVolunteerSummary,
   ensureDefaultIncidentMessages,
   setUserOnlineStatus,
   getUnavailableIncidentIdsForVolunteer,
@@ -396,6 +402,14 @@ function formatResponder(row) {
   };
 }
 
+function formatPerson(row, prefix) {
+  return {
+    id: String(row[`${prefix}_id`]),
+    name: [row[`${prefix}_first_name`], row[`${prefix}_last_name`]].filter(Boolean).join(' ').trim() || 'Unknown User',
+    photoUri: row[`${prefix}_photo_url`] || null,
+  };
+}
+
 function formatSosUser(row) {
   return {
     id: String(row.user_id),
@@ -426,6 +440,52 @@ async function getResponders(incidentId, userId, role) {
     volunteers,
     totalMembers: volunteers.length + 1,
     maxVolunteerResponders: 3,
+  };
+}
+
+async function getRouteContext(incidentId, userId, role) {
+  if (role !== 'admin') {
+    const allowed = await isIncidentMember(incidentId, userId);
+    if (!allowed) throw httpError(403, 'You are not a member of this incident route.');
+  }
+
+  const row = await getIncidentRouteContext(incidentId);
+  if (!row) throw httpError(404, 'Incident not found.');
+  const volunteer = await getUserRouteLocation(userId);
+  const responderData = await getIncidentResponders(incidentId);
+
+  const victimLat = row.victim_latest_latitude == null
+    ? row.incident_latitude
+    : row.victim_latest_latitude;
+  const victimLng = row.victim_latest_longitude == null
+    ? row.incident_longitude
+    : row.victim_latest_longitude;
+
+  return {
+    incidentId: Number(row.id),
+    status: row.status,
+    victim: {
+      id: String(row.victim_id),
+      name: userName(row, 'victim_first_name', 'victim_last_name'),
+      latitude: Number(victimLat),
+      longitude: Number(victimLng),
+      photoUri: row.victim_photo_url || null,
+    },
+    volunteer: volunteer ? {
+      id: String(volunteer.id),
+      name: userName(volunteer),
+      latitude: volunteer.latest_latitude == null ? null : Number(volunteer.latest_latitude),
+      longitude: volunteer.latest_longitude == null ? null : Number(volunteer.latest_longitude),
+      photoUri: volunteer.photo_url || null,
+    } : null,
+    volunteers: (responderData.volunteers || []).map((responder) => ({
+      id: String(responder.id),
+      name: userName(responder),
+      latitude: responder.latest_latitude == null ? null : Number(responder.latest_latitude),
+      longitude: responder.latest_longitude == null ? null : Number(responder.latest_longitude),
+      photoUri: responder.photo_url || null,
+      acceptedAt: iso(responder.accepted_at),
+    })),
   };
 }
 
@@ -641,6 +701,117 @@ async function updateVolunteerCaseDetails(userId, incidentId, payload) {
   };
 }
 
+async function submitIncidentReview(userId, incidentId, payload) {
+  const volunteerId = payload?.volunteerId;
+  const rating = Math.max(1, Math.min(5, Number(payload?.rating || 0)));
+  const feedback = String(payload?.feedback || '').trim();
+
+  if (!volunteerId) throw httpError(400, 'volunteerId is required.');
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    throw httpError(400, 'rating must be between 1 and 5.');
+  }
+
+  const result = await createIncidentReview({
+    incidentId,
+    reviewerId: userId,
+    volunteerId,
+    rating,
+    feedback,
+  });
+
+  if (result.status === 'NOT_FOUND') throw httpError(404, 'Incident not found.');
+  if (result.status === 'FORBIDDEN') throw httpError(403, 'Only the SOS creator can review responders.');
+  if (result.status === 'NOT_RESPONDER') throw httpError(400, 'You can only review accepted responders for this incident.');
+
+  const review = result.review;
+  return {
+    review: {
+      id: String(review.id),
+      incidentId: String(review.incident_id),
+      reviewerId: String(review.reviewer_id),
+      volunteerId: String(review.volunteer_id),
+      rating: Number(review.rating),
+      feedback: review.feedback || '',
+      createdAt: iso(review.created_at),
+      updatedAt: iso(review.updated_at),
+    },
+  };
+}
+
+async function getVolunteerActivity(userId) {
+  const rows = await getVolunteerActivityLogs(userId);
+  return rows.map((row) => {
+    const status = row.status === 'IN_PROGRESS' ? 'ACTIVE' : row.status;
+    const updatedAt = iso(row.updated_at || row.accepted_at || row.created_at);
+    return {
+      id: `${row.incident_id}-${row.volunteer_id}`,
+      incidentId: String(row.incident_id),
+      status,
+      createdAt: iso(row.created_at),
+      updatedAt,
+      resolvedAt: status === 'RESOLVED' ? updatedAt : null,
+      cancelledAt: status === 'CANCELLED' ? updatedAt : null,
+      volunteer: formatPerson(row, 'volunteer'),
+      victim: formatPerson(row, 'victim'),
+    };
+  });
+}
+
+function formatLeaderboardUser(row, rank) {
+  const resolvedIncidentCount = Number(row.resolved_incident_count || 0);
+  const assistedIncidentCount = Number(row.assisted_incident_count || 0);
+  const averageRating = Number(row.average_rating || 0);
+  return {
+    id: String(row.id),
+    name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || 'Volunteer',
+    photoUri: row.photo_url || null,
+    rank,
+    points: resolvedIncidentCount * 100,
+    resolvedIncidentCount,
+    assistedIncidentCount,
+    averageRating: Number(averageRating.toFixed(1)),
+    ratingCount: Number(row.rating_count || 0),
+  };
+}
+
+async function getVolunteerLeaderboard(userId) {
+  const rows = await getVolunteerLeaderboardRows();
+  const normalizedRows = rows.map((row) => ({
+    ...row,
+    resolved_incident_count: Number(row.resolved_incident_count || 0),
+    assisted_incident_count: Number(row.assisted_incident_count || 0),
+    average_rating: Number(row.average_rating || 0),
+    rating_count: Number(row.rating_count || 0),
+  }));
+
+  if (!normalizedRows.some((row) => String(row.id) === String(userId))) {
+    const current = await getVolunteerSummary(userId);
+    if (current) {
+      normalizedRows.push({
+        ...current,
+        resolved_incident_count: 0,
+        assisted_incident_count: 0,
+        average_rating: 0,
+        rating_count: 0,
+      });
+    }
+  }
+
+  normalizedRows.sort((a, b) => {
+    const pointsA = Number(a.resolved_incident_count || 0) * 100;
+    const pointsB = Number(b.resolved_incident_count || 0) * 100;
+    if (pointsB !== pointsA) return pointsB - pointsA;
+    if (Number(b.average_rating || 0) !== Number(a.average_rating || 0)) {
+      return Number(b.average_rating || 0) - Number(a.average_rating || 0);
+    }
+    return Number(b.resolved_incident_count || 0) - Number(a.resolved_incident_count || 0);
+  });
+
+  const rankings = normalizedRows.map((row, index) => formatLeaderboardUser(row, index + 1));
+  const me = rankings.find((row) => String(row.id) === String(userId)) || null;
+  return { me, rankings };
+}
+
 /**
  * Toggle volunteer online status.
  */
@@ -660,7 +831,9 @@ async function getDispatchList(incidentId) {
     Number(incident.latitude),
     Number(incident.longitude)
   );
-  return volunteers.map((v) => ({
+  return volunteers
+    .filter((v) => String(v.user_id) !== String(incident.user_id))
+    .map((v) => ({
     userId: String(v.user_id),
     name: `${v.first_name} ${v.last_name}`.trim(),
     photoUrl: v.photo_url || null,
@@ -683,12 +856,16 @@ module.exports = {
   getVolunteerNotifications,
   getUserIncidentChats,
   getResponders,
+  getRouteContext,
   getIncidentMessages,
   sendIncidentMessage,
   getUserCaseDetails,
   updateUserCaseDetails,
   getVolunteerCaseDetails,
   updateVolunteerCaseDetails,
+  submitIncidentReview,
+  getVolunteerActivity,
+  getVolunteerLeaderboard,
   updateOnlineStatus,
   getDispatchList,
 };

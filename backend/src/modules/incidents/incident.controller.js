@@ -157,6 +157,15 @@ async function responders(req, res, next) {
   }
 }
 
+async function routeContext(req, res, next) {
+  try {
+    const result = await incidentService.getRouteContext(req.params.id, req.user.id, req.user.role);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function messages(req, res, next) {
   try {
     const messages = await incidentService.getIncidentMessages(req.user.id, req.params.id, req.user.role);
@@ -225,6 +234,33 @@ async function updateVolunteerCaseDetails(req, res, next) {
   }
 }
 
+async function createReview(req, res, next) {
+  try {
+    const result = await incidentService.submitIncidentReview(req.user.id, req.params.id, req.body);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function volunteerActivity(req, res, next) {
+  try {
+    const activities = await incidentService.getVolunteerActivity(req.user.id);
+    res.status(200).json({ activities });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function volunteerLeaderboard(req, res, next) {
+  try {
+    const result = await incidentService.getVolunteerLeaderboard(req.user.id);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 /**
  * PATCH /api/incidents/online-status — Toggle volunteer online/offline status.
  */
@@ -252,6 +288,7 @@ module.exports = {
   assisted,
   volunteerNotifications,
   responders,
+  routeContext,
   messages,
   sendMessage,
   userChats,
@@ -259,5 +296,8 @@ module.exports = {
   updateUserCaseDetails,
   getVolunteerCaseDetails,
   updateVolunteerCaseDetails,
+  createReview,
+  volunteerActivity,
+  volunteerLeaderboard,
   onlineStatus,
 };

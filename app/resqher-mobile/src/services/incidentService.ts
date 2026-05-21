@@ -1,5 +1,7 @@
 import api from './api';
 
+export const INCIDENT_ZONE_RADIUS_METERS = 200;
+
 export interface IncidentZone {
   id: string;
   name: string;
@@ -54,7 +56,7 @@ export function normalizeIncidentZone(zone: any): IncidentZone | null {
     name: String(zone?.name ?? 'Incident Zone'),
     latitude,
     longitude,
-    radius: Number.isFinite(Number(zone?.radius)) ? Number(zone.radius) : 500,
+    radius: INCIDENT_ZONE_RADIUS_METERS,
     incidentCount: safeIncidentCount,
     count: safeIncidentCount,
     isRed,
@@ -157,6 +159,76 @@ export interface VolunteerCaseDetails {
   updatedAt?: string;
 }
 
+export interface IncidentRouteContext {
+  incidentId: number | string;
+  status: string;
+  victim: {
+    id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+    photoUri?: string | null;
+  };
+  volunteer?: {
+    id: string;
+    name: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    photoUri?: string | null;
+  } | null;
+  volunteers?: Array<{
+    id: string;
+    name: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    photoUri?: string | null;
+    acceptedAt?: string | null;
+  }>;
+}
+
+export interface IncidentReviewPayload {
+  volunteerId: string;
+  rating: number;
+  feedback?: string;
+}
+
+export interface VolunteerActivityLog {
+  id: string;
+  incidentId: string;
+  status: 'ACTIVE' | 'IN_PROGRESS' | 'RESOLVED' | 'CANCELLED' | string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  resolvedAt?: string | null;
+  cancelledAt?: string | null;
+  volunteer: {
+    id: string;
+    name: string;
+    photoUri?: string | null;
+  };
+  victim: {
+    id: string;
+    name: string;
+    photoUri?: string | null;
+  };
+}
+
+export interface VolunteerLeaderboardRow {
+  id: string;
+  name: string;
+  photoUri?: string | null;
+  rank: number;
+  points: number;
+  resolvedIncidentCount: number;
+  assistedIncidentCount: number;
+  averageRating: number;
+  ratingCount: number;
+}
+
+export interface VolunteerLeaderboardResponse {
+  me: VolunteerLeaderboardRow | null;
+  rankings: VolunteerLeaderboardRow[];
+}
+
 function normalizeApiError(error: any) {
   const data = error?.response?.data;
   const next = new Error(data?.message || data?.detail || error?.message || 'Request failed') as Error & {
@@ -175,6 +247,7 @@ export const incidentService = {
     latitude: number;
     longitude: number;
     address?: string;
+    sourceRole?: 'standard_user' | 'volunteer' | string;
   }) {
     const res = await api.post('/api/incidents', payload);
     return res.data.incident as {
@@ -185,6 +258,15 @@ export const incidentService = {
       status: string;
       created_at: string;
     };
+  },
+
+  async createSosIncident(payload: {
+    latitude: number;
+    longitude: number;
+    address?: string;
+    sourceRole?: 'standard_user' | 'volunteer' | string;
+  }) {
+    return this.createIncident(payload);
   },
 
   async cancelIncident(id: number | string) {
@@ -280,6 +362,11 @@ export const incidentService = {
     return res.data as IncidentRespondersResponse;
   },
 
+  async getIncidentRouteContext(id: number | string): Promise<IncidentRouteContext> {
+    const res = await api.get(`/api/incidents/${id}/route-context`);
+    return res.data as IncidentRouteContext;
+  },
+
   async getIncidentMessages(id: number | string): Promise<IncidentMessageResponse[]> {
     const res = await api.get(`/api/incidents/${id}/messages`);
     return res.data?.messages ?? [];
@@ -316,6 +403,32 @@ export const incidentService = {
       additionalInfo: details.additionalInfo ?? '',
     });
     return res.data?.details ?? {};
+  },
+
+  async submitIncidentReview(id: number | string, payload: IncidentReviewPayload) {
+    try {
+      const res = await api.post(`/api/incidents/${id}/reviews`, {
+        volunteerId: payload.volunteerId,
+        rating: payload.rating,
+        feedback: payload.feedback ?? '',
+      });
+      return res.data?.review;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+
+  async getVolunteerActivity(): Promise<VolunteerActivityLog[]> {
+    const res = await api.get('/api/volunteer/activity');
+    return (res.data?.activities ?? []) as VolunteerActivityLog[];
+  },
+
+  async getVolunteerLeaderboard(): Promise<VolunteerLeaderboardResponse> {
+    const res = await api.get('/api/volunteer/leaderboard');
+    return {
+      me: res.data?.me ?? null,
+      rankings: res.data?.rankings ?? [],
+    } as VolunteerLeaderboardResponse;
   },
 };
 

@@ -9,5 +9,7 @@ router.use(authenticate);
 // GET /api/volunteer/incidents/assisted
 router.get('/incidents/assisted', incidentController.assisted);
 router.get('/notifications', incidentController.volunteerNotifications);
+router.get('/activity', incidentController.volunteerActivity);
+router.get('/leaderboard', incidentController.volunteerLeaderboard);
 
 module.exports = router;

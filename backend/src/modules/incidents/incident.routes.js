@@ -21,6 +21,8 @@ router.get('/:id/user-case-details', controller.getUserCaseDetails);
 router.put('/:id/user-case-details', controller.updateUserCaseDetails);
 router.get('/:id/volunteer-case-details', controller.getVolunteerCaseDetails);
 router.put('/:id/volunteer-case-details', controller.updateVolunteerCaseDetails);
+router.get('/:id/route-context', controller.routeContext);
+router.post('/:id/reviews', controller.createReview);
 
 router.get('/:id', controller.getOne);
 router.patch('/:id/cancel', controller.cancel);

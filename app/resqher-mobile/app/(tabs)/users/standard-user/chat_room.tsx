@@ -44,30 +44,20 @@ type Responder = {
     fallbackDuration?: string;
 };
 
+type RoutePoint = { latitude: number; longitude: number; heading?: number };
+type TravelMode = 'walking' | 'driving' | 'motorcycle' | 'transit';
+type NavStep = {
+    instruction: string;
+    distance: string;
+    maneuver?: string;
+    endLocation?: { latitude: number; longitude: number };
+};
+
 type UserCaseDetailsForm = {
     notes: string;
     condition: string;
     additionalInfo: string;
 };
-
-const RESPONDERS: Responder[] = [
-    {
-        id: 'v1',
-        name: 'Kabir Hossain',
-        avatarUri: null,
-        location: { latitude: 23.8328, longitude: 90.4189 },
-        fallbackDistance: '3.2 km',
-        fallbackDuration: '~12 min',
-    },
-    {
-        id: 'v2',
-        name: 'Ayesha S.',
-        avatarUri: null,
-        location: { latitude: 23.8255, longitude: 90.4121 },
-        fallbackDistance: '4.0 km',
-        fallbackDuration: '~14 min',
-    },
-];
 
 // â”€â”€â”€ Mock Incidents (lookup) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const MOCK_INCIDENTS: Record<string, Incident> = {
@@ -185,6 +175,27 @@ function polylineDecode(str: string, precision = 5) {
         coordinates.push({ latitude: lat / factor, longitude: lng / factor });
     }
     return coordinates;
+}
+
+function sanitizeCoordinate(lat: number, lng: number): RoutePoint | null {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    return { latitude: lat, longitude: lng };
+}
+
+function routeModeForApi(mode: TravelMode): string {
+    return mode === 'motorcycle' ? 'two_wheeler' : mode;
+}
+
+function routeModeLabel(mode: TravelMode): string {
+    if (mode === 'motorcycle') return 'bike';
+    if (mode === 'driving') return 'drive';
+    if (mode === 'transit') return 'transit';
+    return 'walk';
+}
+
+function stripHtml(html: string): string {
+    return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 }
 
 // â”€â”€â”€ Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -383,21 +394,27 @@ export default function ChatRoom() {
 
     // Map & Navigation States
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
-    const [mapRouteCoords, setMapRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [mapRouteCoords, setMapRouteCoords] = useState<RoutePoint[]>([]);
     const [mapDistance, setMapDistance] = useState('');
     const [mapDuration, setMapDuration] = useState('');
+    const [routeLoading, setRouteLoading] = useState(false);
+    const [routeError, setRouteError] = useState<string | null>(null);
     const [isLiveNavMode, setIsLiveNavMode] = useState(false);
     const [audioEnabled, setAudioEnabled] = useState(false);
-    const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
+    const [userLoc, setUserLoc] = useState<RoutePoint | null>(null);
+    const [victimName, setVictimName] = useState('Victim');
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const [isReviewMode, setIsReviewMode] = useState(false);
-    const [selectedResponderId, setSelectedResponderId] = useState(RESPONDERS[0]?.id ?? '');
+    const [selectedResponderId, setSelectedResponderId] = useState('');
     const mapRef = useRef<MapView>(null);
-    const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
-    const [navInstructions, setNavInstructions] = useState<{ instruction: string; distance: string; maneuver?: string; endLocation?: { latitude: number; longitude: number } }[]>([]);
+    const routeRequestIdRef = useRef(0);
+    const routePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const lastRouteRefreshRef = useRef(0);
+    const [travelMode, setTravelMode] = useState<TravelMode>('walking');
+    const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
-    const [completedRouteCoords, setCompletedRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
-    const [remainingRouteCoords, setRemainingRouteCoords] = useState<{ latitude: number; longitude: number }[]>([]);
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<RoutePoint[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<RoutePoint[]>([]);
 
     // Menu / Modals
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -442,14 +459,17 @@ export default function ChatRoom() {
                 name: volunteer.name,
                 avatarUri: volunteer.photoUri ?? null,
             }));
-            setRespondersList(volunteers);
+            setRespondersList(prev => volunteers.map(volunteer => ({
+                ...volunteer,
+                location: prev.find(existing => existing.id === volunteer.id)?.location,
+            })));
             setSosUser(response.sosUser ? {
                 id: response.sosUser.id,
                 name: response.sosUser.name,
                 photoUri: response.sosUser.photoUri ?? null,
             } : null);
             setMaxResponders(response.maxVolunteerResponders ?? 3);
-            setSelectedResponderId((prev) => prev || volunteers[0]?.id || RESPONDERS[0]?.id || '');
+            setSelectedResponderId((prev) => prev || volunteers[0]?.id || '');
         };
 
         loadMembers().catch(error => console.warn('[StandardChatRoom] responders unavailable:', error?.message || error));
@@ -540,76 +560,244 @@ export default function ChatRoom() {
 
     // â”€â”€â”€ Tactical Map Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const selectedResponder = React.useMemo(
-        () => respondersList.find(r => r.id === selectedResponderId) ?? respondersList[0] ?? RESPONDERS[0],
+        () => respondersList.find(r => r.id === selectedResponderId) ?? respondersList[0] ?? null,
         [respondersList, selectedResponderId]
     );
 
-    const loadRouteForResponder = useCallback(async (responder: Responder) => {
-        if (!incident) return;
-        const originLocation = responder.location ?? incident.location;
-        const origin = `${originLocation.latitude},${originLocation.longitude}`;
-        const destination = `${incident.location.latitude},${incident.location.longitude}`;
-        const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
-        const modeLabel = travelMode === 'motorcycle' ? 'ride' : travelMode === 'driving' ? 'drive' : travelMode === 'transit' ? 'transit' : 'walk';
+    const clearRouteOverview = useCallback(() => {
+        routeRequestIdRef.current += 1;
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
+        if (routePollRef.current) {
+            clearInterval(routePollRef.current);
+            routePollRef.current = null;
+        }
+        setMapRouteCoords([]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setIsLiveNavMode(false);
+        setIsReviewMode(false);
+        setMapDistance('');
+        setMapDuration('');
+        setRouteLoading(false);
+        setRouteError(null);
+    }, []);
+
+    const fitRouteToMap = useCallback((coords: RoutePoint[]) => {
+        if (coords.length <= 1) return;
+        setTimeout(() => {
+            mapRef.current?.fitToCoordinates(coords, {
+                edgePadding: { top: 140, right: 60, bottom: 300, left: 60 },
+                animated: true,
+            });
+        }, 250);
+    }, []);
+
+    const loadRouteForResponder = useCallback(async (
+        victimLocation: RoutePoint,
+        responder: Responder,
+        mode: TravelMode,
+        options: { fit?: boolean } = {},
+    ) => {
+        const originLocation = sanitizeCoordinate(victimLocation.latitude, victimLocation.longitude);
+        const responderLocation = responder.location
+            ? sanitizeCoordinate(responder.location.latitude, responder.location.longitude)
+            : null;
+        if (!originLocation || !responderLocation) {
+            setRouteLoading(false);
+            setRouteError('Selected responder location is unavailable.');
+            return;
+        }
+
+        const requestId = ++routeRequestIdRef.current;
+        const fallbackRoute = [originLocation, responderLocation];
+        const modeLabel = routeModeLabel(mode);
+        setRouteLoading(true);
+        setRouteError(null);
+
+        const applyRoute = (coords: RoutePoint[], distance = '', duration = '', instructions: NavStep[] = []) => {
+            if (routeRequestIdRef.current !== requestId) return;
+            const visibleCoords = coords.length > 1 ? coords : fallbackRoute;
+            setMapRouteCoords(visibleCoords);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords(visibleCoords);
+            setNavInstructions(instructions);
+            setCurrentStepIdx(0);
+            setMapDistance(distance);
+            setMapDuration(duration);
+            setRouteLoading(false);
+            if (options.fit !== false) fitRouteToMap(visibleCoords);
+        };
 
         if (!GOOGLE_MAPS_API_KEY) {
-            let mockMins = 23;
-            if (travelMode === 'walking') mockMins = 75;
-            else if (travelMode === 'motorcycle') mockMins = 18;
-
-            setMapRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
-            setMapDistance(travelMode === 'walking' ? '2.1 km' : responder.fallbackDistance ?? '2.1 km');
-            setMapDuration(`~${mockMins} mins ${modeLabel}`);
-            setNavInstructions([]);
-            setCompletedRouteCoords([]);
-            setRemainingRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
             return;
         }
 
         try {
-            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${apiMode}&key=${GOOGLE_MAPS_API_KEY}`;
+            const origin = `${originLocation.latitude},${originLocation.longitude}`;
+            const destination = `${responderLocation.latitude},${responderLocation.longitude}`;
+            const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&mode=${routeModeForApi(mode)}&key=${GOOGLE_MAPS_API_KEY}`;
             const res = await fetch(url);
             const data = await res.json();
-            if (data?.routes?.length > 0) {
-                const points = data.routes[0].overview_polyline.points;
-                const coords = polylineDecode(points);
-                const leg = data.routes[0].legs?.[0];
-                setMapRouteCoords(coords);
-                setMapDistance(leg?.distance?.text ?? responder.fallbackDistance);
-                setMapDuration(`~${leg?.duration?.text ?? responder.fallbackDuration} ${modeLabel}`);
-                setCompletedRouteCoords([]);
-                setRemainingRouteCoords(coords);
+            if (routeRequestIdRef.current !== requestId) return;
 
-                const steps = leg?.steps ?? [];
-                const stripHtml = (html: string) => html.replace(/<[^>]*>/g, '');
-                setNavInstructions(steps.map((step: any) => ({
+            if (data?.routes?.length > 0) {
+                const route = data.routes[0];
+                const coords = polylineDecode(route.overview_polyline?.points ?? '') as RoutePoint[];
+                const leg = route.legs?.[0];
+                const instructions: NavStep[] = (leg?.steps ?? []).map((step: any) => ({
                     instruction: stripHtml(step.html_instructions ?? ''),
                     distance: step.distance?.text ?? '',
                     maneuver: step.maneuver,
                     endLocation: step.end_location ? { latitude: step.end_location.lat, longitude: step.end_location.lng } : undefined,
-                })));
-                setCurrentStepIdx(0);
-
-                setTimeout(() => {
-                    mapRef.current?.fitToCoordinates(coords, { edgePadding: { top: 140, right: 60, bottom: 280, left: 60 }, animated: true });
-                }, 400);
+                }));
+                applyRoute(
+                    coords.length > 1 ? coords : fallbackRoute,
+                    leg?.distance?.text ?? '',
+                    leg?.duration?.text ? `${leg.duration.text} ${modeLabel}` : modeLabel,
+                    instructions,
+                );
+                return;
             }
-        } catch (e) {
-            console.error(e);
+
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
+        } catch (error) {
+            console.warn('[StandardChatRoom] route load failed, using fallback:', error);
+            applyRoute(fallbackRoute, '', `~${modeLabel}`);
         }
-    }, [incident, travelMode]);
+    }, [fitRouteToMap]);
+
+    const applyRouteContext = useCallback(async () => {
+        const context = await incidentService.getIncidentRouteContext(incidentId);
+        const contextVictim = sanitizeCoordinate(Number(context.victim.latitude), Number(context.victim.longitude));
+        let nextVictim = contextVictim;
+
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status === 'granted') {
+                const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                nextVictim = sanitizeCoordinate(position.coords.latitude, position.coords.longitude) ?? contextVictim;
+            }
+        } catch {
+            // Latest backend/incident location remains the fallback.
+        }
+
+        const volunteers = (context.volunteers ?? [])
+            .map((volunteer) => {
+                const location = sanitizeCoordinate(Number(volunteer.latitude), Number(volunteer.longitude));
+                if (!location) return null;
+                return {
+                    id: volunteer.id,
+                    name: volunteer.name || 'Volunteer',
+                    avatarUri: volunteer.photoUri ?? null,
+                    location,
+                } as Responder;
+            })
+            .filter(Boolean) as Responder[];
+
+        if (context.victim?.name) setVictimName(context.victim.name);
+        if (nextVictim) setUserLoc(nextVictim);
+        setRespondersList(volunteers);
+        setSelectedResponderId(prev => (volunteers.some(volunteer => volunteer.id === prev) ? prev : volunteers[0]?.id || ''));
+
+        return {
+            victim: nextVictim,
+            volunteers,
+            selected: volunteers.find(volunteer => volunteer.id === selectedResponderId) ?? volunteers[0] ?? null,
+        };
+    }, [incidentId, selectedResponderId]);
 
     const openMapOverlay = useCallback(async () => {
+        Keyboard.dismiss();
         setIsMapOverlayOpen(true);
         setIsLiveNavMode(false);
         setIsReviewMode(false);
+        setRouteError(null);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
         Haptics.selectionAsync();
-        await loadRouteForResponder(selectedResponder);
-    }, [loadRouteForResponder, selectedResponder]);
+        try {
+            const context = await applyRouteContext();
+            if (!context?.victim) {
+                setRouteError('Could not find your current SOS location.');
+                return;
+            }
+            if (!context.selected) {
+                setRouteError('No accepted volunteers with live location yet.');
+                return;
+            }
+            await loadRouteForResponder(context.victim, context.selected, travelMode);
+        } catch (error: any) {
+            setRouteError(error?.message || 'Unable to load this route.');
+        }
+    }, [applyRouteContext, loadRouteForResponder, travelMode]);
 
     useEffect(() => {
-        if (isMapOverlayOpen) loadRouteForResponder(selectedResponder);
-    }, [travelMode, isMapOverlayOpen, loadRouteForResponder, selectedResponder]);
+        if (!isMapOverlayOpen || !userLoc || !selectedResponder || isLiveNavMode) return;
+        Keyboard.dismiss();
+        setMapRouteCoords([]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        loadRouteForResponder(userLoc, selectedResponder, travelMode);
+    }, [travelMode, selectedResponderId, isMapOverlayOpen, isLiveNavMode, userLoc, loadRouteForResponder]);
+
+    useEffect(() => {
+        if (!isMapOverlayOpen) return;
+        if (routePollRef.current) clearInterval(routePollRef.current);
+        routePollRef.current = setInterval(async () => {
+            try {
+                const context = await incidentService.getIncidentRouteContext(incidentId);
+                const contextVictim = sanitizeCoordinate(Number(context.victim.latitude), Number(context.victim.longitude));
+                const nextVolunteers = (context.volunteers ?? [])
+                    .map((volunteer) => {
+                        const location = sanitizeCoordinate(Number(volunteer.latitude), Number(volunteer.longitude));
+                        if (!location) return null;
+                        return {
+                            id: volunteer.id,
+                            name: volunteer.name || 'Volunteer',
+                            avatarUri: volunteer.photoUri ?? null,
+                            location,
+                        } as Responder;
+                    })
+                    .filter(Boolean) as Responder[];
+
+                if (context.victim?.name) setVictimName(context.victim.name);
+                if (!isLiveNavMode && contextVictim) {
+                    setUserLoc(prev => {
+                        if (!prev) return contextVictim;
+                        return haversineDistance(prev, contextVictim) >= 5 ? contextVictim : prev;
+                    });
+                }
+                setRespondersList(nextVolunteers);
+                setSelectedResponderId(prev => (nextVolunteers.some(volunteer => volunteer.id === prev) ? prev : nextVolunteers[0]?.id || ''));
+
+                const nextSelected = nextVolunteers.find(volunteer => volunteer.id === selectedResponderId) ?? nextVolunteers[0] ?? null;
+                const activeVictim = userLoc ?? contextVictim;
+                if (!activeVictim || !nextSelected?.location || !selectedResponder?.location) return;
+
+                const selectedMoved = haversineDistance(selectedResponder.location, nextSelected.location);
+                const victimMoved = contextVictim && userLoc ? haversineDistance(userLoc, contextVictim) : 0;
+                if ((selectedMoved >= 40 || victimMoved >= 40) && Date.now() - lastRouteRefreshRef.current > 15000) {
+                    lastRouteRefreshRef.current = Date.now();
+                    loadRouteForResponder(activeVictim, nextSelected, travelMode, { fit: !isLiveNavMode });
+                }
+            } catch {
+                // Route context polling is best effort; chat remains usable.
+            }
+        }, 8000);
+
+        return () => {
+            if (routePollRef.current) {
+                clearInterval(routePollRef.current);
+                routePollRef.current = null;
+            }
+        };
+    }, [incidentId, isLiveNavMode, isMapOverlayOpen, loadRouteForResponder, selectedResponder, selectedResponderId, travelMode, userLoc]);
 
     useEffect(() => {
         if (!isLiveNavMode) {
@@ -623,37 +811,61 @@ export default function ChatRoom() {
             locationSubRef.current = await Location.watchPositionAsync(
                 { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 2000, distanceInterval: 5 },
                 (loc) => {
-                    if (mounted) setUserLoc({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, heading: loc.coords.heading ?? undefined });
+                    if (!mounted) return;
+                    const nextVictim = {
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                        heading: loc.coords.heading ?? undefined,
+                    };
+                    setUserLoc(prev => {
+                        if (prev && selectedResponder?.location && haversineDistance(prev, nextVictim) >= 40 && Date.now() - lastRouteRefreshRef.current > 15000) {
+                            lastRouteRefreshRef.current = Date.now();
+                            loadRouteForResponder(nextVictim, selectedResponder, travelMode, { fit: false });
+                        }
+                        return nextVictim;
+                    });
                 }
             );
         })();
         return () => { mounted = false; if (locationSubRef.current) { locationSubRef.current.remove(); locationSubRef.current = null; } };
-    }, [isLiveNavMode]);
+    }, [isLiveNavMode, loadRouteForResponder, selectedResponder, travelMode]);
 
     useEffect(() => {
-        if (!isLiveNavMode || !userLoc) return;
-        mapRef.current?.animateCamera({ center: { latitude: userLoc.latitude, longitude: userLoc.longitude }, pitch: 45, heading: userLoc.heading ?? 0, zoom: 19 }, { duration: 1000 });
+        if (!isLiveNavMode || !selectedResponder?.location) return;
+        const volunteerLocation = selectedResponder.location;
+        mapRef.current?.animateCamera({ center: volunteerLocation, pitch: 45, heading: 0, zoom: 19 }, { duration: 1000 });
 
         if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
             const currentStep = navInstructions[currentStepIdx];
-            if (currentStep.endLocation && haversineDistance(userLoc, currentStep.endLocation) <= 25) {
+            if (currentStep.endLocation && haversineDistance(volunteerLocation, currentStep.endLocation) <= 25) {
                 setCurrentStepIdx(prev => prev + 1);
             }
         }
 
         if (mapRouteCoords && mapRouteCoords.length > 0) {
             let closestIdx = 0, minD = Infinity;
-            mapRouteCoords.forEach((pt, i) => { const d = haversineDistance(userLoc, pt); if (d < minD) { minD = d; closestIdx = i; } });
-            setCompletedRouteCoords(mapRouteCoords.slice(0, closestIdx + 1));
-            setRemainingRouteCoords(mapRouteCoords.slice(closestIdx));
+            mapRouteCoords.forEach((pt, i) => { const d = haversineDistance(volunteerLocation, pt); if (d < minD) { minD = d; closestIdx = i; } });
+            setCompletedRouteCoords(mapRouteCoords.slice(closestIdx));
+            setRemainingRouteCoords(mapRouteCoords.slice(0, closestIdx + 1));
         }
-    }, [isLiveNavMode, userLoc, currentStepIdx, navInstructions, mapRouteCoords]);
+    }, [isLiveNavMode, selectedResponder, currentStepIdx, navInstructions, mapRouteCoords]);
 
     useEffect(() => {
         if (isLiveNavMode && audioEnabled && navInstructions.length > 0 && currentStepIdx < navInstructions.length) {
             Speech.speak(navInstructions[currentStepIdx].instruction);
         }
     }, [isLiveNavMode, audioEnabled, currentStepIdx, navInstructions]);
+
+    useEffect(() => {
+        return () => {
+            locationSubRef.current?.remove();
+            locationSubRef.current = null;
+            if (routePollRef.current) {
+                clearInterval(routePollRef.current);
+                routePollRef.current = null;
+            }
+        };
+    }, []);
 
     return (
         <AtmosphericShell>
@@ -835,22 +1047,36 @@ export default function ChatRoom() {
                             initialRegion={{ latitude: 23.8293, longitude: 90.4182, latitudeDelta: 0.05, longitudeDelta: 0.05 }}
                         >
                             {completedRouteCoords.length > 1 && (
-                                <Polyline coordinates={completedRouteCoords} strokeColor="#3B82F6" strokeWidth={5} lineCap="round" lineJoin="round" />
+                                <Polyline coordinates={completedRouteCoords} strokeColor="#3B82F6" strokeWidth={5} lineCap="round" lineJoin="round" zIndex={5200} />
                             )}
                             {remainingRouteCoords.length > 1 && (
-                                <Polyline coordinates={remainingRouteCoords} strokeColor={T.violet} strokeWidth={4} lineCap="round" lineJoin="round" />
+                                <>
+                                    <Polyline coordinates={remainingRouteCoords} strokeColor="rgba(138,56,246,0.28)" strokeWidth={10} lineCap="round" lineJoin="round" zIndex={5000} />
+                                    <Polyline coordinates={remainingRouteCoords} strokeColor={T.violet} strokeWidth={4} lineCap="round" lineJoin="round" zIndex={5001} />
+                                </>
                             )}
                             {completedRouteCoords.length === 0 && mapRouteCoords.length > 1 && (
-                                <Polyline coordinates={mapRouteCoords} strokeColor={T.violet} strokeWidth={4} lineCap="round" lineJoin="round" />
-                            )}
-                            {mapRouteCoords.length > 0 && (
                                 <>
-                                    <Marker coordinate={isLiveNavMode && userLoc ? { latitude: userLoc.latitude, longitude: userLoc.longitude } : mapRouteCoords[0]} anchor={{ x: 0.5, y: 0.5 }} zIndex={1000}>
-                                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' }} />
-                                    </Marker>
-                                    <Marker coordinate={mapRouteCoords[mapRouteCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }} zIndex={999}>
-                                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.danger, borderWidth: 2, borderColor: '#fff' }} />
-                                    </Marker>
+                                    <Polyline coordinates={mapRouteCoords} strokeColor="rgba(138,56,246,0.28)" strokeWidth={10} lineCap="round" lineJoin="round" zIndex={5000} />
+                                    <Polyline coordinates={mapRouteCoords} strokeColor={T.violet} strokeWidth={4} lineCap="round" lineJoin="round" zIndex={5001} />
+                                </>
+                            )}
+                            {mapRouteCoords.length > 1 && (
+                                <>
+                                    <Marker
+                                        coordinate={isLiveNavMode && userLoc ? userLoc : mapRouteCoords[0]}
+                                        pinColor="#EF4444"
+                                        title={victimName || 'Victim'}
+                                        description={incident?.address || 'SOS location'}
+                                        zIndex={7000}
+                                    />
+                                    <Marker
+                                        coordinate={isLiveNavMode && selectedResponder?.location ? selectedResponder.location : mapRouteCoords[mapRouteCoords.length - 1]}
+                                        pinColor={T.violet}
+                                        title={selectedResponder?.name || 'Volunteer'}
+                                        description="Responder location"
+                                        zIndex={7001}
+                                    />
                                 </>
                             )}
                         </MapView>
@@ -874,7 +1100,7 @@ export default function ChatRoom() {
                         {/* Top Header - Overview/Review */}
                         {!isLiveNavMode && (
                             <View style={[st.overlayHeader, { top: insets.top + 8 }]}>
-                                <TouchableOpacity style={st.headerBtn} onPress={() => { setIsMapOverlayOpen(false); setIsLiveNavMode(false); setIsReviewMode(false); }}>
+                                <TouchableOpacity style={st.headerBtn} onPress={() => { Keyboard.dismiss(); setIsMapOverlayOpen(false); clearRouteOverview(); }}>
                                     <Feather name="x" size={22} color={T.ink} />
                                 </TouchableOpacity>
                                 <View style={st.overlayTitleWrap}>
@@ -892,15 +1118,26 @@ export default function ChatRoom() {
                             {/* Responders List */}
                             {!isLiveNavMode && !isReviewMode && (
                                 <View style={st.responderRow}>
-                                    {(respondersList.length ? respondersList : RESPONDERS).map(responder => (
-                                        <TouchableOpacity key={responder.id} style={st.responderAvatarWrap} onPress={() => { Haptics.selectionAsync(); setSelectedResponderId(responder.id); }} activeOpacity={0.75}>
-                                            <View style={[st.responderAvatarRing, responder.id === selectedResponderId && st.responderAvatarRingActive]}>
-                                                <UserAvatar uri={responder.avatarUri} size={32} style={st.responderAvatar} />
-                                            </View>
-                                            <Text style={[st.responderAvatarName, responder.id === selectedResponderId && st.responderAvatarNameActive]} numberOfLines={1}>{responder.name.split(' ')[0]}</Text>
-                                        </TouchableOpacity>
-                                    ))}
+                                    {respondersList.map(responder => {
+                                        const isSelected = responder.id === selectedResponderId;
+                                        return (
+                                            <TouchableOpacity
+                                                key={responder.id}
+                                                style={st.responderAvatarWrap}
+                                                onPress={() => { Keyboard.dismiss(); Haptics.selectionAsync(); setSelectedResponderId(responder.id); }}
+                                                activeOpacity={0.75}
+                                            >
+                                                <View style={[st.responderAvatarRing, isSelected && st.responderAvatarRingActive]}>
+                                                    <UserAvatar uri={responder.avatarUri} size={32} style={st.responderAvatar} />
+                                                </View>
+                                                <Text style={[st.responderAvatarName, isSelected && st.responderAvatarNameActive]} numberOfLines={1}>{responder.name.split(' ')[0]}</Text>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
                                 </View>
+                            )}
+                            {!!routeError && !isReviewMode && (
+                                <Text style={st.routeErrorText}>{routeError}</Text>
                             )}
 
                             {isLiveNavMode ? (
@@ -915,7 +1152,9 @@ export default function ChatRoom() {
                                         </View>
                                     )}
                                     <View style={st.liveBottomRow}>
-                                        <Text style={st.liveStepCounter}>Step {currentStepIdx + 1} of {navInstructions.length}</Text>
+                                        <Text style={st.liveStepCounter}>
+                                            {navInstructions.length > 0 ? `Step ${currentStepIdx + 1} of ${navInstructions.length}` : 'Live route tracking'}
+                                        </Text>
                                         <TouchableOpacity style={st.exitNavBtn} onPress={() => { setIsLiveNavMode(false); mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 }); mapRef.current?.fitToCoordinates(mapRouteCoords, { edgePadding: { top: 140, right: 60, bottom: 280, left: 60 }, animated: true }); }}>
                                             <Text style={st.exitNavBtnText}>Exit Live Mode</Text>
                                         </TouchableOpacity>
@@ -924,15 +1163,19 @@ export default function ChatRoom() {
                             ) : isReviewMode ? (
                                 <View>
                                     <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
-                                        {navInstructions.map((step, idx) => (
-                                            <View key={idx} style={[st.reviewStepRow, idx === 0 && { borderTopWidth: 0 }]}>
-                                                <View style={st.reviewStepNum}><Text style={st.reviewStepNumText}>{idx + 1}</Text></View>
-                                                <View style={{ flex: 1 }}>
-                                                    <Text style={st.reviewStepInst}>{step.instruction}</Text>
-                                                    <Text style={st.reviewStepDist}>{step.distance}</Text>
+                                        {navInstructions.length === 0 ? (
+                                            <Text style={st.reviewEmptyText}>No turn-by-turn steps available for this route.</Text>
+                                        ) : (
+                                            navInstructions.map((step, idx) => (
+                                                <View key={idx} style={[st.reviewStepRow, idx === 0 && { borderTopWidth: 0 }]}>
+                                                    <View style={st.reviewStepNum}><Text style={st.reviewStepNumText}>{idx + 1}</Text></View>
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={st.reviewStepInst}>{step.instruction}</Text>
+                                                        <Text style={st.reviewStepDist}>{step.distance}</Text>
+                                                    </View>
                                                 </View>
-                                            </View>
-                                        ))}
+                                            ))
+                                        )}
                                     </ScrollView>
                                     <TouchableOpacity style={st.exitNavBtn} onPress={() => setIsReviewMode(false)}><Text style={st.exitNavBtnText}>Back to Overview</Text></TouchableOpacity>
                                 </View>
@@ -940,7 +1183,7 @@ export default function ChatRoom() {
                                 <View>
                                     <View style={st.travelModeRow}>
                                         {(['walking', 'driving', 'motorcycle', 'transit'] as const).map(mode => (
-                                            <TouchableOpacity key={mode} style={[st.travelModeBtn, travelMode === mode && st.travelModeBtnActive]} onPress={() => setTravelMode(mode)}>
+                                            <TouchableOpacity key={mode} style={[st.travelModeBtn, travelMode === mode && st.travelModeBtnActive]} onPress={() => { Keyboard.dismiss(); Haptics.selectionAsync(); setTravelMode(mode); }}>
                                                 <Ionicons name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'} size={16} color={travelMode === mode ? T.onPrimary : T.ink3} />
                                                 <Text style={[st.travelModeText, travelMode === mode && st.travelModeTextActive]}>{mode === 'motorcycle' ? 'Bike' : mode.charAt(0).toUpperCase() + mode.slice(1)}</Text>
                                             </TouchableOpacity>
@@ -948,15 +1191,27 @@ export default function ChatRoom() {
                                     </View>
                                     <View style={st.overviewRow}>
                                         <View style={{ flex: 1 }}>
-                                            <Text style={st.overviewDist}>{mapDistance}</Text>
-                                            <Text style={st.overviewEta}>{mapDuration}</Text>
+                                            <Text style={st.overviewDist}>{routeLoading ? 'Loading route...' : mapDistance || 'Route ready'}</Text>
+                                            <Text style={st.overviewEta}>{mapDuration || (selectedResponder ? `To ${selectedResponder.name}` : 'Waiting for responder')}</Text>
                                         </View>
                                         <View style={{ flexDirection: 'row', gap: 8 }}>
-                                            <TouchableOpacity style={st.reviewBtn} onPress={() => setIsReviewMode(true)}>
+                                            <TouchableOpacity style={st.reviewBtn} onPress={() => { Keyboard.dismiss(); setIsReviewMode(true); }}>
                                                 <Feather name="list" size={16} color={T.violet} />
                                                 <Text style={st.reviewBtnText}>Review</Text>
                                             </TouchableOpacity>
-                                            <TouchableOpacity style={st.startNavBtn} onPress={() => { setIsLiveNavMode(true); if (mapRouteCoords.length > 0) mapRef.current?.animateCamera({ center: mapRouteCoords[0], pitch: 60, heading: 145, zoom: 18 }, { duration: 1000 }); }}>
+                                            <TouchableOpacity style={st.startNavBtn} onPress={() => {
+                                                Keyboard.dismiss();
+                                                Haptics.selectionAsync();
+                                                if (mapRouteCoords.length <= 1) {
+                                                    setRouteError('Please wait for the selected route to load.');
+                                                    return;
+                                                }
+                                                setCompletedRouteCoords([]);
+                                                setRemainingRouteCoords(mapRouteCoords);
+                                                setIsLiveNavMode(true);
+                                                const volunteerPoint = selectedResponder?.location ?? mapRouteCoords[mapRouteCoords.length - 1];
+                                                mapRef.current?.animateCamera({ center: volunteerPoint, pitch: 60, heading: 145, zoom: 18 }, { duration: 1000 });
+                                            }}>
                                                 <Ionicons name="navigate" size={16} color={T.onPrimary} />
                                                 <Text style={st.startNavBtnText}>Live Mode</Text>
                                             </TouchableOpacity>
@@ -1113,6 +1368,8 @@ const st = StyleSheet.create({
     reviewStepNumText: { color: T.violet, fontSize: 12, fontWeight: '800' },
     reviewStepInst: { color: T.ink, fontSize: 14, fontWeight: '700' },
     reviewStepDist: { color: T.ink3, fontSize: 12, fontWeight: '500', marginTop: 2 },
+    reviewEmptyText: { color: T.ink3, fontSize: 13, fontWeight: '600', textAlign: 'center', paddingVertical: 18 },
+    routeErrorText: { color: '#FCA5A5', fontSize: 13, fontWeight: '700', textAlign: 'center', marginBottom: 12 },
     navInstRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
     navInstIconWrap: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(138,56,246,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(138,56,246,0.3)' },
     navInstPrimary: { color: T.ink, fontSize: 16, fontWeight: '800' },

@@ -231,6 +231,7 @@ type PlaceSuggestion = {
     latitude: number;
     longitude: number;
     placeId?: string;
+    zoneSeverity?: 'red' | 'yellow';
 };
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 260;
@@ -699,6 +700,17 @@ export default function ExploreScreen() {
             .map(normalizeIncidentZone)
             .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
     }, [incidentZones]);
+    const selectedPlaceZoneSeverity = useMemo(() => {
+        if (!selectedPlace?.id.startsWith('zone-')) return selectedPlace?.zoneSeverity;
+        const zone = normalizedIncidentZones.find(item => selectedPlace.id === `zone-${item.id}`);
+        if (!zone) return selectedPlace.zoneSeverity;
+        return zone.incidentCount >= 5 ? 'red' : 'yellow';
+    }, [normalizedIncidentZones, selectedPlace]);
+    const selectedPlaceMarkerColor = selectedPlaceZoneSeverity === 'yellow'
+        ? '#FACC15'
+        : selectedPlaceZoneSeverity === 'red'
+            ? '#EF4444'
+            : T.violet;
 
     const clearRouteState = useCallback(() => {
         routeRequestIdRef.current += 1;
@@ -1468,10 +1480,11 @@ export default function ExploreScreen() {
     const openZoneSheet = useCallback((zone: IncidentZone) => {
         const place: PlaceSuggestion = {
             id: `zone-${zone.id}`,
-            name: zone.name || (zone.isRed ? 'Red Zone' : 'Yellow Zone'),
+            name: zone.name || (zone.incidentCount >= 5 ? 'Red Zone' : 'Yellow Zone'),
             address: zone.name || 'Incident zone',
             latitude: zone.latitude,
             longitude: zone.longitude,
+            zoneSeverity: zone.incidentCount >= 5 ? 'red' : 'yellow',
         };
         setSelectedPlace(place);
         if (showLocationCard) closeLocationCard();
@@ -1722,8 +1735,7 @@ export default function ExploreScreen() {
                 >
                     {/* ── Dynamic Circle Color Mapping: Handles Red vs Yellow Thresholds ── */}
                     {normalizedIncidentZones.map(zone => {
-                        const zoneIsRed = zone.isRed || zone.incidentCount >= 5;
-                        const zoneColor = zoneIsRed ? '#EF4444' : '#FACC15';
+                        const zoneIsRed = zone.incidentCount >= 5;
                         return (
                             <React.Fragment key={zone.id}>
                                 <Circle
@@ -1741,14 +1753,7 @@ export default function ExploreScreen() {
                                     zIndex={zoneIsRed ? 40 : 30}
                                     onPress={() => openZoneSheet(zone)}
                                 >
-                                    <View style={{
-                                        width: 14,
-                                        height: 14,
-                                        borderRadius: 7,
-                                        backgroundColor: zoneColor,
-                                        borderWidth: 2,
-                                        borderColor: '#FFFFFF',
-                                    }} />
+                                    <View style={s.zoneTapTarget} />
                                 </Marker>
                             </React.Fragment>
                         );
@@ -1756,17 +1761,22 @@ export default function ExploreScreen() {
 
                     {selectedPlace && (
                         <Marker
-                            key={selectedPlace.id}
+                            key={`${selectedPlace.id}-${selectedPlaceMarkerColor}`}
                             coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
                             anchor={{ x: 0.5, y: 1 }}
                             calloutAnchor={{ x: 0.5, y: 0 }}
                             tracksViewChanges={true}
                             zIndex={999}
+                            pinColor={selectedPlaceMarkerColor}
                             onPress={() => openPlaceSheet(selectedPlace, selectedPlace.id.startsWith('zone-'))}
                         >
                             <View style={s.placeMarkerWrap}>
-                                <View style={s.placeMarkerIconWrap}>
-                                    <Ionicons name="location" size={26} color={T.violet} />
+                                <View style={[s.placeMarkerIconWrap, { shadowColor: selectedPlaceMarkerColor }]}>
+                                    <Ionicons
+                                        name="location"
+                                        size={26}
+                                        color={selectedPlaceMarkerColor}
+                                    />
                                 </View>
                                 <View style={s.placeMarkerStem} />
                             </View>
@@ -2706,6 +2716,7 @@ const s = StyleSheet.create({
     mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
     zoneDebugBanner: { position: 'absolute', left: 16, right: 16, zIndex: 310, borderRadius: 12, backgroundColor: 'rgba(239,68,68,0.18)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 12, paddingVertical: 8 },
     zoneDebugText: { color: '#FCA5A5', fontSize: 11, fontWeight: '700' },
+    zoneTapTarget: { width: 44, height: 44, backgroundColor: 'transparent' },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: 12, backgroundColor: T.surfaceBulky, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({

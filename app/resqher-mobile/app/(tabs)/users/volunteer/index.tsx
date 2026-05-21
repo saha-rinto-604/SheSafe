@@ -271,6 +271,7 @@ type PlaceSuggestion = {
     latitude: number;
     longitude: number;
     placeId?: string;
+    zoneSeverity?: 'red' | 'yellow';
 };
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 260;
@@ -693,15 +694,18 @@ export default function VolunteerHome() {
     const [showSOS, setShowSOS] = useState(false);
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [sosActive, setSosActive] = useState(false);
+    const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const [cancelCountdown, setCancelCountdown] = useState(CANCEL_DURATION_DEFAULT);
     const [isEmergencyLive, setIsEmergencyLive] = useState(false);
     const [sosStage, setSosStage] = useState<'idle' | 'requesting' | 'responding'>('idle');
     const [stopConfirmVisible, setStopConfirmVisible] = useState(false);
     const [reviewVisible, setReviewVisible] = useState(false);
     const [reviewQueue, setReviewQueue] = useState<{ id: string; name: string; avatarUri: string | null }[]>([]);
+    const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
     const [reviewRating, setReviewRating] = useState(5);
     const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
+    const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
     // UI Flows Hook Setup
     const [responderSheetVisible, setResponderSheetVisible] = useState(false);
@@ -754,6 +758,7 @@ export default function VolunteerHome() {
     const routeRequestIdRef = useRef(0);
     const safePathRequestIdRef = useRef(0);
     const navigationGuardRef = useRef(false);
+    const volunteerSosCreateSeqRef = useRef(0);
 
     const navigateSafely = useCallback((path: string, replace = false) => {
         if (navigationGuardRef.current) return;
@@ -796,6 +801,17 @@ export default function VolunteerHome() {
             .map(normalizeIncidentZone)
             .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
     }, [incidentZones]);
+    const selectedPlaceZoneSeverity = useMemo(() => {
+        if (!selectedPlace?.id.startsWith('zone-')) return selectedPlace?.zoneSeverity;
+        const zone = normalizedIncidentZones.find(item => selectedPlace.id === `zone-${item.id}`);
+        if (!zone) return selectedPlace.zoneSeverity;
+        return zone.incidentCount >= 5 ? 'red' : 'yellow';
+    }, [normalizedIncidentZones, selectedPlace]);
+    const selectedPlaceMarkerColor = selectedPlaceZoneSeverity === 'yellow'
+        ? '#FACC15'
+        : selectedPlaceZoneSeverity === 'red'
+            ? '#EF4444'
+            : T.violet;
 
     const clearRouteState = useCallback(() => {
         routeRequestIdRef.current += 1;
@@ -994,15 +1010,18 @@ export default function VolunteerHome() {
         { scale: pulseAnim2, op: pulseAnim2Op },
     ];
 
-    const triggerSOS = useCallback(() => {
+    const triggerSOS = useCallback(async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
         setSosActive(true);
+        setActiveIncidentId(null);
         setSosStage('requesting');
         setIsEmergencyLive(false);
         sosTransitionAnim.setValue(0);
         setLocationStatus('sharing');
         setCancelCountdown(CANCEL_DURATION_DEFAULT);
+        const createSeq = volunteerSosCreateSeqRef.current + 1;
+        volunteerSosCreateSeqRef.current = createSeq;
 
         if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
         sosTransitionRef.current = setTimeout(() => {
@@ -1012,10 +1031,65 @@ export default function VolunteerHome() {
                 toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true,
             }).start();
         }, 5000);
-    }, [sosTransitionAnim]);
 
-    const cancelSOS = useCallback(() => {
+        try {
+            let loc = userLocRef.current ?? userLoc;
+            let safeLoc = loc ? sanitizeCoordinate(loc.latitude, loc.longitude) : null;
+
+            if (!safeLoc) {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    throw new Error('Location permission is required to send an SOS.');
+                }
+                const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                loc = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+                safeLoc = sanitizeCoordinate(loc.latitude, loc.longitude);
+                if (safeLoc && isMountedRef.current) {
+                    userLocRef.current = safeLoc;
+                    setUserLoc(safeLoc);
+                }
+            }
+
+            if (!safeLoc) {
+                throw new Error('Unable to determine your current location.');
+            }
+
+            const incident = await incidentService.createSosIncident({
+                latitude: safeLoc.latitude,
+                longitude: safeLoc.longitude,
+                address: address || undefined,
+                sourceRole: 'volunteer',
+            });
+
+            if (volunteerSosCreateSeqRef.current !== createSeq) {
+                incidentService.cancelIncident(incident.id).catch(() => undefined);
+                return;
+            }
+            if (!isMountedRef.current) return;
+            setActiveIncidentId(String(incident.id));
+        } catch (error: any) {
+            console.warn('[VolunteerHome] Unable to create volunteer SOS incident:', error);
+            if (volunteerSosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
+            volunteerSosCreateSeqRef.current += 1;
+            setSosActive(false);
+            setActiveIncidentId(null);
+            setCancelCountdown(0);
+            setLocationStatus('ready');
+            setHoldPhase('idle');
+            setIsEmergencyLive(false);
+            setSosStage('idle');
+            sosTransitionAnim.setValue(0);
+            if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
+            if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
+            setLocationErrorMessage(error?.message || 'Unable to send SOS. Please enable location services and try again.');
+            setLocationErrorVisible(true);
+        }
+    }, [address, sosTransitionAnim, userLoc]);
+
+    const resetLocalSOS = useCallback(() => {
+        volunteerSosCreateSeqRef.current += 1;
         setSosActive(false);
+        setActiveIncidentId(null);
         setCancelCountdown(0);
         setLocationStatus('ready');
         setHoldPhase('idle');
@@ -1025,6 +1099,14 @@ export default function VolunteerHome() {
         if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
     }, [sosTransitionAnim]);
+
+    const cancelSOS = useCallback(() => {
+        const incidentId = activeIncidentId;
+        resetLocalSOS();
+        if (incidentId) {
+            incidentService.cancelIncident(incidentId).catch(() => undefined);
+        }
+    }, [activeIncidentId, resetLocalSOS]);
 
     const confirmStop = useCallback((mode: 'cancel' | 'resolve') => {
         setStopConfirmMode(mode);
@@ -1037,39 +1119,85 @@ export default function VolunteerHome() {
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
+        setReviewQueue([]);
+        setReviewIncidentId(null);
         setReviewFeedback('');
         setReviewRating(5);
         setReviewRemovingId(null);
+        setReviewSubmitting(false);
         reviewExitAnim.setValue(0);
     }, [reviewExitAnim]);
 
-    const openReviewPopup = useCallback(() => {
-        if (!reviewQueue.length) {
-            cancelSOS();
+    const loadReviewVolunteers = useCallback(async (incidentId: string) => {
+        const responders = await incidentService.getIncidentResponders(incidentId);
+        return (responders.volunteers || []).map((volunteer) => ({
+            id: String(volunteer.id),
+            name: volunteer.name || 'Volunteer',
+            avatarUri: volunteer.photoUri ?? null,
+        }));
+    }, []);
+
+    const openReviewPopup = useCallback(async (incidentId: string | null) => {
+        if (!incidentId) {
+            resetLocalSOS();
             return;
         }
-        setReviewVisible(true);
-    }, [cancelSOS, reviewQueue.length]);
+        try {
+            const volunteers = await loadReviewVolunteers(incidentId);
+            if (!isMountedRef.current) return;
+            if (!volunteers.length) {
+                resetLocalSOS();
+                return;
+            }
+            setReviewIncidentId(incidentId);
+            setReviewQueue(volunteers);
+            setReviewFeedback('');
+            setReviewRating(5);
+            setReviewVisible(true);
+        } catch (error) {
+            console.warn('[VolunteerHome] Unable to load responders for review:', error);
+            resetLocalSOS();
+        }
+    }, [loadReviewVolunteers, resetLocalSOS]);
 
-    const handleStopAlert = useCallback(() => {
+    const handleStopAlert = useCallback(async () => {
         setStopConfirmVisible(false);
         if (stopConfirmMode === 'cancel') {
             cancelSOS();
         } else {
-            openReviewPopup();
+            const incidentId = activeIncidentId;
+            if (incidentId) {
+                await incidentService.resolveIncident(incidentId).catch(() => undefined);
+            }
+            openReviewPopup(incidentId);
         }
-    }, [cancelSOS, openReviewPopup, stopConfirmMode]);
+    }, [activeIncidentId, cancelSOS, openReviewPopup, stopConfirmMode]);
 
     const closeReviewPopup = useCallback(() => {
-        setReviewVisible(false);
-    }, []);
+        resetReviewFlow();
+        resetLocalSOS();
+    }, [resetLocalSOS, resetReviewFlow]);
 
-    const submitVolunteerReview = useCallback(() => {
+    const submitVolunteerReview = useCallback(async () => {
         const currentVolunteer = reviewQueue[0];
         if (!currentVolunteer) {
             resetReviewFlow();
-            cancelSOS();
+            resetLocalSOS();
             return;
+        }
+        if (!reviewIncidentId || reviewSubmitting) return;
+
+        setReviewSubmitting(true);
+        try {
+            await incidentService.submitIncidentReview(reviewIncidentId, {
+                volunteerId: currentVolunteer.id,
+                rating: reviewRating,
+                feedback: reviewFeedback,
+            });
+        } catch (error) {
+            console.warn('[VolunteerHome] Unable to submit volunteer review:', error);
+        } finally {
+            if (isMountedRef.current) setReviewSubmitting(false);
         }
 
         setReviewRemovingId(currentVolunteer.id);
@@ -1079,7 +1207,7 @@ export default function VolunteerHome() {
             const nextQueue = reviewQueue.slice(1);
             if (!nextQueue.length) {
                 resetReviewFlow();
-                cancelSOS();
+                resetLocalSOS();
                 return;
             }
             setReviewQueue(nextQueue);
@@ -1088,7 +1216,7 @@ export default function VolunteerHome() {
             setReviewRemovingId(null);
             reviewExitAnim.setValue(0);
         });
-    }, [cancelSOS, resetReviewFlow, reviewExitAnim, reviewQueue]);
+    }, [resetLocalSOS, resetReviewFlow, reviewExitAnim, reviewFeedback, reviewIncidentId, reviewQueue, reviewRating, reviewSubmitting]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -1838,10 +1966,11 @@ export default function VolunteerHome() {
     const openZoneSheet = useCallback((zone: IncidentZone) => {
         const place: PlaceSuggestion = {
             id: `zone-${zone.id}`,
-            name: zone.name || (zone.isRed ? 'Red Zone' : 'Yellow Zone'),
+            name: zone.name || (zone.incidentCount >= 5 ? 'Red Zone' : 'Yellow Zone'),
             address: zone.name || 'Incident zone',
             latitude: zone.latitude,
             longitude: zone.longitude,
+            zoneSeverity: zone.incidentCount >= 5 ? 'red' : 'yellow',
         };
         setSelectedPlace(place);
         if (showLocationCard) closeLocationCard();
@@ -2270,8 +2399,7 @@ export default function VolunteerHome() {
                 >
                     {/* Dynamic Circle Color Mapping: Handles Red vs Yellow Thresholds */}
                     {normalizedIncidentZones.map(zone => {
-                        const zoneIsRed = zone.isRed || zone.incidentCount >= 5;
-                        const zoneColor = zoneIsRed ? '#EF4444' : '#FACC15';
+                        const zoneIsRed = zone.incidentCount >= 5;
                         return (
                             <React.Fragment key={zone.id}>
                                 <Circle
@@ -2289,14 +2417,7 @@ export default function VolunteerHome() {
                                     zIndex={zoneIsRed ? 40 : 30}
                                     onPress={() => openZoneSheet(zone)}
                                 >
-                                    <View style={{
-                                        width: 14,
-                                        height: 14,
-                                        borderRadius: 7,
-                                        backgroundColor: zoneColor,
-                                        borderWidth: 2,
-                                        borderColor: '#FFFFFF',
-                                    }} />
+                                    <View style={s.zoneTapTarget} />
                                 </Marker>
                             </React.Fragment>
                         );
@@ -2304,12 +2425,13 @@ export default function VolunteerHome() {
 
                     {selectedPlace && (
                         <Marker
-                            key={selectedPlace.id}
+                            key={`${selectedPlace.id}-${selectedPlaceMarkerColor}`}
                             coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
                             anchor={{ x: 0.5, y: 1 }}
                             calloutAnchor={{ x: 0.5, y: 0 }}
                             tracksViewChanges={true}
                             zIndex={999}
+                            pinColor={selectedPlaceMarkerColor}
                             onPress={() => {
                                 if (!directionsMode) {
                                     openPlaceSheet(selectedPlace, selectedPlace.id.startsWith('zone-'));
@@ -2317,8 +2439,12 @@ export default function VolunteerHome() {
                             }}
                         >
                             <View style={s.placeMarkerWrap}>
-                                <View style={s.placeMarkerIconWrap}>
-                                    <Ionicons name="location" size={26} color={T.violet} />
+                                <View style={[s.placeMarkerIconWrap, { shadowColor: selectedPlaceMarkerColor }]}>
+                                    <Ionicons
+                                        name="location"
+                                        size={26}
+                                        color={selectedPlaceMarkerColor}
+                                    />
                                 </View>
                                 <View style={s.placeMarkerStem} />
                             </View>
@@ -3401,7 +3527,11 @@ export default function VolunteerHome() {
                                                 animatedStyle,
                                             ]}
                                         >
-                                            <UserAvatar uri={volunteer.avatarUri} size={48} style={s.reviewAvatarImg} />
+                                            <UserAvatar
+                                                uri={volunteer.avatarUri}
+                                                size={isCurrent ? 68 : 56}
+                                                style={s.reviewAvatarImg}
+                                            />
                                         </RNAnimated.View>
                                     );
                                 })}
@@ -4057,6 +4187,7 @@ const s = StyleSheet.create({
     mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 390, elevation: 20 },
     zoneDebugBanner: { position: 'absolute', left: 16, right: 16, zIndex: 310, borderRadius: 12, backgroundColor: 'rgba(239,68,68,0.18)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 12, paddingVertical: 8 },
     zoneDebugText: { color: '#FCA5A5', fontSize: 11, fontWeight: '700' },
+    zoneTapTarget: { width: 44, height: 44, backgroundColor: 'transparent' },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: 12,
         backgroundColor: T.surfaceBulky,
@@ -4511,6 +4642,8 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.18)',
         overflow: 'hidden',
         backgroundColor: T.violetDim,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     reviewAvatarWrapCurrent: {
         width: 68,
@@ -4522,8 +4655,7 @@ const s = StyleSheet.create({
         borderColor: `${T.danger}55`,
     },
     reviewAvatarImg: {
-        width: '100%',
-        height: '100%',
+        borderWidth: 0,
     },
     reviewSelectedName: {
         fontSize: 18,
