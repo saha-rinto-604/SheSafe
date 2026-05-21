@@ -37,6 +37,7 @@ export const STANDARD_USER = {
   CHAT_ROOM: '/(tabs)/users/standard-user/chat_room',
   MEDICAL_DASHBOARD: '/(tabs)/users/standard-user/MedicalDashboard',
   MEDICAL_MAP: '/(tabs)/users/standard-user/MedicalMapView',
+  NOTIFICATIONS: '/(tabs)/users/standard-user/notifications',
   BLOCKED_USERS: '/(tabs)/users/standard-user/blocked-users',
   CHANGE_PASSWORD: '/(tabs)/users/standard-user/change-password',
   TWO_FACTOR_AUTH: '/(tabs)/users/standard-user/two-factor-auth',
@@ -50,6 +51,10 @@ export const VOLUNTEER = {
   MESSAGES: '/(tabs)/users/volunteer/messages',
   INCIDENTS: '/(tabs)/users/volunteer/incidents',
   ACTIVITY: '/(tabs)/users/volunteer/activity',
+  MEDICAL: '/(tabs)/users/volunteer/medical',
+  PROFILE_MENU: '/(tabs)/users/volunteer/profile-menu',
+  NOTIFICATIONS: '/(tabs)/users/volunteer/notifications',
+  VOLUNTEER_VERIFICATION: '/(tabs)/users/volunteer/volunteer-verification',
   INDEX: '/(tabs)/users/volunteer',
 } as const;
 

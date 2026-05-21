@@ -5,7 +5,7 @@
 export const DEFAULT_GROUP_CHAT_NAME = 'ResQher Emergency Chat' as const;
 
 export type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
-export type IncidentStatus = 'LIVE' | 'RESOLVED' | 'CANCELLED';
+export type IncidentStatus = 'ACTIVE' | 'LIVE' | 'RESOLVED' | 'CANCELLED';
 export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM';
 
 /**
@@ -46,7 +46,11 @@ export interface Incident {
     type: string;
     status: IncidentStatus;
     location: IncidentLocation;
-    latestMessage?: Pick<Message, 'content' | 'sender' | 'timestamp' | 'type'>;
+    address?: string | null;
+    reporter?: string;
+    reporterPhotoUrl?: string | null;
+    latestMessage?: Pick<Message, 'content' | 'sender' | 'timestamp' | 'type'> | string | null;
     participantCount: number;
+    acceptedAt?: string | null;
     createdAt: string;
 }

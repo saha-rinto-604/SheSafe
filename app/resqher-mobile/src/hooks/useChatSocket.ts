@@ -17,8 +17,37 @@ const WS_BASE = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000')
 
 type WSEvent =
     | { type: 'chat.message.new'; payload: Message }
+    | { type: 'message:new'; payload: Message }
     | { type: 'incident.participant.joined'; payload: Participant }
+    | { type: 'incident.participants.list'; payload: Participant[] }
+    | { type: 'incident:responders_updated'; payload: { incidentId: string } }
+    | { type: 'incident:status_updated'; payload: { incidentId: string } }
     | { type: 'incident.location.updated'; payload: IncidentLocation };
+
+function normalizeSocketMessage(raw: any): Message {
+    if (raw?.sender) {
+        return {
+            ...raw,
+            sender: {
+                ...raw.sender,
+                avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
+            },
+        } as Message;
+    }
+    return {
+        id: String(raw.id),
+        incidentId: String(raw.incidentId ?? raw.incident_id),
+        sender: {
+            id: String(raw.senderId ?? raw.sender_id),
+            name: raw.senderName ?? raw.name ?? '',
+            role: raw.senderRole === 'volunteer' ? 'VOLUNTEER' : raw.senderRole === 'law_enforcement' ? 'POLICE' : 'USER',
+            avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
+        },
+        content: raw.text ?? raw.content ?? '',
+        type: raw.type ?? raw.message_type ?? (raw.senderRole === 'system' ? 'SYSTEM' : 'TEXT'),
+        timestamp: raw.createdAt ?? raw.timestamp ?? raw.created_at,
+    };
+}
 
 interface UseChatSocketReturn {
     messages: Message[];
@@ -30,7 +59,11 @@ interface UseChatSocketReturn {
 }
 
 // selfId lets the hook optimistically show sent messages before the server echo arrives
-export function useChatSocket(incidentId: string, selfId?: string): UseChatSocketReturn {
+export function useChatSocket(
+    incidentId: string,
+    selfId?: string,
+    selfRole: 'USER' | 'VOLUNTEER' | 'POLICE' = 'VOLUNTEER',
+): UseChatSocketReturn {
     const [messages, setMessages] = useState<Message[]>([]);
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [victimLocation, setVictimLocation] = useState<IncidentLocation | null>(null);
@@ -40,7 +73,9 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const mountedRef = useRef(true);
     const selfIdRef = useRef(selfId);
+    const selfRoleRef = useRef(selfRole);
     useEffect(() => { selfIdRef.current = selfId; }, [selfId]);
+    useEffect(() => { selfRoleRef.current = selfRole; }, [selfRole]);
 
     // ── Fetch messages via REST (initial load + polling fallback) ──
     const refreshMessages = useCallback(async () => {
@@ -86,8 +121,9 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                     if (!mountedRef.current) return;
 
                     switch (data.type) {
-                        case 'chat.message.new': {
-                            const incoming = data.payload;
+                        case 'chat.message.new':
+                        case 'message:new': {
+                            const incoming = normalizeSocketMessage(data.payload);
                             setMessages(prev => {
                                 // Deduplicate: drop if real ID already present
                                 if (prev.find(m => m.id === incoming.id)) return prev;
@@ -120,6 +156,10 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                             }
                             break;
                         }
+                        case 'incident:responders_updated':
+                        case 'incident:status_updated':
+                            refreshMessages();
+                            break;
                         case 'incident.participant.joined':
                             setParticipants(prev => {
                                 if (prev.find(p => p.id === data.payload.id)) return prev;
@@ -134,6 +174,9 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
                                     createdAt: new Date().toISOString(),
                                 });
                             }
+                            break;
+                        case 'incident.participants.list':
+                            setParticipants(data.payload);
                             break;
                         case 'incident.location.updated':
                             setVictimLocation(data.payload);
@@ -182,7 +225,7 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
             const optimistic: Message = {
                 id: tempId,
                 incidentId,
-                sender: { id: selfIdRef.current ?? 'self', name: 'You', role: 'USER' },
+                sender: { id: selfIdRef.current ?? 'self', name: 'You', role: selfRoleRef.current },
                 content,
                 type,
                 timestamp: new Date().toISOString(),
@@ -190,7 +233,7 @@ export function useChatSocket(incidentId: string, selfId?: string): UseChatSocke
             if (mountedRef.current) setMessages(prev => [...prev, optimistic]);
             wsRef.current.send(JSON.stringify({
                 type: 'chat.message.send',
-                payload: { content, message_type: type },
+                payload: { content, type },
             }));
             return;
         }

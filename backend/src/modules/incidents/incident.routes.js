@@ -4,29 +4,28 @@ const controller = require('./incident.controller');
 
 const router = express.Router();
 
-// All incident routes require authentication
 router.use(authenticate);
 
-// POST /api/incidents — report a new incident (SOS trigger)
 router.post('/', controller.report);
-
-// GET /api/incidents/zones — get aggregated incident zones
 router.get('/zones', controller.getZones);
-
-// GET /api/incidents/my — get all incidents created by the authenticated user
 router.get('/my', controller.getMyIncidents);
-
-// GET /api/incidents/:id — get a single incident by id
-router.get('/:id', controller.getOne);
-
-// PATCH /api/incidents/:id/cancel — victim cancels their own incident
-router.patch('/:id/cancel', controller.cancel);
-
-// PATCH /api/incidents/:id/resolve — victim marks incident resolved
-router.patch('/:id/resolve', controller.resolve);
-
-// DELETE /api/incidents/my — cancel all active incidents by current user (clear history)
+router.get('/nearby', controller.nearby);
+router.get('/assisted', controller.assisted);
+router.patch('/online-status', controller.onlineStatus);
 router.delete('/my', controller.clearMyHistory);
 
-module.exports = router;
+router.get('/:id/responders', controller.responders);
+router.get('/:id/messages', controller.messages);
+router.post('/:id/messages', controller.sendMessage);
+router.get('/:id/user-case-details', controller.getUserCaseDetails);
+router.put('/:id/user-case-details', controller.updateUserCaseDetails);
+router.get('/:id/volunteer-case-details', controller.getVolunteerCaseDetails);
+router.put('/:id/volunteer-case-details', controller.updateVolunteerCaseDetails);
 
+router.get('/:id', controller.getOne);
+router.patch('/:id/cancel', controller.cancel);
+router.patch('/:id/resolve', controller.resolve);
+router.post('/:id/accept', controller.accept);
+router.post('/:id/reject', controller.reject);
+
+module.exports = router;

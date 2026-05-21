@@ -30,6 +30,8 @@ const incidentRoutes        = require('./modules/incidents/incident.routes');
 const medicalRoutes         = require('./modules/medical/medical.routes');
 const chatRoutes            = require('./modules/chat/chat.routes');
 const safePlacesRoutes      = require('./modules/safe-places/safe-places.routes');
+const volunteerRoutes       = require('./modules/volunteers/volunteer.routes');
+const userChatRoutes        = require('./modules/users/user-chat.routes');
 
 const app = express();
 
@@ -54,6 +56,8 @@ app.use('/api/incidents', incidentRoutes);
 app.use('/api/medical', medicalRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/safe-places', safePlacesRoutes);
+app.use('/api/volunteer', volunteerRoutes);
+app.use('/api/user', userChatRoutes);
 
 // ── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -65,7 +69,11 @@ app.use((error, req, res, next) => {
   const status = error.status || 500;
   const message = error.message || 'Internal server error';
   console.error(`[ERROR] ${status} ${req.method} ${req.path}:`, message);
-  res.status(status).json({ message });
+  res.status(status).json({
+    message,
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.maxResponders ? { maxResponders: error.maxResponders } : {}),
+  });
 });
 
 module.exports = app;

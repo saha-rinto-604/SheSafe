@@ -18,10 +18,13 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   data: ResponderItem[];
-  onRemove: (id: string) => void;
+  onRemove?: (id: string) => void;
+  sosUser?: ResponderItem | null;
+  maxResponders?: number;
+  responderCount?: number;
 };
 
-export default function RespondersList({ visible, onClose, data, onRemove }: Props) {
+export default function RespondersList({ visible, onClose, data, onRemove, sosUser, maxResponders = 3, responderCount }: Props) {
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
 
   const renderRow = ({ item }: { item: ResponderItem }) => (
@@ -39,11 +42,13 @@ export default function RespondersList({ visible, onClose, data, onRemove }: Pro
       </View>
 
       <View style={styles.rightRow}>
-        <TouchableOpacity onPress={() => setOpenMenuFor(openMenuFor === item.id ? null : item.id)} style={styles.kebabBtn}>
-          <Feather name="more-vertical" size={18} color="#FFFFFF" />
-        </TouchableOpacity>
+        {onRemove && (
+          <TouchableOpacity onPress={() => setOpenMenuFor(openMenuFor === item.id ? null : item.id)} style={styles.kebabBtn}>
+            <Feather name="more-vertical" size={18} color="#FFFFFF" />
+          </TouchableOpacity>
+        )}
 
-        {openMenuFor === item.id && (
+        {onRemove && openMenuFor === item.id && (
           <View style={styles.actionMenu}>
             <TouchableOpacity style={styles.actionRow} onPress={() => { onRemove(item.id); setOpenMenuFor(null); }}>
               <Feather name="trash-2" size={14} color="#FF453A" />
@@ -60,11 +65,24 @@ export default function RespondersList({ visible, onClose, data, onRemove }: Pro
       <View style={styles.backdrop}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Responders</Text>
+            <View>
+              <Text style={styles.headerTitle}>Responders</Text>
+              <Text style={styles.headerSub}>{responderCount ?? data.length}/{maxResponders} volunteers accepted</Text>
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
               <Feather name="x" size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
+
+          {sosUser && (
+            <View style={styles.sosUserCard}>
+              <UserAvatar uri={sosUser.avatarUri ?? sosUser.avatarUrl} size={42} style={styles.avatar} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.name}>{sosUser.name}</Text>
+                <Text style={styles.roleHint}>SOS trigger</Text>
+              </View>
+            </View>
+          )}
 
           <FlatList
             data={data}
@@ -91,7 +109,21 @@ const styles = StyleSheet.create({
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 8 },
   headerTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  headerSub: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600', marginTop: 4 },
   closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  sosUserCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: 'rgba(226,54,54,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(226,54,54,0.24)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  roleHint: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '700', marginLeft: 10, marginTop: 2 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 },
   leftRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },

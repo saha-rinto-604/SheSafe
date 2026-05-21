@@ -24,9 +24,10 @@ import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
-import { incidentService, type IncidentZone } from '../../../../src/services/incidentService';
+import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone } from '../../../../src/services/incidentService';
 import api from '../../../../src/services/api';
 import type { PlaceIncident } from '../../../../src/data/dhakaIncidents';
+import { evaluateRouteSafety, haversineDistance, type LatLng } from '../../../../src/utils/routeSafety';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const { width, height } = Dimensions.get('window');
@@ -66,25 +67,23 @@ async function fetchWithRetry<T>(
     throw lastError;
 }
 
-/** Debounce cache layer for high-frequency reads. */
-const _zoneCache: { data: IncidentZone[] | null; ts: number } = { data: null, ts: 0 };
-const ZONE_CACHE_TTL_MS = 30_000;
+function isRedIncidentZone(zone: any): boolean {
+    const incidentCount = Number(zone?.incidentCount ?? zone?.incident_count ?? zone?.count ?? zone?.incidents?.length ?? 0);
+    return incidentCount >= 5;
+}
 
-const EARTH_RADIUS_M = 6_371_000;
-
-type LatLng = { latitude: number; longitude: number };
-
-/** Haversine distance in metres. */
-function haversineDistance(a: LatLng, b: LatLng): number {
-    const toRad = (deg: number) => (deg * Math.PI) / 180;
-    const dLat = toRad(b.latitude - a.latitude);
-    const dLon = toRad(b.longitude - a.longitude);
-    const lat1 = toRad(a.latitude);
-    const lat2 = toRad(b.latitude);
-    const h =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-    return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(h));
+function formatIncidentTime(value?: string | Date | null): string {
+    if (!value) return 'Recently';
+    const date = value instanceof Date ? value : new Date(value);
+    const diffMs = Date.now() - date.getTime();
+    if (!Number.isFinite(diffMs)) return 'Recently';
+    const minutes = Math.max(0, Math.floor(diffMs / 60000));
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr ago`;
+    const days = Math.floor(hours / 24);
+    return days === 1 ? 'Yesterday' : `${days} days ago`;
 }
 
 /** Returns an object indicating safety and the name of the avoided zone if applicable. */
@@ -96,6 +95,7 @@ function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolea
         const p2 = coordinates[i + 1];
 
         for (const zone of zones) {
+            if (!isRedIncidentZone(zone)) continue;
             if (haversineDistance(p1, zone) <= zone.radius) {
                 return { isSafe: false, blockedZoneName: zone.name };
             }
@@ -114,6 +114,7 @@ function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolea
                 };
 
                 for (const zone of zones) {
+                    if (!isRedIncidentZone(zone)) continue;
                     if (haversineDistance(interpPoint, zone) <= zone.radius) {
                         return { isSafe: false, blockedZoneName: zone.name };
                     }
@@ -124,6 +125,7 @@ function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolea
 
     const lastPoint = coordinates[coordinates.length - 1];
     for (const zone of zones) {
+        if (!isRedIncidentZone(zone)) continue;
         if (haversineDistance(lastPoint, zone) <= zone.radius) {
             return { isSafe: false, blockedZoneName: zone.name };
         }
@@ -143,7 +145,7 @@ function getRouteRiskScore(coordinates: LatLng[], zones: any[]): number {
 
         for (const zone of zones) {
             if (haversineDistance(p1, zone) <= zone.radius) {
-                score += zone.isYellow ? 1 : 5;
+                score += isRedIncidentZone(zone) ? 25 : 1;
             }
         }
 
@@ -158,7 +160,7 @@ function getRouteRiskScore(coordinates: LatLng[], zones: any[]): number {
                 };
                 for (const zone of zones) {
                     if (haversineDistance(interpPoint, zone) <= zone.radius) {
-                        score += zone.isYellow ? 1 : 5;
+                        score += isRedIncidentZone(zone) ? 25 : 1;
                     }
                 }
             }
@@ -600,6 +602,7 @@ export default function ExploreScreen() {
     const [recentPlaces, setRecentPlaces] = useState<PlaceSuggestion[]>([]);
     const [placeIncidents, setPlaceIncidents] = useState<PlaceIncident[]>([]);
     const [placeSheetOpen, setPlaceSheetOpen] = useState(false);
+    const [placeSheetIsDangerZone, setPlaceSheetIsDangerZone] = useState(false);
     const [directionsMode, setDirectionsMode] = useState(false);
     const [startLocation, setStartLocation] = useState<PlaceSuggestion | null>(null);
     const [endLocation, setEndLocation] = useState<PlaceSuggestion | null>(null);
@@ -657,59 +660,132 @@ export default function ExploreScreen() {
     const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+    const isMountedRef = useRef(true);
+    const routeRequestIdRef = useRef(0);
+    const safePathRequestIdRef = useRef(0);
+    const navigationGuardRef = useRef(false);
+
+    const navigateSafely = useCallback((path: string, replace = false) => {
+        if (navigationGuardRef.current) return;
+        navigationGuardRef.current = true;
+        Keyboard.dismiss();
+        Speech.stop();
+        routeRequestIdRef.current += 1;
+        safePathRequestIdRef.current += 1;
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
+        setIsLiveNav(false);
+        setAudioEnabled(false);
+        setSearchActive(false);
+        setStartSearchActive(false);
+        setShowLocationCard(false);
+        setPlaceSheetOpen(false);
+        setDrawerOpen(false);
+        setScanState(null);
+        if (replace) {
+            router.replace(path as any);
+        } else {
+            router.push(path as any);
+        }
+        setTimeout(() => { navigationGuardRef.current = false; }, 800);
+    }, [router]);
 
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
     const [zonesLoading, setZonesLoading] = useState(true);
+    const [zonesError, setZonesError] = useState<string | null>(null);
 
-    // ── CRITICAL FIX: Evaluate Incident Count for Red/Yellow Zoning Rules ──
-    const RED_ZONES = useMemo(() => {
-        return (incidentZones || []).map(z => {
-            const incidentCount = (z?.incidents || []).length;
-            return {
-                id: z?.id ?? `live-${Math.random().toString(36).slice(2)}`,
-                name: z?.name ?? 'Incident Zone',
-                latitude: Number(z?.latitude) || 0,
-                longitude: Number(z?.longitude) || 0,
-                radius: Number(z?.radius) || 200,
-                isYellow: incidentCount < 5, // Rule enforced: Less than 5 incidents locks container as Yellow Zone
-            };
-        });
+    const normalizedIncidentZones = useMemo(() => {
+        return (incidentZones || [])
+            .map(normalizeIncidentZone)
+            .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
     }, [incidentZones]);
 
+    const clearRouteState = useCallback(() => {
+        routeRequestIdRef.current += 1;
+        safePathRequestIdRef.current += 1;
+        setDirectionsMode(false);
+        setIsLiveNav(false);
+        setStartSearchActive(false);
+        setStartSearchText('');
+        setStartSuggestions([]);
+        setStartStatus(null);
+        startSessionTokenRef.current = null;
+        startRequestIdRef.current = 0;
+        setStartLocation(null);
+        setEndLocation(null);
+        setRouteCoords([]);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setRouteUnsafe(false);
+        setBlockedZoneName(null);
+        setShowSafePath(false);
+        setScanState(null);
+        setSafeRouteCoords([]);
+        setUnsafeRouteCoords([]);
+        Speech.stop();
+    }, []);
+
     const fetchLiveZones = useCallback(async () => {
-        const now = Date.now();
-        if (_zoneCache.data && (now - _zoneCache.ts) < ZONE_CACHE_TTL_MS) {
-            setIncidentZones(_zoneCache.data);
-            setZonesLoading(false);
-            return;
-        }
         try {
             const zones = await fetchWithRetry(() => incidentService.getZones(), 3, 500);
             const sanitized = (zones || []).filter(z => {
                 const valid = sanitizeCoordinate(Number(z?.latitude), Number(z?.longitude));
                 return valid !== null;
             });
-            _zoneCache.data = sanitized;
-            _zoneCache.ts = Date.now();
+            if (!isMountedRef.current) return;
             setIncidentZones(sanitized);
+            setZonesError(null);
         } catch (err) {
             console.warn('[ExploreScreen] Failed to fetch incident zones:', err);
+            if (isMountedRef.current) {
+                setZonesError(err instanceof Error ? err.message : 'Unable to fetch incident zones');
+            }
         } finally {
-            setZonesLoading(false);
+            if (isMountedRef.current) setZonesLoading(false);
         }
     }, []);
 
+    const refreshAndRecenterMap = useCallback(async () => {
+        fetchLiveZones();
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
+                return;
+            }
+            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (!isMountedRef.current) return;
+            const { latitude, longitude } = pos.coords;
+            setUserLoc({ latitude, longitude });
+            setLocationStatus('ready');
+            mapRef.current?.animateToRegion({ latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 700);
+        } catch (err) {
+            console.warn('[ExploreScreen] Unable to refresh map location:', err);
+            if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
+        }
+    }, [fetchLiveZones]);
+
     useEffect(() => {
+        isMountedRef.current = true;
         fetchLiveZones();
         const interval = setInterval(fetchLiveZones, 60_000);
-        return () => clearInterval(interval);
+        return () => {
+            isMountedRef.current = false;
+            clearInterval(interval);
+            safePathRequestIdRef.current += 1;
+            routeRequestIdRef.current += 1;
+        };
     }, [fetchLiveZones]);
 
     useFocusEffect(
         useCallback(() => {
-            getUserProfile().then(setProfile);
-            fetchLiveZones();
-        }, [fetchLiveZones]),
+            getUserProfile().then((nextProfile) => {
+                if (isMountedRef.current) setProfile(nextProfile);
+            });
+            refreshAndRecenterMap();
+        }, [refreshAndRecenterMap]),
     );
 
     const searchProgress = useRef(new RNAnimated.Value(0)).current;
@@ -730,14 +806,20 @@ export default function ExploreScreen() {
                 return;
             }
             const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (!isMountedRef.current) return;
             const { latitude, longitude } = pos.coords;
             setUserLoc({ latitude, longitude });
-            setTimeout(() => mapRef.current?.animateToRegion(
-                { latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 800
-            ), 600);
+            setTimeout(() => {
+                if (isMountedRef.current) {
+                    mapRef.current?.animateToRegion(
+                        { latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 800
+                    );
+                }
+            }, 600);
             setLocationStatus('ready');
             try {
                 const geo = await Location.reverseGeocodeAsync({ latitude, longitude });
+                if (!isMountedRef.current) return;
                 if (geo.length > 0) {
                     const g = geo[0];
                     setAddress(
@@ -746,6 +828,7 @@ export default function ExploreScreen() {
                     );
                 }
             } catch {
+                if (!isMountedRef.current) return;
                 setAddress('Current location');
             }
 
@@ -759,6 +842,7 @@ export default function ExploreScreen() {
                     distanceInterval: 5,
                 },
                 (loc) => {
+                    if (!isMountedRef.current) return;
                     const newLoc = {
                         latitude: loc.coords.latitude,
                         longitude: loc.coords.longitude,
@@ -949,7 +1033,9 @@ export default function ExploreScreen() {
     useEffect(() => {
         const buildRoute = async () => {
             if (!startLocation || !endLocation) return;
+            const requestId = ++routeRequestIdRef.current;
             if (!GOOGLE_MAPS_API_KEY) {
+                if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
                 setRouteCoords([
                     { latitude: startLocation.latitude, longitude: startLocation.longitude },
                     { latitude: endLocation.latitude, longitude: endLocation.longitude },
@@ -965,6 +1051,7 @@ export default function ExploreScreen() {
             try {
                 const res = await fetch(baseUrl);
                 const data = await res.json();
+                if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
 
                 if (!data?.routes?.length) {
                     Alert.alert('Route error', 'No route found between these locations.');
@@ -974,14 +1061,33 @@ export default function ExploreScreen() {
                 const chosenRoute = data.routes[0];
                 const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
+                let latestZones = normalizedIncidentZones;
+                try {
+                    const fetchedZones = await incidentService.getZones();
+                    if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
+                    latestZones = (fetchedZones || [])
+                        .map(normalizeIncidentZone)
+                        .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
+                    setIncidentZones(latestZones);
+                    setZonesError(null);
+                } catch (zoneErr) {
+                    console.warn('[ExploreScreen] Route check could not refresh incident zones:', zoneErr);
+                    if (isMountedRef.current) {
+                        setZonesError(zoneErr instanceof Error ? zoneErr.message : 'Unable to refresh incident zones');
+                    }
+                    if (latestZones.length === 0) {
+                        Alert.alert('Safety zones unavailable', 'Unable to refresh incident zones, so this route cannot be safety-checked yet.');
+                    }
+                }
+
                 // ── Dynamic Hazard Whitelisting: filter out zones the user is currently inside ──
                 // This is computed BEFORE setting any coords so we can decide the safety split accurately.
                 const startPoint = chosenCoords[0];
                 const effectiveZones = startPoint
-                    ? RED_ZONES.filter(z => haversineDistance(startPoint, z) > z.radius)
-                    : RED_ZONES;
+                    ? latestZones.filter(z => haversineDistance(startPoint, z) > z.radius)
+                    : latestZones;
 
-                const safetyCheck = checkRouteSafety(chosenCoords, effectiveZones);
+                const routeEvaluation = evaluateRouteSafety(chosenCoords, effectiveZones);
 
                 // routeCoords = the primary draw path (may be unsafe initially)
                 // unsafeRouteCoords = permanent snapshot of original unsafe route (shown as crimson ghost)
@@ -990,7 +1096,7 @@ export default function ExploreScreen() {
                 setCompletedRouteCoords([]);
                 setRemainingRouteCoords(chosenCoords);
 
-                if (safetyCheck.isSafe) {
+                if (!routeEvaluation.isUnsafe) {
                     // Route is clean — no crimson ghost, no safe path needed
                     setUnsafeRouteCoords([]);
                     setSafeRouteCoords([]);
@@ -1002,7 +1108,7 @@ export default function ExploreScreen() {
                     setUnsafeRouteCoords(chosenCoords);
                     setSafeRouteCoords([]);
                     setRouteUnsafe(true);
-                    setBlockedZoneName(safetyCheck.blockedZoneName ?? null);
+                    setBlockedZoneName(routeEvaluation.redZoneName ?? null);
                     setShowSafePath(true);
                 }
 
@@ -1023,6 +1129,7 @@ export default function ExploreScreen() {
                     });
                 }
             } catch {
+                if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
                 setRouteCoords([
                     { latitude: startLocation.latitude, longitude: startLocation.longitude },
                     { latitude: endLocation.latitude, longitude: endLocation.longitude },
@@ -1064,12 +1171,14 @@ export default function ExploreScreen() {
 
     const triggerSafetyRecalculation = useCallback(async () => {
         if (!startLocation || !endLocation || !GOOGLE_MAPS_API_KEY) return;
+        const requestId = ++safePathRequestIdRef.current;
 
         setScanState('SCANNING');
         setShowSafePath(false);
         startScanAnimation();
 
         await new Promise(r => setTimeout(r, 1800));
+        if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
 
         const origin = `${startLocation.latitude},${startLocation.longitude}`;
         const destination = `${endLocation.latitude},${endLocation.longitude}`;
@@ -1079,6 +1188,7 @@ export default function ExploreScreen() {
         try {
             const res = await fetch(url);
             const data = await res.json();
+            if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
 
             if (!data?.routes?.length) {
                 stopScanAnimation();
@@ -1086,24 +1196,59 @@ export default function ExploreScreen() {
                 return;
             }
 
+            let latestZones: IncidentZone[] = [];
+            try {
+                const fetchedZones = await incidentService.getZones();
+                if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+                latestZones = (fetchedZones || [])
+                    .map(normalizeIncidentZone)
+                    .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
+                setIncidentZones(latestZones);
+                setZonesError(null);
+            } catch (zoneErr) {
+                console.warn('[ExploreScreen] Safe Path could not refresh incident zones:', zoneErr);
+                if (isMountedRef.current) {
+                    setZonesError(zoneErr instanceof Error ? zoneErr.message : 'Unable to refresh incident zones');
+                }
+                stopScanAnimation();
+                setShowSafePath(true);
+                setScanState(null);
+                Alert.alert('Safety zones unavailable', 'Unable to refresh incident zones, so Safe Path cannot be recalculated yet.');
+                return;
+            }
+
             // Dynamic Hazard Whitelisting: filter out zones that the user is currently inside
             const initialStartPoint = { latitude: startLocation.latitude, longitude: startLocation.longitude };
-            const effectiveZones = RED_ZONES.filter(z => haversineDistance(initialStartPoint, z) > z.radius);
+            const effectiveZones = latestZones.filter(z => haversineDistance(initialStartPoint, z) > z.radius);
 
-            let bestRoute: { route: any; coords: LatLng[]; score: number } | null = null;
+            let bestRoute: { route: any; coords: LatLng[]; safety: ReturnType<typeof evaluateRouteSafety> } | null = null;
             let bestScore = Infinity;
 
             for (const route of data.routes) {
                 const coords = decodePolyline(route.overview_polyline?.points ?? '');
-                const score = getRouteRiskScore(coords, effectiveZones);
+                const safety = evaluateRouteSafety(coords, effectiveZones);
+                const score = safety.riskScore;
 
                 if (score < bestScore) {
                     bestScore = score;
-                    bestRoute = { route, coords, score };
+                    bestRoute = { route, coords, safety };
                 }
             }
 
-            if (bestScore > 0) {
+            if (__DEV__) {
+                console.log('[ExploreScreen] Safe Path route evaluation', {
+                    zones: latestZones.length,
+                    effectiveZones: effectiveZones.length,
+                    routes: data.routes.length,
+                    bestRiskScore: bestRoute?.safety.riskScore ?? null,
+                    bestIsUnsafe: bestRoute?.safety.isUnsafe ?? null,
+                    redHits: bestRoute?.safety.redHits ?? null,
+                    yellowHits: bestRoute?.safety.yellowHits ?? null,
+                    redZoneName: bestRoute?.safety.redZoneName ?? null,
+                });
+            }
+
+            if (bestRoute?.safety.isUnsafe) {
                 if (travelMode === 'transit') {
                     stopScanAnimation();
                     if (bestRoute) {
@@ -1117,11 +1262,11 @@ export default function ExploreScreen() {
 
                 if (bestRoute) {
                     const firstBadPoint = bestRoute.coords.find((p: LatLng) =>
-                        effectiveZones.some((z: any) => haversineDistance(p, z) <= z.radius)
+                        effectiveZones.some((z: any) => z.incidentCount >= 5 && haversineDistance(p, z) <= z.radius)
                     );
 
                     if (firstBadPoint) {
-                        const matchedZone = effectiveZones.find((z: any) => haversineDistance(firstBadPoint, z) <= z.radius);
+                        const matchedZone = effectiveZones.find((z: any) => z.incidentCount >= 5 && haversineDistance(firstBadPoint, z) <= z.radius);
 
                         if (matchedZone) {
                             const directions = [
@@ -1146,6 +1291,7 @@ export default function ExploreScreen() {
                                     const roadsUrl = `https://roads.googleapis.com/v1/nearestRoads?points=${rawWpLat},${rawWpLng}&key=${GOOGLE_MAPS_API_KEY}`;
                                     const roadsRes = await fetch(roadsUrl);
                                     const roadsData = await roadsRes.json();
+                                    if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
                                     if (roadsData?.snappedPoints?.length > 0) {
                                         const snapped = roadsData.snappedPoints[0]?.location;
                                         if (snapped?.latitude && snapped?.longitude) {
@@ -1162,18 +1308,20 @@ export default function ExploreScreen() {
                                 try {
                                     const wpRes = await fetch(wpUrl);
                                     const wpData = await wpRes.json();
+                                    if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
 
                                     if (wpData?.routes?.length) {
                                         const wpRoute = wpData.routes[0];
                                         const wpCoords = decodePolyline(wpRoute.overview_polyline?.points ?? '');
-                                        const wpScore = getRouteRiskScore(wpCoords, effectiveZones);
+                                        const wpSafety = evaluateRouteSafety(wpCoords, effectiveZones);
+                                        const wpScore = wpSafety.riskScore;
 
                                         if (wpScore === 0) {
-                                            bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
+                                            bestRoute = { route: wpRoute, coords: wpCoords, safety: wpSafety };
                                             bestScore = wpScore;
                                             foundPerfectDetour = true;
                                         } else if (wpScore < bestScore) {
-                                            bestRoute = { route: wpRoute, coords: wpCoords, score: wpScore };
+                                            bestRoute = { route: wpRoute, coords: wpCoords, safety: wpSafety };
                                             bestScore = wpScore;
                                         }
                                     }
@@ -1220,27 +1368,31 @@ export default function ExploreScreen() {
                 animated: true,
             });
 
-            if (bestScore === 0) {
+            if (!bestRoute.safety.isUnsafe) {
                 // Perfect detour found — erase the crimson ghost, mark route as safe
                 setUnsafeRouteCoords([]);
                 setRouteUnsafe(false);
-                setScanState(null);
+                setBlockedZoneName(null);
+                setScanState(bestRoute.safety.riskScore === 0 ? null : 'PARTIAL_SAFETY');
                 Speech.stop();
-                setTimeout(() => {
-                    Speech.speak('Safety update: Safest route selected, avoiding all high risk areas.', {
-                        language: 'en', pitch: 1.0, rate: Platform.OS === 'android' ? 0.9 : 0.95,
-                    });
-                }, 80);
+                if (bestRoute.safety.riskScore === 0) {
+                    setTimeout(() => {
+                        Speech.speak('Safety update: Safest route selected, avoiding all high risk areas.', {
+                            language: 'en', pitch: 1.0, rate: Platform.OS === 'android' ? 0.9 : 0.95,
+                        });
+                    }, 80);
+                }
             } else {
                 // Partial detour — keep crimson ghost visible, show partial safety modal
                 setRouteUnsafe(true);
+                setBlockedZoneName(bestRoute.safety.redZoneName ?? blockedZoneName);
                 setScanState('PARTIAL_SAFETY');
             }
         } catch {
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, RED_ZONES]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName]);
 
     const closePlaceSheet = useCallback(() => {
         RNAnimated.parallel([
@@ -1248,6 +1400,7 @@ export default function ExploreScreen() {
             RNAnimated.timing(placeSheetOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
         ]).start(() => {
             setPlaceSheetOpen(false);
+            setPlaceSheetIsDangerZone(false);
             setTimeout(() => setPlaceSheetMode('incidents'), 200);
         });
         placeSheetDragY.setValue(0);
@@ -1275,7 +1428,8 @@ export default function ExploreScreen() {
         ]).start();
     }, [closePlaceSheet, locationCardOpacity, locationCardY, placeSheetOpen, userLoc]);
 
-    const openPlaceSheet = useCallback((place: PlaceSuggestion) => {
+    const openPlaceSheet = useCallback((place: PlaceSuggestion, isDangerZone = false) => {
+        setPlaceSheetIsDangerZone(isDangerZone);
         setPlaceSheetOpen(true);
         placeSheetY.setValue(height);
         placeSheetOpacity.setValue(0);
@@ -1291,15 +1445,17 @@ export default function ExploreScreen() {
                     return dist <= 500;
                 });
                 const incidents: PlaceIncident[] = nearby.flatMap((z: IncidentZone) =>
-                    (z?.incidents || []).map((inc: any) => ({
-                        id: String(inc?.id ?? Math.random()),
-                        reporter: String(inc?.reporter ?? 'Unknown'),
-                        time: String(inc?.time ?? 'Recently'),
+                    (z?.incidents || []).map((inc: any, index: number) => ({
+                        id: String(inc?.id ?? `${z.id}-incident-${index}`),
+                        reporter: String(inc?.reporterName ?? inc?.userName ?? inc?.reporter ?? 'Unknown'),
+                        time: formatIncidentTime(inc?.time ?? inc?.createdAt ?? inc?.created_at),
                         status: (inc?.status as PlaceIncident['status']) ?? 'ACTIVE',
                     }))
                 );
+                if (!isMountedRef.current) return;
                 setPlaceIncidents(incidents);
             } catch {
+                if (!isMountedRef.current) return;
                 setPlaceIncidents([]);
             }
         })();
@@ -1308,6 +1464,32 @@ export default function ExploreScreen() {
             RNAnimated.timing(placeSheetOpacity, { toValue: 1, duration: 220, useNativeDriver: true }),
         ]).start();
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
+
+    const openZoneSheet = useCallback((zone: IncidentZone) => {
+        const place: PlaceSuggestion = {
+            id: `zone-${zone.id}`,
+            name: zone.name || (zone.isRed ? 'Red Zone' : 'Yellow Zone'),
+            address: zone.name || 'Incident zone',
+            latitude: zone.latitude,
+            longitude: zone.longitude,
+        };
+        setSelectedPlace(place);
+        if (showLocationCard) closeLocationCard();
+        const incidents = (zone.incidents || []).map((inc: any, index: number) => ({
+            id: String(inc?.id ?? `${zone.id}-incident-${index}`),
+            reporter: String(inc?.reporterName ?? inc?.userName ?? inc?.reporter ?? 'Unknown'),
+            time: formatIncidentTime(inc?.time ?? inc?.createdAt ?? inc?.created_at),
+            status: (String(inc?.status ?? 'ACTIVE').toUpperCase() as PlaceIncident['status']),
+        }));
+        setPlaceIncidents(incidents);
+        mapRef.current?.animateToRegion({
+            latitude: zone.latitude - 0.003,
+            longitude: zone.longitude,
+            latitudeDelta: 0.012,
+            longitudeDelta: 0.012,
+        }, 650);
+        openPlaceSheet(place, true);
+    }, [closeLocationCard, openPlaceSheet, showLocationCard]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
         setSelectedPlace(place);
@@ -1338,6 +1520,7 @@ export default function ExploreScreen() {
         const sessionToken = searchSessionTokenRef.current ?? createSessionToken();
         const place = await resolvePlaceDetails(prediction, sessionToken);
         searchSessionTokenRef.current = null;
+        if (!isMountedRef.current) return;
         if (!place) {
             Alert.alert('Place not found', 'Unable to fetch location details.');
             return;
@@ -1376,13 +1559,14 @@ export default function ExploreScreen() {
 
         setSafePlaceSubmitState('submitting');
         try {
-            await api.post('/api/safe-places', {
+            await safePlaceService.submitSafePlace({
                 latitude: sanitized.latitude,
                 longitude: sanitized.longitude,
                 name: selectedPlace.name || 'Safe Place',
                 description: safePlaceAnswer.trim(),
                 address: selectedPlace.address || null,
             });
+            if (!isMountedRef.current) return;
             setSafePlaceSubmitState('success');
             RNAnimated.timing(safePlaceSuccessAnim, {
                 toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true,
@@ -1391,12 +1575,14 @@ export default function ExploreScreen() {
                 closePlaceSheet();
             }, 2500);
         } catch (err: any) {
+            if (!isMountedRef.current) return;
             setSafePlaceSubmitState('idle');
             setSafePlaceError(err?.message ?? 'Failed to submit safe place. Please try again.');
         }
     }, [safePlaceAnswer, selectedPlace, closePlaceSheet, safePlaceSuccessAnim]);
 
     const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
+        clearRouteState();
         setDirectionsMode(true);
         setEndLocation(destination);
         setRouteCoords([]);
@@ -1404,27 +1590,14 @@ export default function ExploreScreen() {
             toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
         closePlaceSheet();
-    }, [closePlaceSheet, directionsProgress]);
+    }, [clearRouteState, closePlaceSheet, directionsProgress]);
 
     const exitDirectionsMode = useCallback(() => {
-        setDirectionsMode(false);
-        setIsLiveNav(false);
-        setStartSearchActive(false);
-        setStartSearchText('');
-        setStartLocation(null);
-        setRouteCoords([]);
-        setNavInstructions([]);
-        setCurrentStepIdx(0);
-        setRouteUnsafe(false);
-        setBlockedZoneName(null);
-        setShowSafePath(false);
-        setScanState(null);
-        setSafeRouteCoords([]);
-        setUnsafeRouteCoords([]);
+        clearRouteState();
         RNAnimated.timing(directionsProgress, {
             toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
-    }, [directionsProgress]);
+    }, [clearRouteState, directionsProgress]);
 
     const resetExploreState = useCallback(() => {
         deactivateSearch(true);
@@ -1485,6 +1658,7 @@ export default function ExploreScreen() {
         const sessionToken = startSessionTokenRef.current ?? createSessionToken();
         const place = await resolvePlaceDetails(prediction, sessionToken);
         startSessionTokenRef.current = null;
+        if (!isMountedRef.current) return;
         if (!place) {
             Alert.alert('Place not found', 'Unable to fetch location details.');
             return;
@@ -1547,16 +1721,38 @@ export default function ExploreScreen() {
                     customMapStyle={TACTICAL_MAP_STYLE}
                 >
                     {/* ── Dynamic Circle Color Mapping: Handles Red vs Yellow Thresholds ── */}
-                    {RED_ZONES.map(zone => (
-                        <Circle
-                            key={zone.id}
-                            center={{ latitude: zone.latitude, longitude: zone.longitude }}
-                            radius={zone.radius}
-                            fillColor={zone.isYellow ? "rgba(250, 204, 21, 0.12)" : "rgba(255, 60, 60, 0.15)"}
-                            strokeColor={zone.isYellow ? "rgba(250, 204, 21, 0.4)" : "rgba(255, 60, 60, 0.5)"}
-                            strokeWidth={1}
-                        />
-                    ))}
+                    {normalizedIncidentZones.map(zone => {
+                        const zoneIsRed = zone.isRed || zone.incidentCount >= 5;
+                        const zoneColor = zoneIsRed ? '#EF4444' : '#FACC15';
+                        return (
+                            <React.Fragment key={zone.id}>
+                                <Circle
+                                    center={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    radius={zone.radius}
+                                    fillColor={zoneIsRed ? "rgba(239, 68, 68, 0.26)" : "rgba(250, 204, 21, 0.24)"}
+                                    strokeColor={zoneIsRed ? "rgba(239, 68, 68, 0.85)" : "rgba(250, 204, 21, 0.85)"}
+                                    strokeWidth={2}
+                                    zIndex={zoneIsRed ? 20 : 10}
+                                />
+                                <Marker
+                                    coordinate={{ latitude: zone.latitude, longitude: zone.longitude }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                    tracksViewChanges={false}
+                                    zIndex={zoneIsRed ? 40 : 30}
+                                    onPress={() => openZoneSheet(zone)}
+                                >
+                                    <View style={{
+                                        width: 14,
+                                        height: 14,
+                                        borderRadius: 7,
+                                        backgroundColor: zoneColor,
+                                        borderWidth: 2,
+                                        borderColor: '#FFFFFF',
+                                    }} />
+                                </Marker>
+                            </React.Fragment>
+                        );
+                    })}
 
                     {selectedPlace && (
                         <Marker
@@ -1566,7 +1762,7 @@ export default function ExploreScreen() {
                             calloutAnchor={{ x: 0.5, y: 0 }}
                             tracksViewChanges={true}
                             zIndex={999}
-                            onPress={() => openPlaceSheet(selectedPlace)}
+                            onPress={() => openPlaceSheet(selectedPlace, selectedPlace.id.startsWith('zone-'))}
                         >
                             <View style={s.placeMarkerWrap}>
                                 <View style={s.placeMarkerIconWrap}>
@@ -1697,6 +1893,11 @@ export default function ExploreScreen() {
                 </MapView>
 
                 {locationStatus === 'idle' && <PulseRadar />}
+                {__DEV__ && zonesError && (
+                    <View style={[s.zoneDebugBanner, { top: insets.top + 62 }]}>
+                        <Text style={s.zoneDebugText}>Zones unavailable: {zonesError}</Text>
+                    </View>
+                )}
 
                 {/* ── Header with Animated Search ── */}
                 {!isLiveNav && (
@@ -1785,7 +1986,12 @@ export default function ExploreScreen() {
                                 >
                                     <TouchableOpacity
                                         style={s.hBtn}
-                                        onPress={() => deactivateSearch(true)}
+                                        onPress={() => {
+                                            deactivateSearch(true);
+                                            setSelectedPlace(null);
+                                            setPlaceIncidents([]);
+                                            clearRouteState();
+                                        }}
                                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                     >
                                         <Ionicons name="arrow-back" size={20} color={T.ink2} />
@@ -1804,7 +2010,14 @@ export default function ExploreScreen() {
                                         placeholder="Search location…"
                                         placeholderTextColor={T.ink4}
                                         value={searchText}
-                                        onChangeText={setSearchText}
+                                        onChangeText={(text) => {
+                                            setSearchText(text);
+                                            if (text.trim().length === 0) {
+                                                setSelectedPlace(null);
+                                                setPlaceIncidents([]);
+                                                clearRouteState();
+                                            }
+                                        }}
                                         onFocus={activateSearch}
                                         returnKeyType="search"
                                         selectionColor={T.violet}
@@ -1830,7 +2043,7 @@ export default function ExploreScreen() {
                                     <View style={s.headerBtns}>
                                         <TouchableOpacity
                                             style={s.hBtn}
-                                            onPress={() => router.push('/(tabs)/users/standard-user/notifications')}
+                                            onPress={() => navigateSafely('/(tabs)/users/standard-user/notifications')}
                                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                         >
                                             <Ionicons name="notifications-outline" size={20} color={T.ink2} />
@@ -1838,7 +2051,7 @@ export default function ExploreScreen() {
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={s.profileBtn}
-                                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu')}
+                                            onPress={() => navigateSafely('/(tabs)/users/standard-user/profile-menu')}
                                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                                             accessibilityLabel="Open profile menu"
                                             accessibilityRole="button"
@@ -2162,14 +2375,16 @@ export default function ExploreScreen() {
                                     <Text style={s.placeSheetActionBtnTextPrimary}>Directions</Text>
                                 </TouchableOpacity>
 
-                                <TouchableOpacity
-                                    style={[s.placeSheetActionBtn, s.placeSheetActionBtnSecondary]}
-                                    onPress={openAddSafePlace}
-                                    activeOpacity={0.75}
-                                >
-                                    <Ionicons name="shield-checkmark-outline" size={16} color={T.violet} />
-                                    <Text style={s.placeSheetActionBtnTextSecondary}>Add Safe Place</Text>
-                                </TouchableOpacity>
+                                {!placeSheetIsDangerZone && (
+                                    <TouchableOpacity
+                                        style={[s.placeSheetActionBtn, s.placeSheetActionBtnSecondary]}
+                                        onPress={openAddSafePlace}
+                                        activeOpacity={0.75}
+                                    >
+                                        <Ionicons name="shield-checkmark-outline" size={16} color={T.violet} />
+                                        <Text style={s.placeSheetActionBtnTextSecondary}>Add Safe Place</Text>
+                                    </TouchableOpacity>
+                                )}
                             </View>
 
                             <KeyboardAvoidingView
@@ -2178,7 +2393,7 @@ export default function ExploreScreen() {
                                 style={s.safePlaceKeyboardAvoiding}
                             >
                                 <View style={s.placeSheetSection}>
-                                    {placeSheetMode === 'incidents' ? (
+                                    {placeSheetMode === 'incidents' || placeSheetIsDangerZone ? (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
                                             {placeIncidents.length === 0 ? (
@@ -2286,10 +2501,10 @@ export default function ExploreScreen() {
                     <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                         <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={ns.cardTint} pointerEvents="none" />
-                        {routeUnsafe && scanState !== 'SCANNING' && blockedZoneName && (
+                        {routeUnsafe && scanState !== 'SCANNING' && (
                             <View style={ns.warningBadge}>
                                 <Ionicons name="warning" size={12} color="#E25B3A" style={{ marginRight: 4 }} />
-                                <Text style={ns.warningBadgeText}>Route passes through {blockedZoneName}</Text>
+                                <Text style={ns.warningBadgeText}>Route passes through {blockedZoneName ?? 'a red zone'}</Text>
                             </View>
                         )}
                         <View style={ns.cardBody}>
@@ -2383,7 +2598,7 @@ export default function ExploreScreen() {
                 />
 
                 {/* ── Bottom Navbar ── */}
-                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="none">
+                <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                         {NAV_TABS.map(tab => (
                             <NavTab
@@ -2391,12 +2606,14 @@ export default function ExploreScreen() {
                                 tab={tab}
                                 isActive={tab.id === 'Explore'}
                                 onPress={() => {
-                                    if (tab.id === 'Home') {
-                                        router.replace('/(tabs)/users/standard-user/sos_screen' as any);
+                                    if (tab.id === 'Explore') {
+                                        refreshAndRecenterMap();
+                                    } else if (tab.id === 'Home') {
+                                        navigateSafely('/(tabs)/users/standard-user/sos_screen', true);
                                     } else if (tab.id === 'Chat') {
-                                        router.push('/(tabs)/users/standard-user/chat_home');
+                                        navigateSafely('/(tabs)/users/standard-user/chat_home');
                                     } else if (tab.id === 'Medical') {
-                                        router.push('/(tabs)/users/standard-user/MedicalDashboard');
+                                        navigateSafely('/(tabs)/users/standard-user/MedicalDashboard');
                                     }
                                 }}
                             />
@@ -2487,6 +2704,8 @@ const s = StyleSheet.create({
     searchSubtitle: { fontSize: 12, fontWeight: '500', color: T.ink3, marginTop: 2 },
     searchEmptyText: { fontSize: 13, color: T.ink4, marginTop: 4 },
     mapControls: { position: 'absolute', right: 20, top: '35%', gap: 8, alignItems: 'flex-end', zIndex: 290 },
+    zoneDebugBanner: { position: 'absolute', left: 16, right: 16, zIndex: 310, borderRadius: 12, backgroundColor: 'rgba(239,68,68,0.18)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 12, paddingVertical: 8 },
+    zoneDebugText: { color: '#FCA5A5', fontSize: 11, fontWeight: '700' },
     ctrlBtn: {
         width: 44, height: 44, borderRadius: 12, backgroundColor: T.surfaceBulky, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
         ...Platform.select({

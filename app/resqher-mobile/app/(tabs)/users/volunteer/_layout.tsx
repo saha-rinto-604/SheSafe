@@ -17,6 +17,7 @@ export default function VolunteerLayout() {
             <Stack.Screen name="edit-profile" />
             <Stack.Screen name="emergency-contacts" />
             <Stack.Screen name="safety-settings" />
+            <Stack.Screen name="volunteer-verification" />
             <Stack.Screen name="privacy-security" />
             <Stack.Screen name="change-password" />
             <Stack.Screen name="two-factor-auth" />

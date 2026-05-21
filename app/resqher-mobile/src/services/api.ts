@@ -24,6 +24,12 @@ function normalizeBaseUrl(url: string) {
 // Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
 const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
 
+if (__DEV__ && /\/\/(127\.0\.0\.1|localhost)(?::|\/|$)/i.test(BASE_URL)) {
+  console.warn(
+    `[API] EXPO_PUBLIC_API_URL is ${BASE_URL}. Use your backend LAN IP when testing on a physical phone.`
+  );
+}
+
 const api = axios.create({
   baseURL: BASE_URL,
   timeout: 15000,
@@ -91,7 +97,11 @@ function friendlyError(err: unknown) {
         }
       }
       if (messages.length > 0) {
-        return new Error(messages.join('\n'));
+        const error = new Error(messages.join('\n')) as Error & { code?: string; status?: number; maxResponders?: number };
+        error.code = data.code;
+        error.status = ax.response?.status;
+        error.maxResponders = data.maxResponders;
+        return error;
       }
     }
 
@@ -100,7 +110,11 @@ function friendlyError(err: unknown) {
       data?.detail ||
       ax.message ||
       'Request failed';
-    return new Error(msg);
+    const error = new Error(msg) as Error & { code?: string; status?: number; maxResponders?: number };
+    error.code = data?.code;
+    error.status = ax.response?.status;
+    error.maxResponders = data?.maxResponders;
+    return error;
   }
   return new Error('Request failed');
 }

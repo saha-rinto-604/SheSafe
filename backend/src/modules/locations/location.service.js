@@ -41,6 +41,21 @@ async function save(userId, payload) {
     throw httpError(400, 'Longitude must be between -180 and 180.');
   }
 
+  // Cache latest position on users table for fast Haversine dispatch queries
+  try {
+    const { query } = require('../../config/db');
+    await query(
+      `UPDATE users
+       SET latest_latitude = ?, latest_longitude = ?,
+           is_online = TRUE, last_seen_at = NOW()
+       WHERE id = ?`,
+      [latitude, longitude, userId]
+    );
+  } catch (err) {
+    // Non-blocking: log but don't fail the main location save
+    console.error('[Location] Failed to cache latest position on users:', err.message);
+  }
+
   // --- enforce 2-record limit with 5 km proximity replacement ---
   const existing = await getUserLocations(userId);
 

@@ -9,31 +9,26 @@ import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from '
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
     Platform, StatusBar, RefreshControl, TextInput,
-    Animated, LayoutAnimation, UIManager,
+    Animated, LayoutAnimation, UIManager, ActivityIndicator, Image,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
 import { type Incident, type IncidentCategory } from '../../../../src/types/chat';
+import { incidentService } from '../../../../src/services/incidentService';
+import { notificationStore } from '../../../../src/services/notificationStore';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DESIGN TOKENS — mirror standard-user chat_home.tsx exactly
-// ═══════════════════════════════════════════════════════════════════════════
 const D = {
     cardFill: T.surfaceBulky,
-    cardFillActive: T.surfaceBulkyActive,
     hairline: 'rgba(255, 255, 255, 0.1)',
     title: '#FFFFFF',
     subtitle: '#C4C1D4',
     timestamp: '#A09CB2',
     neonViolet: T.violet,
-    vividRed: '#FF453A',
-    sosAvatarBg: T.violetDim,
-    sosAvatarBorder: T.violet,
     cardRadius: 28,
     cardPadding: 20,
     avatarSize: 44,
@@ -41,126 +36,113 @@ const D = {
 
 const SEGMENTS = ['Assisted', 'My Emergencies'] as const;
 type Segment = (typeof SEGMENTS)[number];
+type VolunteerIncident = Incident & {
+    category: IncidentCategory;
+    incidentCode?: string;
+    updatedAt?: string;
+    lastMessage?: { senderName: string; senderRole: string; text: string; createdAt: string } | null;
+    sosUser?: { id: string; name: string; photoUri?: string | null };
+    responders?: { id: string; name: string; photoUri?: string | null; acceptedAt?: string | null }[];
+    responderCount?: number;
+    maxResponders?: number;
+};
 
-// ─── Constants ────────────────────────────────────────────────────────────
-const SELF_ID = 'self';
+function isActiveStatus(status: Incident['status']): boolean {
+    return status === 'ACTIVE' || status === 'LIVE';
+}
 
-// ─── Mock Data ─────────────────────────────────────────────────────────────
-const MOCK_INCIDENTS: (Incident & { category: IncidentCategory })[] = [
-    // ── ASSISTED — Active card (new)
-    {
-        id: 'inc-312',
-        category: 'ASSISTED',
-        type: 'SOS Alert',
-        status: 'LIVE',
-        location: { latitude: 23.8103, longitude: 90.4125, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'I can see her. Moving to intercept from north side.',
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            timestamp: new Date(Date.now() - 20000).toISOString(),
-            type: 'TEXT',
-        },
-        participantCount: 3,
-        createdAt: new Date(Date.now() - 240000).toISOString(),
-    },
-    // ── ASSISTED — Resolved
-    {
-        id: 'inc-204',
-        category: 'ASSISTED',
-        type: 'SOS Alert',
-        status: 'RESOLVED',
-        location: { latitude: 23.7956, longitude: 90.3657, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'Thank you for coming quickly. I am safe now.',
-            sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
-            timestamp: new Date(Date.now() - 60000).toISOString(),
-            type: 'TEXT',
-        },
-        participantCount: 3,
-        createdAt: new Date(Date.now() - 300000).toISOString(),
-    },
-    // ── ASSISTED — Cancelled
-    {
-        id: 'inc-198',
-        category: 'ASSISTED',
-        type: 'Medical Emergency',
-        status: 'CANCELLED',
-        location: { latitude: 23.7461, longitude: 90.3742, updatedAt: new Date(Date.now() - 120000).toISOString() },
-        latestMessage: {
-            content: 'Incident cancelled by victim before responder arrival.',
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            timestamp: new Date(Date.now() - 30000).toISOString(),
-            type: 'TEXT',
-        },
-        participantCount: 2,
-        createdAt: new Date(Date.now() - 600000).toISOString(),
-    },
-    // ── ASSISTED — Resolved
-    {
-        id: 'inc-175',
-        category: 'ASSISTED',
-        type: 'Harassment Report',
-        status: 'RESOLVED',
-        location: { latitude: 23.7806, longitude: 90.4194, updatedAt: new Date(Date.now() - 3600000).toISOString() },
-        latestMessage: {
-            content: 'Case resolved. Follow-up notes shared with victim.',
-            sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            timestamp: new Date(Date.now() - 1800000).toISOString(),
-            type: 'TEXT',
-        },
-        participantCount: 3,
-        createdAt: new Date(Date.now() - 7200000).toISOString(),
-    },
+function isCancelledStatus(status: Incident['status']): boolean {
+    return status === 'CANCELLED';
+}
 
-    // ── MY EMERGENCIES — Active
-    {
-        id: 'inc-301',
+function normalizeStatus(status: string): Incident['status'] {
+    if (status === 'Active') return 'ACTIVE';
+    if (status === 'Resolved') return 'RESOLVED';
+    if (status === 'Cancelled') return 'CANCELLED';
+    return (status || 'ACTIVE') as Incident['status'];
+}
+
+function normalizeLatestMessage(raw: Incident['latestMessage'], fallbackAt: string) {
+    if (typeof raw === 'string') {
+        return {
+            content: raw,
+            sender: { id: 'system', name: 'System', role: 'USER' as const },
+            timestamp: fallbackAt,
+            type: 'TEXT' as const,
+        };
+    }
+    return raw ?? null;
+}
+
+function incidentActivityTime(incident: VolunteerIncident): number {
+    const latest = normalizeLatestMessage(incident.latestMessage, incident.createdAt);
+    const timestamp = incident.lastMessage?.createdAt ?? latest?.timestamp ?? incident.updatedAt ?? incident.acceptedAt ?? incident.createdAt;
+    const time = new Date(timestamp).getTime();
+    return Number.isFinite(time) ? time : 0;
+}
+
+function incidentNumber(incident: VolunteerIncident): number {
+    const id = Number(String(incident.id).replace(/\D/g, ''));
+    return Number.isFinite(id) ? id : 0;
+}
+
+function compareIncidentsForMessages(a: VolunteerIncident, b: VolunteerIncident): number {
+    const aLive = isActiveStatus(a.status);
+    const bLive = isActiveStatus(b.status);
+    if (aLive !== bLive) return aLive ? -1 : 1;
+    const byIncidentNumber = incidentNumber(b) - incidentNumber(a);
+    if (byIncidentNumber !== 0) return byIncidentNumber;
+    return incidentActivityTime(b) - incidentActivityTime(a);
+}
+
+function myIncidentToChatIncident(raw: any): VolunteerIncident {
+    const status = normalizeStatus(String(raw.status));
+    const createdAt = String(raw.occurredAt ?? raw.created_at ?? new Date().toISOString());
+    return {
+        id: String(raw.id),
         category: 'MY_EMERGENCY',
         type: 'SOS Alert',
-        status: 'LIVE',
-        location: { latitude: 23.8293, longitude: 90.4182, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: "I'm 3 minutes away. Stay in a lit area.",
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            timestamp: new Date(Date.now() - 15000).toISOString(),
-            type: 'TEXT',
+        status,
+        location: {
+            latitude: Number(raw.latitude),
+            longitude: Number(raw.longitude),
+            updatedAt: createdAt,
         },
-        participantCount: 2,
-        createdAt: new Date(Date.now() - 180000).toISOString(),
-    },
-    // ── MY EMERGENCIES — Resolved
-    {
-        id: 'inc-289',
-        category: 'MY_EMERGENCY',
-        type: 'Harassment Report',
-        status: 'RESOLVED',
-        location: { latitude: 23.7806, longitude: 90.4120, updatedAt: new Date(Date.now() - 86400000).toISOString() },
-        latestMessage: {
-            content: "Glad you're safe. Incident has been logged.",
-            sender: { id: 'v3', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            timestamp: new Date(Date.now() - 86400000).toISOString(),
-            type: 'TEXT',
-        },
-        participantCount: 2,
-        createdAt: new Date(Date.now() - 90000000).toISOString(),
-    },
-    // ── MY EMERGENCIES — Cancelled
-    {
-        id: 'inc-270',
-        category: 'MY_EMERGENCY',
-        type: 'Medical Emergency',
-        status: 'CANCELLED',
-        location: { latitude: 23.7461, longitude: 90.3800, updatedAt: new Date(Date.now() - 172800000).toISOString() },
-        latestMessage: {
-            content: 'You cancelled this request. No further action taken.',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            timestamp: new Date(Date.now() - 172800000).toISOString(),
-            type: 'TEXT',
-        },
+        address: raw.location ?? null,
+        latestMessage: null,
         participantCount: 1,
-        createdAt: new Date(Date.now() - 180000000).toISOString(),
-    },
-];
+        createdAt,
+    };
+}
+
+function assistedIncidentToChatIncident(raw: any): VolunteerIncident {
+    const createdAt = String(raw.createdAt ?? raw.created_at ?? new Date().toISOString());
+    const updatedAt = String(raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
+    return {
+        ...raw,
+        id: String(raw.id),
+        type: raw.type ?? 'SOS Alert',
+        status: normalizeStatus(String(raw.status)),
+        location: raw.location ?? {
+            latitude: Number(raw.latitude ?? 0),
+            longitude: Number(raw.longitude ?? 0),
+            updatedAt,
+        },
+        latestMessage: normalizeLatestMessage(raw.latestMessage, updatedAt),
+        participantCount: Number(raw.participantCount ?? (Number(raw.responderCount ?? 0) + 1)),
+        createdAt,
+        updatedAt,
+        reporter: raw.sosUser?.name ?? raw.reporter,
+        reporterPhotoUrl: raw.sosUser?.photoUri ?? raw.reporterPhotoUrl,
+        lastMessage: raw.lastMessage ?? null,
+        sosUser: raw.sosUser,
+        responders: raw.responders ?? [],
+        responderCount: Number(raw.responderCount ?? raw.responders?.length ?? 0),
+        maxResponders: Number(raw.maxResponders ?? 3),
+        incidentCode: raw.incidentCode ?? `Incident #${raw.id}`,
+        category: 'ASSISTED',
+    };
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function caseId(id: string): string {
@@ -181,22 +163,26 @@ function timeAgo(iso: string): string {
 // Active: violet tint + 'users' icon (same as standard user)
 // Resolved/Cancelled: muted dark fill
 const GroupAvatar = memo(function GroupAvatar({
-    isLive,
-}: { isLive: boolean; isMyEmergency: boolean }) {
+    isLive, uri,
+}: { isLive: boolean; isMyEmergency: boolean; uri?: string | null }) {
     return (
         <View style={[st.avatar, isLive ? st.avatarLive : st.avatarResolved]}>
-            <Feather
-                name="users"
-                size={18}
-                color={isLive ? T.violet : D.subtitle}
-            />
+            {uri ? (
+                <Image source={{ uri }} style={st.avatarImage} />
+            ) : (
+                <Feather
+                    name="users"
+                    size={18}
+                    color={isLive ? T.violet : D.subtitle}
+                />
+            )}
         </View>
     );
 });
 
 // ─── Status pill — exact same colors as standard-user chat_home ────────────
 function StatusPill({ status }: { status: Incident['status'] }) {
-    const isLive = status === 'LIVE';
+    const isLive = isActiveStatus(status);
     const isCancelled = status === 'CANCELLED';
     return (
         <View style={[
@@ -217,14 +203,18 @@ function StatusPill({ status }: { status: Incident['status'] }) {
 function IncidentCard({
     incident, onPress, isMyEmergency,
 }: {
-    incident: Incident & { category: IncidentCategory };
+    incident: VolunteerIncident;
     onPress: () => void;
     isMyEmergency: boolean;
 }) {
-    const isLive = incident.status === 'LIVE';
-    const lastMessage = incident.latestMessage?.content ?? 'No messages yet';
-    const lastSender = incident.latestMessage?.sender.name ?? 'Unknown';
+    const isLive = isActiveStatus(incident.status);
+    const latestMessage = normalizeLatestMessage(incident.latestMessage, incident.createdAt);
+    const lastMessage = incident.lastMessage?.text ?? latestMessage?.content ?? 'No messages yet';
+    const lastSender = incident.lastMessage?.senderName ?? latestMessage?.sender.name ?? (incident.reporter || 'System');
     const activeBorderColor = T.violet;
+    const activityAt = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
+    const responderCount = incident.responderCount ?? Math.max((incident.participantCount ?? 1) - 1, 0);
+    const maxResponders = incident.maxResponders ?? 3;
 
     return (
         <TouchableOpacity
@@ -237,24 +227,30 @@ function IncidentCard({
         >
             {/* LEFT — avatar */}
             <View style={{ alignSelf: 'center' }}>
-                <GroupAvatar isLive={isLive} isMyEmergency={false} />
+                <GroupAvatar isLive={isLive} isMyEmergency={false} uri={incident.sosUser?.photoUri ?? incident.reporterPhotoUrl} />
             </View>
 
             {/* CENTER — title + last message preview */}
             <View style={[st.cardCenter, { alignSelf: 'center' }]}>
                 <Text style={st.cardTitle} numberOfLines={1}>
-                    {isMyEmergency ? 'My Emergency ' : 'Incident '}{caseId(incident.id)}
+                    {isMyEmergency ? 'My Emergency ' : ''}{incident.incidentCode ?? `Incident ${caseId(incident.id)}`}
                 </Text>
                 <Text style={st.cardMeta} numberOfLines={1}>
                     <Text style={st.cardMetaName}>{lastSender}</Text>
                     {': '}
                     {lastMessage}
                 </Text>
+                {!isMyEmergency && (
+                    <View style={st.responderMiniRow}>
+                        <Feather name="users" size={12} color={isLive ? T.violet : D.timestamp} />
+                        <Text style={st.responderMiniText}>{responderCount}/{maxResponders} responders</Text>
+                    </View>
+                )}
             </View>
 
             {/* RIGHT — time + status pill */}
             <View style={st.cardRight}>
-                <Text style={st.cardTime}>{timeAgo(incident.createdAt)}</Text>
+                <Text style={st.cardTime}>{timeAgo(activityAt)}</Text>
                 <StatusPill status={incident.status} />
             </View>
         </TouchableOpacity>
@@ -262,15 +258,17 @@ function IncidentCard({
 }
 
 // ─── Empty State ───────────────────────────────────────────────────────────
-function EmptyState({ isMyEmergency }: { isMyEmergency: boolean }) {
+function EmptyState({ isMyEmergency, isSearching }: { isMyEmergency: boolean; isSearching?: boolean }) {
     return (
         <View style={st.empty}>
             <View style={st.emptyCircle}>
                 <Feather name={isMyEmergency ? 'alert-circle' : 'shield'} size={28} color={D.timestamp} />
             </View>
-            <Text style={st.emptyTitle}>{isMyEmergency ? 'No Emergencies' : 'No Incidents'}</Text>
+            <Text style={st.emptyTitle}>{isSearching ? 'No matches' : isMyEmergency ? 'No Emergencies' : 'No Incidents'}</Text>
             <Text style={st.emptySub}>
-                {isMyEmergency
+                {isSearching
+                    ? 'Try an incident number, #ID, or the name of someone in the chat.'
+                    : isMyEmergency
                     ? 'Your personal SOS incidents will appear here'
                     : 'Active incidents you respond to will appear here'}
             </Text>
@@ -286,13 +284,36 @@ export default function VolunteerMessages() {
     const [searchQuery, setSearchQuery] = useState('');
     const [segment, setSegment] = useState<Segment>('Assisted');
     const [segmentWidth, setSegmentWidth] = useState(0);
+    const [incidents, setIncidents] = useState<VolunteerIncident[]>([]);
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
     const indicator = useRef(new Animated.Value(0)).current;
+    const navigationGuardRef = useRef(false);
+
+    const navigateSafely = useCallback((path: string) => {
+        if (navigationGuardRef.current) return;
+        navigationGuardRef.current = true;
+        router.push(path as any);
+        setTimeout(() => { navigationGuardRef.current = false; }, 800);
+    }, [router]);
 
     useEffect(() => {
         if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
             UIManager.setLayoutAnimationEnabledExperimental(true);
         }
     }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            let isActive = true;
+            notificationStore.getUnreadCount().then(count => {
+                if (isActive) setHasUnreadNotif(count > 0);
+            }).catch(() => undefined);
+            return () => { isActive = false; };
+        }, []),
+    );
 
     // Sliding indicator animation — identical to activity.tsx
     useEffect(() => {
@@ -317,24 +338,64 @@ export default function VolunteerMessages() {
         setSearchQuery('');
     };
 
+    useEffect(() => {
+        const handle = setTimeout(() => setDebouncedSearch(searchQuery), 320);
+        return () => clearTimeout(handle);
+    }, [searchQuery]);
+
+    const loadIncidents = useCallback(async () => {
+        setError(null);
+        const [assisted, mine] = await Promise.all([
+            incidentService.getVolunteerAssistedIncidents(segment === 'Assisted' ? debouncedSearch : undefined),
+            incidentService.getMyIncidents(),
+        ]);
+        setIncidents([
+            ...assisted.map(assistedIncidentToChatIncident),
+            ...mine.map(myIncidentToChatIncident),
+        ]);
+    }, [debouncedSearch, segment]);
+
+    useEffect(() => {
+        setLoading(true);
+        loadIncidents()
+            .catch(error => {
+                console.warn('[VolunteerMessages] Failed to load incidents:', error);
+                setError(error?.message || 'Unable to load incidents.');
+            })
+            .finally(() => setLoading(false));
+    }, [loadIncidents]);
+
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await new Promise(r => setTimeout(r, 800));
-        setRefreshing(false);
-    }, []);
+        try {
+            await loadIncidents();
+        } finally {
+            setRefreshing(false);
+        }
+    }, [loadIncidents]);
 
     const isMyEmergency = segment === 'My Emergencies';
     const categoryKey: IncidentCategory = isMyEmergency ? 'MY_EMERGENCY' : 'ASSISTED';
 
     const filtered = useMemo(() => {
-        const base = MOCK_INCIDENTS.filter(i => i.category === categoryKey);
-        if (!searchQuery.trim()) return base;
+        const base = incidents
+            .filter(i => i.category === categoryKey)
+            .filter(i => categoryKey === 'ASSISTED' || !isCancelledStatus(i.status));
+
+        const sorted = [...base].sort(compareIncidentsForMessages);
+        if (categoryKey === 'ASSISTED') return sorted;
+        if (!searchQuery.trim()) return sorted;
         const q = searchQuery.toLowerCase();
-        return base.filter(i =>
-            i.type.toLowerCase().includes(q) ||
-            i.latestMessage?.sender.name.toLowerCase().includes(q)
-        );
-    }, [categoryKey, searchQuery]);
+        return sorted.filter(i => {
+            const latest = normalizeLatestMessage(i.latestMessage, i.createdAt);
+            return (
+                i.type.toLowerCase().includes(q) ||
+                i.reporter?.toLowerCase().includes(q) ||
+                latest?.sender.name.toLowerCase().includes(q) ||
+                latest?.content.toLowerCase().includes(q)
+            );
+        });
+    }, [categoryKey, incidents, searchQuery]);
 
     const openChat = (incidentId: string) => {
         router.push(`/(tabs)/users/volunteer/chat_room?incidentId=${incidentId}&category=${categoryKey}` as any);
@@ -363,9 +424,13 @@ export default function VolunteerMessages() {
                     <TouchableOpacity
                         style={st.headerBtn}
                         activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
+                        onPress={() => { Haptics.selectionAsync(); navigateSafely('/(tabs)/users/volunteer/notifications'); }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityLabel="Open volunteer notifications"
+                        accessibilityRole="button"
                     >
-                        <Feather name="bell" size={18} color={D.subtitle} />
+                        <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                        {hasUnreadNotif && <View style={st.notifDot} />}
                     </TouchableOpacity>
                 </View>
 
@@ -415,6 +480,13 @@ export default function VolunteerMessages() {
                 </View>
 
                 {/* ── List ── */}
+                {error && (
+                    <TouchableOpacity style={st.errorCard} onPress={onRefresh} activeOpacity={0.8}>
+                        <Feather name="refresh-cw" size={16} color={T.danger} />
+                        <Text style={st.errorText}>{error} Tap to retry.</Text>
+                    </TouchableOpacity>
+                )}
+
                 <FlatList
                     style={{ marginHorizontal: 20 }}
                     data={filtered}
@@ -426,7 +498,7 @@ export default function VolunteerMessages() {
                         />
                     )}
                     keyExtractor={item => item.id}
-                    contentContainerStyle={st.list}
+                    contentContainerStyle={[st.list, { paddingBottom: insets.bottom + 24 }]}
                     showsVerticalScrollIndicator={false}
                     refreshControl={
                         <RefreshControl
@@ -436,7 +508,16 @@ export default function VolunteerMessages() {
                             colors={[D.neonViolet]}
                         />
                     }
-                    ListEmptyComponent={<EmptyState isMyEmergency={isMyEmergency} />}
+                    ListEmptyComponent={
+                        loading ? (
+                            <View style={st.loadingCard}>
+                                <ActivityIndicator color={T.violet} />
+                                <Text style={st.loadingText}>Loading incidents...</Text>
+                            </View>
+                        ) : (
+                            <EmptyState isMyEmergency={isMyEmergency} isSearching={!!searchQuery.trim()} />
+                        )
+                    }
                     ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
                 />
             </View>
@@ -469,6 +550,17 @@ const st = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.1)',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    notifDot: {
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: T.danger,
+        borderWidth: 1.5,
+        borderColor: T.surface,
     },
     headerTitleArea: { flex: 1, alignItems: 'center' },
     headerTitle: {
@@ -569,6 +661,11 @@ const st = StyleSheet.create({
         flexShrink: 0,
         borderWidth: 1,
     },
+    avatarImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 12,
+    },
     avatarLive: {
         backgroundColor: T.violetDim,
         borderColor: T.violet,
@@ -596,6 +693,17 @@ const st = StyleSheet.create({
     cardMetaName: {
         fontWeight: '700',
         color: D.title,
+    },
+    responderMiniRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 4,
+    },
+    responderMiniText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: D.timestamp,
     },
 
     // ── Right column ─────────────────────────────────────────────────────
@@ -667,5 +775,38 @@ const st = StyleSheet.create({
         color: D.timestamp,
         textAlign: 'center',
         paddingHorizontal: S.s5,
+    },
+    loadingCard: {
+        marginTop: S.s6,
+        borderRadius: R.lg,
+        paddingVertical: S.s5,
+        alignItems: 'center',
+        gap: S.s3,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: D.hairline,
+    },
+    loadingText: {
+        color: D.subtitle,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    errorCard: {
+        marginHorizontal: 20,
+        marginBottom: S.s3,
+        borderRadius: R.lg,
+        padding: S.s4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: S.s3,
+        backgroundColor: 'rgba(226,54,54,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(226,54,54,0.28)',
+    },
+    errorText: {
+        flex: 1,
+        color: '#FCA5A5',
+        fontSize: 13,
+        fontWeight: '600',
     },
 });

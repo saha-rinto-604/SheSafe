@@ -9,13 +9,25 @@ type Notification = {
   body: string;
 };
 
-export default function VolunteerNotificationsList({ notifications }: { notifications: Notification[] }) {
+export default function VolunteerNotificationsList({
+  notifications,
+  emptyText = 'No notifications',
+}: {
+  notifications: Notification[];
+  emptyText?: string;
+}) {
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.list}
       showsVerticalScrollIndicator={false}
     >
+      {notifications.length === 0 && (
+        <View style={styles.emptyCard}>
+          <Feather name="bell-off" size={20} color={T.ink4} />
+          <Text style={styles.emptyText}>{emptyText}</Text>
+        </View>
+      )}
       {notifications.map((item, index) => (
         <View key={item.id}>
           <View style={styles.row}>
@@ -79,5 +91,22 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: T.ink4,
     lineHeight: 18,
-  }
+  },
+  emptyCard: {
+    minHeight: 150,
+    borderRadius: R.lg,
+    backgroundColor: T.surfaceBulky,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    padding: 18,
+  },
+  emptyText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: T.ink4,
+    textAlign: 'center',
+  },
 });

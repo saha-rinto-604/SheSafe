@@ -14,7 +14,7 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
-    Dimensions, Platform, ScrollView, ViewStyle, Image, Alert, Linking,
+    Platform, ScrollView, Image, Alert, Linking,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
@@ -29,6 +29,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import VolunteerNavbar, { VOLUNTEER_NAV_BAR_HEIGHT, VOLUNTEER_NAV_BOTTOM_OFFSET } from '../../../../src/components/VolunteerBottomNav';
 import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
@@ -38,13 +39,10 @@ import {
 } from '../../../../src/data/medicalMockData';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
 
-const { width, height } = Dimensions.get('window');
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-const NAV_HEIGHT = 58;
-const NAV_BOT_OFFSET = 14;
-const ACTIVE_COLOR = T.violet;
-const INACTIVE_COLOR = T.navIconInactive;
+const NAV_HEIGHT = VOLUNTEER_NAV_BAR_HEIGHT;
+const NAV_BOT_OFFSET = VOLUNTEER_NAV_BOTTOM_OFFSET;
 
 const KHILKHET_ORIGIN = { latitude: 23.8249, longitude: 90.4234 };
 const JAMUNA_FUTURE_PARK = { latitude: 23.813334, longitude: 90.424164 };
@@ -81,6 +79,16 @@ type NavStep = {
     endLocation?: LatLng;
 };
 
+const isValidLatLng = (point: LatLng | null | undefined): point is LatLng => (
+    !!point
+    && Number.isFinite(point.latitude)
+    && Number.isFinite(point.longitude)
+    && point.latitude >= -90
+    && point.latitude <= 90
+    && point.longitude >= -180
+    && point.longitude <= 180
+);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DESIGN TOKENS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -97,13 +105,6 @@ const D = {
 } as const;
 
 // ── Nav tabs ────────────────────────────────────────────────────────────────
-const NAV_TABS: { id: string; label: string; iconActive: string; iconOutline: string }[] = [
-    { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline' },
-    { id: 'Chat', label: 'Chat', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline' },
-    { id: 'Explore', label: 'Explore', iconActive: 'compass', iconOutline: 'compass-outline' },
-    { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline' },
-];
-
 // ── Tactical Map Style ────────────────────────────────────────────────────
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
@@ -131,62 +132,9 @@ const TACTICAL_MAP_STYLE = [
 // ═══════════════════════════════════════════════════════════════════════════════
 // PremiumBar — Bulky Glass bar
 // ═══════════════════════════════════════════════════════════════════════════════
-const PremiumBar = memo(function PremiumBar({
-    style, contentStyle, children,
-}: { style?: ViewStyle | ViewStyle[]; contentStyle?: ViewStyle; children: React.ReactNode }) {
-    return (
-        <View style={[pb.bar, style]}>
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={pb.tint} pointerEvents="none" />
-            <View style={[pb.content, contentStyle]}>{children}</View>
-        </View>
-    );
-});
-const pb = StyleSheet.create({
-    bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
-    content: { flexDirection: 'row', alignItems: 'center' },
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // NavTab — reusable nav item
 // ═══════════════════════════════════════════════════════════════════════════════
-const NavTab = memo(function NavTab({
-    tab, isActive, onPress,
-}: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
-    const scale = useRef(new RNAnimated.Value(1)).current;
-
-    const handlePress = useCallback(() => {
-        RNAnimated.sequence([
-            RNAnimated.timing(scale, { toValue: 0.82, duration: 70, useNativeDriver: true }),
-            RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
-        ]).start();
-        onPress();
-    }, [onPress]);
-
-    return (
-        <TouchableOpacity
-            style={st.navTab}
-            onPress={handlePress}
-            activeOpacity={1}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: isActive }}
-            accessibilityLabel={tab.label}
-        >
-            <RNAnimated.View style={[st.navTabInner, { transform: [{ scale }] }]}>
-                <View style={[st.navIconBox, isActive && st.navIconBoxActive]}>
-                    <Ionicons
-                        name={(isActive ? tab.iconActive : tab.iconOutline) as any}
-                        size={20}
-                        color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
-                    />
-                </View>
-                <View style={[st.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
-            </RNAnimated.View>
-        </TouchableOpacity>
-    );
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // QuickChipRow — Horizontal scrolling chip selector
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -322,7 +270,6 @@ export default function MedicalMapView() {
     const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
     const [isRouting, setIsRouting] = useState(false);
     const [isLiveNav, setIsLiveNav] = useState(false);
-    const [medProfile, setMedProfile] = useState<UserProfile | null>(null);
 
     // Animations
     const calloutY = useRef(new RNAnimated.Value(400)).current;
@@ -330,23 +277,48 @@ export default function MedicalMapView() {
 
     // Reset UI state when filter chips or categories change to avoid mapping dead nodes
     useEffect(() => {
+        routeRequestIdRef.current += 1;
+        Speech.stop();
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
         setSelectedChip('all');
         setSelectedPin(null);
         setShowCallout(false);
+        setSafeRoute(null);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setRouteEta(null);
+        setRouteDistanceKm(null);
+        setShowRouteOverview(false);
+        setIsLiveNav(false);
+        setIsReviewMode(false);
         calloutY.setValue(400);
         calloutOpacity.setValue(0);
     }, [category]);
 
     useEffect(() => {
+        routeRequestIdRef.current += 1;
+        Speech.stop();
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
         setSelectedPin(null);
         setShowCallout(false);
+        setSafeRoute(null);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setRouteEta(null);
+        setRouteDistanceKm(null);
+        setShowRouteOverview(false);
+        setIsLiveNav(false);
+        setIsReviewMode(false);
         calloutY.setValue(400);
         calloutOpacity.setValue(0);
     }, [selectedChip]);
 
-    useEffect(() => {
-        getUserProfile().then(setMedProfile).catch(() => { });
-    }, []);
     const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
     const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
     const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
@@ -354,6 +326,8 @@ export default function MedicalMapView() {
     const [showRouteOverview, setShowRouteOverview] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+    const routeRequestIdRef = useRef(0);
+    const mountedRef = useRef(true);
     const lastRerouteOriginRef = useRef<LatLng | null>(null);
     const routeOverlaySlideY = useRef(new RNAnimated.Value(0)).current;
 
@@ -362,6 +336,55 @@ export default function MedicalMapView() {
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const liveHeaderY = useRef(new RNAnimated.Value(-150)).current;
     const liveFooterY = useRef(new RNAnimated.Value(150)).current;
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            routeRequestIdRef.current += 1;
+            Speech.stop();
+            locationSubRef.current?.remove();
+            locationSubRef.current = null;
+        };
+    }, []);
+
+    const clearRouteState = useCallback((options?: { keepProvider?: boolean }) => {
+        routeRequestIdRef.current += 1;
+        Speech.stop();
+        locationSubRef.current?.remove();
+        locationSubRef.current = null;
+        setSafeRoute(null);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setRouteEta(null);
+        setRouteDistanceKm(null);
+        setShowRouteOverview(false);
+        setIsLiveNav(false);
+        setIsReviewMode(false);
+        setIsRouting(false);
+        lastRerouteOriginRef.current = null;
+        if (!options?.keepProvider) {
+            setSelectedPin(null);
+            setShowCallout(false);
+        }
+    }, []);
+
+    const toggleReviewMode = useCallback(() => {
+        setIsReviewMode(prev => {
+            const next = !prev;
+            if (next && safeRoute && safeRoute.length > 1) {
+                setCompletedRouteCoords([]);
+                setRemainingRouteCoords(safeRoute);
+                mapRef.current?.fitToCoordinates(safeRoute, {
+                    edgePadding: { top: 120, right: 60, bottom: 360, left: 60 },
+                    animated: true,
+                });
+            }
+            return next;
+        });
+    }, [safeRoute]);
 
     useEffect(() => {
         if (isLiveNav) {
@@ -414,7 +437,15 @@ export default function MedicalMapView() {
     // Load profile picture on screen focus
     useFocusEffect(
         useCallback(() => {
-            getUserProfile().then(setProfile);
+            let active = true;
+            getUserProfile()
+                .then(nextProfile => {
+                    if (active) setProfile(nextProfile);
+                })
+                .catch(() => { });
+            return () => {
+                active = false;
+            };
         }, []),
     );
 
@@ -582,8 +613,9 @@ export default function MedicalMapView() {
             return;
         }
 
+        let cancelled = false;
         (async () => {
-            locationSubRef.current = await Location.watchPositionAsync(
+            const subscription = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.BestForNavigation,
                     timeInterval: 2000,
@@ -597,9 +629,15 @@ export default function MedicalMapView() {
                     });
                 },
             );
+            if (cancelled) {
+                subscription.remove();
+                return;
+            }
+            locationSubRef.current = subscription;
         })();
 
         return () => {
+            cancelled = true;
             if (locationSubRef.current) {
                 locationSubRef.current.remove();
                 locationSubRef.current = null;
@@ -626,7 +664,14 @@ export default function MedicalMapView() {
             return;
         }
 
+        const requestId = ++routeRequestIdRef.current;
         setIsRouting(true);
+        setSafeRoute(null);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setIsReviewMode(false);
         const originParam = `${origin.latitude},${origin.longitude}`;
         const destinationParam = `${destination.latitude},${destination.longitude}`;
         const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${originParam}&destination=${destinationParam}&mode=${travelMode === 'motorcycle' ? 'two_wheeler' : travelMode}&alternatives=true&departure_time=now&key=${GOOGLE_MAPS_API_KEY}`;
@@ -634,6 +679,7 @@ export default function MedicalMapView() {
         try {
             const res = await fetch(directionsUrl);
             const data = await res.json();
+            if (!mountedRef.current || requestId !== routeRequestIdRef.current) return;
             const route = data?.routes?.[0];
 
             if (!route) {
@@ -647,6 +693,7 @@ export default function MedicalMapView() {
                 return;
             }
 
+            setIsReviewMode(false);
             setSafeRoute(routeCoords);
             setCompletedRouteCoords([]);
             setRemainingRouteCoords(routeCoords);
@@ -679,15 +726,20 @@ export default function MedicalMapView() {
 
             lastRerouteOriginRef.current = origin;
         } catch {
-            Alert.alert('Route error', 'Unable to fetch live route right now.');
+            if (mountedRef.current && requestId === routeRequestIdRef.current) {
+                Alert.alert('Route error', 'Unable to fetch live route right now.');
+            }
         } finally {
-            setIsRouting(false);
+            if (mountedRef.current && requestId === routeRequestIdRef.current) {
+                setIsRouting(false);
+            }
         }
     }, [travelMode]);
 
     // ── Pin tap handler — auto-trigger callout ───────────────────────────
     const handlePinPress = useCallback((providerId: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        clearRouteState({ keepProvider: true });
         setSelectedPin(providerId);
         setShowCallout(true);
 
@@ -699,7 +751,7 @@ export default function MedicalMapView() {
             RNAnimated.timing(calloutOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         ]).start();
 
-    }, [calloutY, calloutOpacity]);
+    }, [calloutY, calloutOpacity, clearRouteState]);
 
     // ── Close callout ───────────────────────────────────────────────────────
     const closeCallout = useCallback(() => {
@@ -753,8 +805,8 @@ export default function MedicalMapView() {
             longitude: selectedProvider.longitude,
         };
 
+        clearRouteState({ keepProvider: true });
         hideCalloutKeepRoute();
-        setIsLiveNav(false);
         setShowRouteOverview(true);
 
         // Animate route overview header in
@@ -767,7 +819,7 @@ export default function MedicalMapView() {
         }).start();
 
         buildLiveRoute(KHILKHET_ORIGIN, destination, true);
-    }, [buildLiveRoute, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY]);
+    }, [buildLiveRoute, clearRouteState, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY]);
 
     const handleCallHotline = useCallback(async () => {
         if (!selectedProvider?.hotline) return;
@@ -786,18 +838,14 @@ export default function MedicalMapView() {
     }, [selectedProvider]);
 
     const closeRouteOverview = useCallback(() => {
+        clearRouteState({ keepProvider: true });
         RNAnimated.timing(routeOverlaySlideY, {
             toValue: -100,
             duration: 260,
             easing: Easing.in(Easing.ease),
             useNativeDriver: true,
-        }).start(() => {
-            setShowRouteOverview(false);
-            setSafeRoute(null);
-            setNavInstructions([]);
-            setCurrentStepIdx(0);
-        });
-    }, [routeOverlaySlideY]);
+        }).start();
+    }, [clearRouteState, routeOverlaySlideY]);
 
     const handleStartLive = useCallback(() => {
         if (!selectedProvider) return;
@@ -815,9 +863,8 @@ export default function MedicalMapView() {
     }, [buildLiveRoute, locationPermitted, selectedProvider, userLoc]);
 
     const handleExitLive = useCallback(() => {
-        setIsLiveNav(false);
-        setCurrentStepIdx(0);
-    }, []);
+        clearRouteState({ keepProvider: true });
+    }, [clearRouteState]);
 
     useEffect(() => {
         if (!isLiveNav || !userLoc) return;
@@ -899,18 +946,6 @@ export default function MedicalMapView() {
     }, [isLiveNav, isAudioMuted, currentStepIdx, navInstructions]);
 
     // ── Handlers ───────────────────────────────────────────────────────────
-    const handleNavPress = useCallback((tabId: string) => {
-        if (tabId === 'Home') {
-            router.replace('/(tabs)/users/sos_screen' as any);
-        } else if (tabId === 'Chat') {
-            router.push('/(tabs)/users/standard-user/chat_home' as any);
-        } else if (tabId === 'Explore') {
-            router.push('/(tabs)/users/standard-user/ExploreScreen' as any);
-        } else if (tabId === 'Medical') {
-            router.push('/(tabs)/users/standard-user/MedicalDashboard' as any);
-        }
-    }, [router]);
-
     // ── Go back to dashboard ────────────────────────────────────────────────
     const handleBack = useCallback(() => {
         Haptics.selectionAsync();
@@ -927,6 +962,10 @@ export default function MedicalMapView() {
             );
         }
     }, [travelMode, buildLiveRoute, selectedProvider, showRouteOverview]);
+
+    const fullRouteCoords = useMemo(() => (safeRoute ?? []).filter(isValidLatLng), [safeRoute]);
+    const completedRoutePreviewCoords = useMemo(() => completedRouteCoords.filter(isValidLatLng), [completedRouteCoords]);
+    const remainingRoutePreviewCoords = useMemo(() => remainingRouteCoords.filter(isValidLatLng), [remainingRouteCoords]);
 
     return (
         <AtmosphericShell>
@@ -1000,9 +1039,9 @@ export default function MedicalMapView() {
 
                     {/* Safe Route Polyline — Auto-triggered on pin select */}
                     {/* Completed route (blue) */}
-                    {completedRouteCoords.length > 1 && (
+                    {!isReviewMode && completedRoutePreviewCoords.length > 1 && (
                         <Polyline
-                            coordinates={completedRouteCoords}
+                            coordinates={completedRoutePreviewCoords}
                             strokeColor="#3B82F6"
                             strokeWidth={5}
                             lineCap="round"
@@ -1010,9 +1049,9 @@ export default function MedicalMapView() {
                         />
                     )}
                     {/* Remaining route (violet) */}
-                    {remainingRouteCoords.length > 1 && (
+                    {!isReviewMode && remainingRoutePreviewCoords.length > 1 && (
                         <Polyline
-                            coordinates={remainingRouteCoords}
+                            coordinates={remainingRoutePreviewCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
                             lineCap="round"
@@ -1020,9 +1059,9 @@ export default function MedicalMapView() {
                         />
                     )}
                     {/* Fallback: full route if no progress split yet */}
-                    {completedRouteCoords.length === 0 && safeRoute && safeRoute.length > 1 && (
+                    {(isReviewMode || completedRoutePreviewCoords.length === 0) && fullRouteCoords.length > 1 && (
                         <Polyline
-                            coordinates={safeRoute}
+                            coordinates={fullRouteCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
                             lineCap="round"
@@ -1098,7 +1137,7 @@ export default function MedicalMapView() {
                         {/* Right spacer — matches back button width to center title */}
                         <TouchableOpacity
                             style={st.profileBtn}
-                            onPress={() => router.push('/(tabs)/users/standard-user/profile-menu' as any)}
+                            onPress={() => router.push('/(tabs)/users/volunteer/profile-menu' as any)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             accessibilityLabel="Open profile menu"
                             accessibilityRole="button"
@@ -1106,10 +1145,7 @@ export default function MedicalMapView() {
                             {profile?.photoUri ? (
                                 <Image source={{ uri: profile.photoUri }} style={st.profileAvatar} />
                             ) : (
-                                <Image
-                                    source={{ uri: 'https://i.pravatar.cc/150?img=47&u=demo-female' }}
-                                    style={st.profileAvatar}
-                                />
+                                <Ionicons name="person" size={20} color={T.ink2} />
                             )}
                         </TouchableOpacity>
                     </View>
@@ -1175,7 +1211,12 @@ export default function MedicalMapView() {
                                 Step {currentStepIdx + 1} of {navInstructions.length}
                             </Text>
                             {!isLiveNav ? (
-                                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                <ScrollView
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={{ flexDirection: 'row', gap: 8, alignItems: 'center', paddingLeft: 8 }}
+                                    style={{ flexShrink: 1, marginLeft: 8 }}
+                                >
                                     {currentStepIdx > 0 && (
                                         <TouchableOpacity
                                             style={ns.navBtn}
@@ -1195,6 +1236,14 @@ export default function MedicalMapView() {
                                         </TouchableOpacity>
                                     )}
                                     <TouchableOpacity
+                                        style={[ns.goLiveBtn, { backgroundColor: 'rgba(138,56,246,0.15)', borderColor: 'rgba(138,56,246,0.3)' }]}
+                                        onPress={toggleReviewMode}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Ionicons name="list" size={14} color={T.violet} style={{ marginRight: 4 }} />
+                                        <Text style={[ns.goLiveBtnText, { color: T.violet }]}>{isReviewMode ? 'CLOSE' : 'REVIEW'}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
                                         style={ns.goLiveBtn}
                                         onPress={handleStartLive}
                                         activeOpacity={0.7}
@@ -1202,7 +1251,7 @@ export default function MedicalMapView() {
                                         <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />
                                         <Text style={ns.goLiveBtnText}>GO LIVE</Text>
                                     </TouchableOpacity>
-                                </View>
+                                </ScrollView>
                             ) : (
                                 <TouchableOpacity
                                     style={ns.endLiveBtn}
@@ -1381,18 +1430,7 @@ export default function MedicalMapView() {
 
                 {/* ── Bottom Navbar ── */}
                 {!isLiveNav && (
-                    <View style={[st.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
-                        <PremiumBar style={st.navBar} contentStyle={st.navBarContent}>
-                            {NAV_TABS.map(tab => (
-                                <NavTab
-                                    key={tab.id}
-                                    tab={tab}
-                                    isActive={tab.id === 'Medical'}
-                                    onPress={() => handleNavPress(tab.id)}
-                                />
-                            ))}
-                        </PremiumBar>
-                    </View>
+                    <VolunteerNavbar activeTab="Medical" />
                 )}
             </View>
         </AtmosphericShell>
@@ -1791,35 +1829,6 @@ const st = StyleSheet.create({
     },
 
     // ── Nav Bar ─────────────────────────────────────────────────────────────
-    navWrap: {
-        position: 'absolute', left: 0, right: 0,
-        alignItems: 'center', zIndex: 200,
-    },
-    navBar: {
-        width: width * 0.88, borderRadius: R.pill,
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
-        }),
-    },
-    navBarContent: {
-        flexDirection: 'row', alignItems: 'center',
-        justifyContent: 'space-around',
-        paddingHorizontal: 8, paddingVertical: 8,
-    },
-    navTab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 48 },
-    navTabInner: { alignItems: 'center', gap: 0 },
-    navUnderline: { width: 16, height: 3, borderRadius: 1.5, marginTop: 5 },
-    navIconBox: {
-        width: 36, height: 36, borderRadius: R.hBtn,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
-    },
-    navIconBoxActive: {
-        backgroundColor: 'rgba(138,56,246,0.12)',
-        borderColor: `${T.violet}40`,
-    },
 });
 
 // ── Navigation Instruction Card Styles (ns) ──

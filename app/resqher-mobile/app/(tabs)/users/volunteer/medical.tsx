@@ -7,17 +7,6 @@
  *
  * Design: Atmospheric Shell + Bulky Glass material.
  * Header: 1px rgba(255,255,255,0.1) stroke — matches SOS screen exactly.
- */
-
-/**
- * MedicalDashboard.tsx — ResQher Medical Hub Launchpad
- * ─────────────────────────────────────────────────────────────────────────
- * 2-column Bulky Glass category grid with Sheba-style shift filter.
- * NO navbar — this is a Launchpad. Back button returns to SOS/Explore.
- * Floating Gradient Pill "Find" button (absolute-positioned, 30px from bottom).
- *
- * Design: Atmospheric Shell + Bulky Glass material.
- * Header: 1px rgba(255,255,255,0.1) stroke — matches SOS screen exactly.
  * Physics: Powered by React Native Reanimated for AAA-tier fluidity.
  */
 
@@ -149,7 +138,7 @@ export default function MedicalDashboard() {
     const handleFind = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push({
-            pathname: '/(tabs)/users/standard-user/MedicalMapView',
+            pathname: '/(tabs)/users/volunteer/MedicalMapView',
             params: { category: selectedCategory, shift: selectedShift },
         } as any);
     }, [selectedCategory, selectedShift, router]);
@@ -181,7 +170,7 @@ export default function MedicalDashboard() {
                         <TouchableOpacity
                             style={st.headerBtn}
                             activeOpacity={0.7}
-                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/standard-user/notifications'); }}
+                            onPress={() => { Haptics.selectionAsync(); router.push('/(tabs)/users/volunteer/notifications'); }}
                         >
                             <Feather name="bell" size={18} color={D.subtitle} />
                         </TouchableOpacity>

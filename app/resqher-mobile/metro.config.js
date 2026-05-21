@@ -16,15 +16,11 @@ config.maxWorkers = 2;
 config.resetCache = false;
 
 // ─── Resolver ─────────────────────────────────────────────────────────────────
-// Ensure source extensions are in a deterministic order to avoid resolver churn.
-config.resolver.sourceExts = [
-  'tsx',
-  'ts',
-  'jsx',
-  'js',
-  'json',
+// Preserve Expo's defaults and only append Node-style module extensions.
+config.resolver.sourceExts = Array.from(new Set([
+  ...config.resolver.sourceExts,
   'cjs',
   'mjs',
-];
+]));
 
 module.exports = config;

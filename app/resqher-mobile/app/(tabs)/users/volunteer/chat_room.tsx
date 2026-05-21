@@ -1,5 +1,5 @@
 /**
- * volunteer/chat_room.tsx — Tactical Group Chat (Volunteer)
+ * volunteer/chat_room.tsx â€” Tactical Group Chat (Volunteer)
  * Mirrors standard-user chat room UI for consistency.
  */
 
@@ -28,9 +28,11 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import RespondersList from '../../../../src/components/RespondersList';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
+import { incidentService } from '../../../../src/services/incidentService';
+import { getStoredIdentity } from '../../../../src/services/api';
+import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 
-// ─── Constants ──────────────────────────────────────────────────────────────
-const SELF_ID = 'self';
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const MAP_STRIP_HEIGHT = 180;
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -38,259 +40,49 @@ type Responder = {
     id: string;
     name: string;
     avatarUri: string | null;
-    location: { latitude: number; longitude: number };
-    fallbackDistance: string;
-    fallbackDuration: string;
+    location?: { latitude: number; longitude: number };
+    fallbackDistance?: string;
+    fallbackDuration?: string;
 };
 
-const RESPONDERS: Responder[] = [
-    {
-        id: 'v1',
-        name: 'Kabir Hossain',
-        avatarUri: null,
-        location: { latitude: 23.8328, longitude: 90.4189 },
-        fallbackDistance: '3.2 km',
-        fallbackDuration: '~12 min',
-    },
-    {
-        id: 'v2',
-        name: 'Ayesha S.',
-        avatarUri: null,
-        location: { latitude: 23.8255, longitude: 90.4121 },
-        fallbackDistance: '4.0 km',
-        fallbackDuration: '~14 min',
-    },
-];
-
-// ─── Mock Incidents ─────────────────────────────────────────────────────────
-// ASSISTING = volunteer responded to someone else's SOS
-// MY_EMERGENCY = volunteer triggered their own SOS
-const MOCK_INCIDENTS: Record<string, Incident & { category: IncidentCategory }> = {
-    // ── Assisting ──
-    'inc-312': {
-        id: 'inc-312', type: 'SOS Alert', status: 'LIVE', category: 'ASSISTED',
-        location: { latitude: 23.8103, longitude: 90.4125, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'I can see her. Moving to intercept from north side.',
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 3, createdAt: new Date(Date.now() - 240000).toISOString(),
-    },
-    'inc-204': {
-        id: 'inc-204', type: 'SOS Alert', status: 'RESOLVED', category: 'ASSISTED',
-        location: { latitude: 23.7956, longitude: 90.3657, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'Thank you for coming quickly. I am safe now.', sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 3, createdAt: new Date(Date.now() - 300000).toISOString(),
-    },
-    'inc-198': {
-        id: 'inc-198', type: 'Medical Emergency', status: 'CANCELLED', category: 'ASSISTED',
-        location: { latitude: 23.7461, longitude: 90.3742, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'Incident cancelled by victim before responder arrival.', sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 2, createdAt: new Date(Date.now() - 600000).toISOString(),
-    },
-    'inc-175': {
-        id: 'inc-175', type: 'Harassment Report', status: 'RESOLVED', category: 'ASSISTED',
-        location: { latitude: 23.7806, longitude: 90.4194, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'Case resolved. Follow-up notes shared.', sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 3, createdAt: new Date(Date.now() - 7200000).toISOString(),
-    },
-    // ── My Emergencies ──
-    'inc-301': {
-        id: 'inc-301', type: 'SOS Alert', status: 'LIVE', category: 'MY_EMERGENCY',
-        location: { latitude: 23.8293, longitude: 90.4182, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: "I'm 3 minutes away. Stay in a lit area.", sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 2, createdAt: new Date(Date.now() - 180000).toISOString(),
-    },
-    'inc-289': {
-        id: 'inc-289', type: 'Harassment Report', status: 'RESOLVED', category: 'MY_EMERGENCY',
-        location: { latitude: 23.7806, longitude: 90.4120, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: "Glad you're safe. Incident has been logged.", sender: { id: 'v3', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 2, createdAt: new Date(Date.now() - 90000000).toISOString(),
-    },
-    'inc-270': {
-        id: 'inc-270', type: 'Medical Emergency', status: 'CANCELLED', category: 'MY_EMERGENCY',
-        location: { latitude: 23.7461, longitude: 90.3800, updatedAt: new Date().toISOString() },
-        latestMessage: {
-            content: 'You cancelled this request. No further action taken.', sender: { id: 'system', name: 'System', role: 'USER' },
-            timestamp: new Date().toISOString(), type: 'TEXT',
-        },
-        participantCount: 1, createdAt: new Date(Date.now() - 180000000).toISOString(),
-    },
+type ResponderDirectory = {
+    sosUser: { id: string; name: string; photoUri?: string | null; role?: string } | null;
+    volunteers: Responder[];
+    responderCount: number;
+    maxResponders: number;
 };
 
-// ─── Mock initial messages per incident ─────────────────────────────────────
-const INITIAL_MESSAGES: Record<string, Message[]> = {
-    'inc-204': [
-        {
-            id: 'm-sys-1', incidentId: 'inc-204',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Emergency incident created. Responders notified.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 300000).toISOString(),
-        },
-        {
-            id: 'm1', incidentId: 'inc-204',
-            sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
-            content: 'I need help, someone is following me near Ibrahimpur Bazar, Mirpur',
-            type: 'TEXT', timestamp: new Date(Date.now() - 240000).toISOString(),
-        },
-        {
-            id: 'm2', incidentId: 'inc-204',
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            content: 'Stay calm, I\'m nearby. Can you share your exact location?',
-            type: 'TEXT', timestamp: new Date(Date.now() - 180000).toISOString(),
-        },
-        {
-            id: 'm3', incidentId: 'inc-204',
-            sender: { id: 'u1', name: 'Fatima Rahman', role: 'USER' },
-            content: 'I\'m at the bus stop near Ibrahimpur Bazar, Mirpur',
-            type: 'TEXT', timestamp: new Date(Date.now() - 120000).toISOString(),
-        },
-        {
-            id: 'm-sys-2', incidentId: 'inc-204',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: '📎 New evidence uploaded · [View]',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 90000).toISOString(),
-            evidenceId: 'ev-001',
-        },
-        {
-            id: 'm5', incidentId: 'inc-204',
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            content: 'I can see you. Wearing a blue vest, approaching from the north side.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 30000).toISOString(),
-        },
-    ],
-    'inc-198': [
-        {
-            id: 'm-sys-3', incidentId: 'inc-198',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Incident was cancelled by victim before responder arrival.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 600000).toISOString(),
-        },
-        {
-            id: 'm6', incidentId: 'inc-198',
-            sender: { id: 'u2', name: 'Nadia Akter', role: 'USER' },
-            content: 'No need now, we reached home safely. Cancelling this incident.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 500000).toISOString(),
-        },
-        {
-            id: 'm7', incidentId: 'inc-198',
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            content: 'Understood. Marked as cancelled.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 30000).toISOString(),
-        },
-    ],
-    'inc-175': [
-        {
-            id: 'm-sys-4', incidentId: 'inc-175',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Incident resolved by responders.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 1900000).toISOString(),
-        },
-        {
-            id: 'm8', incidentId: 'inc-175',
-            sender: { id: 'v2', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            content: 'Case resolved. Follow-up notes shared.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 1800000).toISOString(),
-        },
-    ],
-    // ── My Emergency incidents ──
-    'inc-301': [
-        {
-            id: 'm-sys-301', incidentId: 'inc-301',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Your SOS has been sent. Responders have been notified.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 180000).toISOString(),
-        },
-        {
-            id: 'm301-a', incidentId: 'inc-301',
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            content: 'I need help — someone is following me near Khilkhet Station.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 150000).toISOString(),
-        },
-        {
-            id: 'm301-b', incidentId: 'inc-301',
-            sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-            content: "I'm 3 minutes away. Stay in a lit area and keep moving.",
-            type: 'TEXT', timestamp: new Date(Date.now() - 30000).toISOString(),
-        },
-    ],
-    'inc-289': [
-        {
-            id: 'm-sys-289', incidentId: 'inc-289',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Incident resolved by responders.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 90000000).toISOString(),
-        },
-        {
-            id: 'm289-a', incidentId: 'inc-289',
-            sender: { id: 'v3', name: 'Raihan Ahmed', role: 'VOLUNTEER' },
-            content: "Glad you're safe. Incident has been logged.",
-            type: 'TEXT', timestamp: new Date(Date.now() - 86400000).toISOString(),
-        },
-    ],
-    'inc-270': [
-        {
-            id: 'm-sys-270', incidentId: 'inc-270',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'You cancelled this SOS request. No further action taken.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 172800000).toISOString(),
-        },
-    ],
-    // ── Active Assisting (inc-312) ──
-    'inc-312': [
-        {
-            id: 'm-sys-312', incidentId: 'inc-312',
-            sender: { id: 'system', name: 'System', role: 'USER' },
-            content: 'Emergency incident created. Responders notified.',
-            type: 'SYSTEM', timestamp: new Date(Date.now() - 240000).toISOString(),
-        },
-        {
-            id: 'm312-a', incidentId: 'inc-312',
-            sender: { id: 'u5', name: 'Sumaiya Hossain', role: 'USER' },
-            content: 'Please help me, I am being followed near Gulshan 2 Circle.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 200000).toISOString(),
-        },
-        {
-            id: 'm312-b', incidentId: 'inc-312',
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            content: 'I am on my way. Stay near the shops and keep this call open.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 60000).toISOString(),
-        },
-        {
-            id: 'm312-c', incidentId: 'inc-312',
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            content: 'I can see her. Moving to intercept from north side.',
-            type: 'TEXT', timestamp: new Date(Date.now() - 20000).toISOString(),
-        },
-    ],
+type CaseDetailsForm = {
+    notes: string;
+    condition: string;
+    actionsTaken: string;
 };
 
-// ─── Mock auto-reply pool ───────────────────────────────────────────────────
-const VOLUNTEER_REPLIES = [
-    'Copy that, I\'m 3 minutes away. Stay in a public area.',
-    'Understood. Coordinating with nearby responders.',
-    'Location received. Heading your way now.',
-    'Keep your phone visible. I\'ll find you.',
-    'Responders have been updated with this info.',
-];
+function isActiveStatus(status?: string): boolean {
+    return status === 'ACTIVE' || status === 'LIVE';
+}
 
-// ─── Role badge config ──────────────────────────────────────────────────────
+function normalizeIncident(raw: any): Incident {
+    const createdAt = raw?.createdAt ?? raw?.created_at ?? new Date().toISOString();
+    return {
+        id: String(raw?.id ?? ''),
+        type: raw?.type ?? 'SOS Alert',
+        status: raw?.status ?? 'ACTIVE',
+        location: raw?.location ?? {
+            latitude: Number(raw?.latitude) || 0,
+            longitude: Number(raw?.longitude) || 0,
+            updatedAt: raw?.accepted_at ?? createdAt,
+        },
+        address: raw?.address ?? null,
+        reporter: raw?.reporter ?? [raw?.first_name, raw?.last_name].filter(Boolean).join(' '),
+        reporterPhotoUrl: raw?.reporterPhotoUrl ?? raw?.photo_url ?? null,
+        latestMessage: typeof raw?.latestMessage === 'object' ? raw.latestMessage : null,
+        participantCount: Number(raw?.participantCount ?? 0),
+        acceptedAt: raw?.acceptedAt ?? raw?.accepted_at ?? null,
+        createdAt,
+    };
+}
+// â”€â”€â”€ Role badge config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ROLE_META: Record<Role, {
     label: string; color: string; bg: string; border: string;
     icon: keyof typeof Feather.glyphMap;
@@ -313,7 +105,7 @@ const ROLE_META: Record<Role, {
     },
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function formatTime(iso: string): string {
     const d = new Date(iso);
     const h = d.getHours();
@@ -328,7 +120,7 @@ function caseLabel(id: string, createdAt: string): string {
     return `CASE #${year}-${num}`;
 }
 
-// ─── RoleBadge ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ RoleBadge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const RoleBadge = memo(function RoleBadge({ role }: { role: Role }) {
     const meta = ROLE_META[role];
     return (
@@ -354,13 +146,12 @@ const SystemBubble = memo(function SystemBubble({ msg }: { msg: Message }) {
     );
 });
 
-// ─── PillBubble — Directional tail (R.pill 3 corners, 0 near avatar) ───────
+// â”€â”€â”€ PillBubble â€” Directional tail (R.pill 3 corners, 0 near avatar) â”€â”€â”€â”€â”€â”€â”€
 const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
     const role = msg.sender.role;
-    const isVictimMessage = role === 'USER' && msg.sender.id !== 'system';
-    const alignRight = isOwn || isVictimMessage;
+    const alignRight = isOwn;
 
     const tailStyle = alignRight
         ? {
@@ -380,7 +171,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
         <View style={[st.bubbleRow, alignRight ? st.bubbleRowOwn : st.bubbleRowOther]}>
             {!alignRight && (
                 <UserAvatar
-                    uri={null}
+                    uri={msg.sender.avatarUrl ?? null}
                     size={32}
                     style={st.avatar}
                 />
@@ -415,7 +206,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                                             st.waveBar,
                                             {
                                                 height: h * 18,
-                                                backgroundColor: isOwn ? 'rgba(255,255,255,0.5)' : T.ink4,
+                                                backgroundColor: alignRight ? 'rgba(255,255,255,0.5)' : T.ink4,
                                             },
                                         ]}
                                     />
@@ -446,8 +237,8 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     );
 });
 
-// ─── Floating Glass Pill Input ──────────────────────────────────────────────
-// ── Tactical Map Style ────────────────────────────────────────────────────
+// â”€â”€â”€ Floating Glass Pill Input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Tactical Map Style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -488,7 +279,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
     };
 
     return (
-        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 30) }]}>
+        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 14) }]}>
             {isAttachMenuVisible && (
                 <Modal transparent visible animationType="fade">
                     <Pressable style={st.attachModalBackdrop} onPress={() => setAttachMenuVisible(false)}>
@@ -545,7 +336,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                     <TextInput
                         ref={inputRef}
                         style={st.input}
-                        placeholder="Type a message…"
+                        placeholder="Type a message..."
                         placeholderTextColor="rgba(255, 255, 255, 0.5)"
                         value={text}
                         onChangeText={setText}
@@ -574,7 +365,7 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
                 <View style={st.archiveInner}>
                     <Feather name="lock" size={13} color={T.ink4} />
-                    <Text style={st.archiveText}>Incident Archived — Case Read-Only</Text>
+                    <Text style={st.archiveText}>Incident Archived â€” Case Read-Only</Text>
                 </View>
             </BlurView>
         </View>
@@ -610,11 +401,11 @@ function polylineDecode(str: string, precision = 5) {
     return coordinates;
 }
 
-// ─── Main — Chat Room ───────────────────────────────────────────────────────
+// â”€â”€â”€ Main â€” Chat Room â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PremiumBar & Nav Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
 }: { style?: any; contentStyle?: any; children: React.ReactNode }) {
@@ -661,17 +452,17 @@ export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { incidentId, category } = useLocalSearchParams<{ incidentId: string; category?: string }>();
+    const liveIncidentId = String(incidentId || '');
+    const [selfId, setSelfId] = useState<string | undefined>();
+    const { messages, participants, sendMessage } = useChatSocket(liveIncidentId, selfId, 'VOLUNTEER');
+    const [incident, setIncident] = useState<Incident | null>(null);
 
-    const incident = MOCK_INCIDENTS[incidentId || 'inc-204'] ?? MOCK_INCIDENTS['inc-204'];
     const resolvedCategory: IncidentCategory =
-        (category === 'MY_EMERGENCY' ? 'MY_EMERGENCY' : incident.category ?? 'ASSISTED') as IncidentCategory;
+        (category === 'MY_EMERGENCY' ? 'MY_EMERGENCY' : 'ASSISTED') as IncidentCategory;
     const isMyEmergency = resolvedCategory === 'MY_EMERGENCY';
 
-    const [messages, setMessages] = useState<Message[]>(
-        INITIAL_MESSAGES[incidentId || 'inc-204'] ?? INITIAL_MESSAGES['inc-204']
-    );
     const flatRef = useRef<FlatList>(null);
-    const isLive = incident.status === 'LIVE';
+    const isLive = isActiveStatus(incident?.status);
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
 
     // Map Overlay State
@@ -684,7 +475,7 @@ export default function ChatRoom() {
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const [isReviewMode, setIsReviewMode] = useState(false);
-    const [selectedResponderId, setSelectedResponderId] = useState(RESPONDERS[0].id);
+    const [selectedResponderId, setSelectedResponderId] = useState('');
     const mapRef = useRef<MapView>(null);
 
     // Travel Mode
@@ -703,15 +494,13 @@ export default function ChatRoom() {
     // Responders list modal state (local mock list of 5)
     const [isRespondersOpen, setRespondersOpen] = useState(false);
     const [isResponderRemovedOpen, setResponderRemovedOpen] = useState(false);
-    const [respondersList, setRespondersList] = useState(() => [
-        ...RESPONDERS,
-        {
-            id: 'v3', name: 'Raihan Ahmed', avatarUri: null, isAdmin: true, role: 'POLICE'
-        },
-        {
-            id: 'v4', name: 'Nadia Akter', avatarUri: null, role: 'VOLUNTEER'
-        }
-    ]);
+    const [respondersList, setRespondersList] = useState<Responder[]>([]);
+    const [responderDirectory, setResponderDirectory] = useState<ResponderDirectory>({
+        sosUser: null,
+        volunteers: [],
+        responderCount: 0,
+        maxResponders: 3,
+    });
 
     const handleRemoveResponder = useCallback((id: string) => {
         setRespondersList(prev => prev.filter(r => r.id !== id));
@@ -724,17 +513,35 @@ export default function ChatRoom() {
 
     // Edit Case Details modal state
     const [isEditCaseOpen, setEditCaseOpen] = useState(false);
-    const [caseDetails, setCaseDetails] = useState(() => incident.latestMessage?.content ?? '');
+    const [caseDetails, setCaseDetails] = useState<CaseDetailsForm>({
+        notes: '',
+        condition: '',
+        actionsTaken: '',
+    });
+    const [caseError, setCaseError] = useState<string | null>(null);
+    const [savingCaseDetails, setSavingCaseDetails] = useState(false);
 
     const [isSaveConfirmationOpen, setSaveConfirmationOpen] = useState(false);
 
-    const handleSaveCaseDetails = useCallback(() => {
-        // Close editor and show styled confirmation
-        setEditCaseOpen(false);
-        setSaveConfirmationOpen(true);
-        // auto-dismiss after 2.2s
-        setTimeout(() => setSaveConfirmationOpen(false), 2200);
-    }, [caseDetails]);
+    const handleSaveCaseDetails = useCallback(async () => {
+        setSavingCaseDetails(true);
+        setCaseError(null);
+        try {
+            const updated = await incidentService.updateVolunteerCaseDetails(liveIncidentId, caseDetails);
+            setCaseDetails({
+                notes: updated.notes ?? '',
+                condition: updated.condition ?? '',
+                actionsTaken: updated.actionsTaken ?? '',
+            });
+            setEditCaseOpen(false);
+            setSaveConfirmationOpen(true);
+            setTimeout(() => setSaveConfirmationOpen(false), 2200);
+        } catch (error: any) {
+            setCaseError(error?.message || 'Unable to save case details.');
+        } finally {
+            setSavingCaseDetails(false);
+        }
+    }, [caseDetails, liveIncidentId]);
 
     // Leave Dispatch confirmation
     const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
@@ -746,13 +553,95 @@ export default function ChatRoom() {
         router.back();
     }, [router]);
 
+    useEffect(() => {
+        getStoredIdentity().then(identity => setSelfId(identity?.userId));
+    }, []);
+
+    useEffect(() => {
+        if (!liveIncidentId) return;
+        let mounted = true;
+        incidentService.getOne(liveIncidentId)
+            .then(raw => {
+                if (!mounted) return;
+                const nextIncident = normalizeIncident(raw);
+                setIncident(nextIncident);
+            })
+            .catch(error => Alert.alert('Incident unavailable', error?.message || 'Unable to load this incident.'));
+        return () => { mounted = false; };
+    }, [liveIncidentId]);
+
+    const loadResponders = useCallback(async () => {
+        if (!liveIncidentId) return;
+        const response = await incidentService.getIncidentResponders(liveIncidentId);
+        const volunteers = (response.volunteers || []).map(volunteer => ({
+            id: volunteer.id,
+            name: volunteer.name,
+            avatarUri: volunteer.photoUri ?? null,
+        }));
+        setResponderDirectory({
+            sosUser: response.sosUser ? {
+                id: response.sosUser.id,
+                name: response.sosUser.name,
+                photoUri: response.sosUser.photoUri ?? null,
+                role: response.sosUser.role,
+            } : null,
+            volunteers,
+            responderCount: volunteers.length,
+            maxResponders: response.maxVolunteerResponders ?? 3,
+        });
+        setRespondersList(volunteers);
+        setSelectedResponderId(prev => prev || volunteers[0]?.id || '');
+    }, [liveIncidentId]);
+
+    useEffect(() => {
+        if (!liveIncidentId) return;
+        let mounted = true;
+        loadResponders().catch(error => {
+            if (mounted) console.warn('[VolunteerChatRoom] responders unavailable:', error?.message || error);
+        });
+        incidentService.getVolunteerCaseDetails(liveIncidentId)
+            .then(details => {
+                if (!mounted) return;
+                setCaseDetails({
+                    notes: details.notes ?? '',
+                    condition: details.condition ?? '',
+                    actionsTaken: details.actionsTaken ?? '',
+                });
+            })
+            .catch(error => {
+                if (mounted) console.warn('[VolunteerChatRoom] case details unavailable:', error?.message || error);
+            });
+        const interval = setInterval(() => {
+            loadResponders().catch(() => undefined);
+        }, 7000);
+        return () => {
+            mounted = false;
+            clearInterval(interval);
+        };
+    }, [liveIncidentId, loadResponders]);
+
+    useEffect(() => {
+        if (responderDirectory.volunteers.length > 0) return;
+        const nextResponders = participants
+            .filter(participant => participant.role !== 'USER')
+            .map(participant => ({
+                id: participant.id,
+                name: participant.name,
+                avatarUri: participant.avatarUrl ?? null,
+            }));
+        setRespondersList(nextResponders);
+        setSelectedResponderId(prev => prev || nextResponders[0]?.id || '');
+    }, [participants, responderDirectory.volunteers.length]);
+
     const selectedResponder = React.useMemo(
-        () => RESPONDERS.find(responder => responder.id === selectedResponderId) ?? RESPONDERS[0],
-        [selectedResponderId]
+        () => respondersList.find(responder => responder.id === selectedResponderId) ?? respondersList[0] ?? null,
+        [respondersList, selectedResponderId]
     );
 
     const loadRouteForResponder = useCallback(async (responder: Responder) => {
-        const origin = `${responder.location.latitude},${responder.location.longitude}`;
+        if (!incident) return;
+        const originLocation = responder.location ?? userLoc ?? incident.location;
+        const origin = `${originLocation.latitude},${originLocation.longitude}`;
         const destination = `${incident.location.latitude},${incident.location.longitude}`;
         const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
         const modeLabel = travelMode === 'motorcycle' ? 'ride' : travelMode === 'driving' ? 'drive' : travelMode === 'transit' ? 'transit' : 'walk';
@@ -763,12 +652,12 @@ export default function ChatRoom() {
             else if (travelMode === 'motorcycle') mockMins = 18;
             else if (travelMode === 'transit') mockMins = 35;
 
-            setMapRouteCoords([responder.location, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
-            setMapDistance(travelMode === 'walking' ? '2.1 km' : responder.fallbackDistance);
+            setMapRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            setMapDistance(responder.fallbackDistance ?? '');
             setMapDuration(`~${mockMins} mins ${modeLabel}`);
             setNavInstructions([]);
             setCompletedRouteCoords([]);
-            setRemainingRouteCoords([responder.location, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            setRemainingRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
             return;
         }
 
@@ -782,7 +671,7 @@ export default function ChatRoom() {
                 const leg = data.routes[0].legs?.[0];
                 setMapRouteCoords(coords);
                 setMapDistance(leg?.distance?.text ?? responder.fallbackDistance);
-                setMapDuration(`~${leg?.duration?.text ?? responder.fallbackDuration} ${modeLabel}`);
+                setMapDuration(`~${leg?.duration?.text ?? responder.fallbackDuration ?? ''} ${modeLabel}`);
                 setCompletedRouteCoords([]);
                 setRemainingRouteCoords(coords);
 
@@ -809,21 +698,21 @@ export default function ChatRoom() {
             console.error(e);
             Alert.alert('Error', 'Failed to load route');
         }
-    }, [incident.location, travelMode]);
+    }, [incident, travelMode, userLoc]);
 
     const handleSelectResponder = useCallback(async (responderId: string) => {
         if (responderId === selectedResponderId) return;
         Haptics.selectionAsync();
         setSelectedResponderId(responderId);
-        const responder = RESPONDERS.find(item => item.id === responderId);
+        const responder = respondersList.find(item => item.id === responderId);
         if (responder) {
             await loadRouteForResponder(responder);
         }
-    }, [loadRouteForResponder, selectedResponderId]);
+    }, [loadRouteForResponder, respondersList, selectedResponderId]);
 
 
     useEffect(() => {
-        if (isMapOverlayOpen) {
+        if (isMapOverlayOpen && selectedResponder) {
             loadRouteForResponder(selectedResponder);
         }
     }, [travelMode, isMapOverlayOpen, loadRouteForResponder, selectedResponder]);
@@ -834,7 +723,7 @@ export default function ChatRoom() {
         setIsReviewMode(false);
         setTravelModeDropdownOpen(false);
         Haptics.selectionAsync();
-        await loadRouteForResponder(selectedResponder);
+        if (selectedResponder) await loadRouteForResponder(selectedResponder);
     }, [loadRouteForResponder, selectedResponder]);
 
     useEffect(() => {
@@ -924,34 +813,23 @@ export default function ChatRoom() {
         }
     }, [messages.length]);
 
-    const handleSend = useCallback((text: string) => {
-        const userMsg: Message = {
-            id: `m-self-${Date.now()}`,
-            incidentId: incident.id,
-            sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-            content: text,
-            type: 'TEXT',
-            timestamp: new Date().toISOString(),
-        };
-
-        setMessages(prev => [...prev, userMsg]);
-
-        setTimeout(() => {
-            const reply: Message = {
-                id: `m-auto-${Date.now()}`,
-                incidentId: incident.id,
-                sender: { id: 'v1', name: 'Kabir Hossain', role: 'VOLUNTEER' },
-                content: VOLUNTEER_REPLIES[Math.floor(Math.random() * VOLUNTEER_REPLIES.length)],
-                type: 'TEXT',
-                timestamp: new Date().toISOString(),
-            };
-            setMessages(prev => [...prev, reply]);
-        }, 1000);
-    }, [incident.id]);
+    const handleSend = useCallback(async (text: string) => {
+        await sendMessage(text, 'TEXT');
+    }, [sendMessage]);
 
     const renderMessage = useCallback(({ item }: { item: Message }) => (
-        <PillBubble msg={item} isOwn={item.sender.id === SELF_ID} />
-    ), []);
+        <PillBubble msg={item} isOwn={item.sender.id === selfId} />
+    ), [selfId]);
+
+    if (!incident) {
+        return (
+            <AtmosphericShell>
+                <View style={[st.root, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={st.emptyChatText}>Loading incident...</Text>
+                </View>
+            </AtmosphericShell>
+        );
+    }
 
     return (
         <AtmosphericShell>
@@ -1026,8 +904,8 @@ export default function ChatRoom() {
 
                 <KeyboardAvoidingView
                     style={st.chatArea}
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                    keyboardVerticalOffset={insets.top + 56}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
                 >
                     <FlatList
                         ref={flatRef}
@@ -1050,16 +928,7 @@ export default function ChatRoom() {
 
                     {isLive ? (
                         <FloatingInput onSend={handleSend} bottomInset={insets.bottom} onImagePicked={(uri) => {
-                            const imgMsg: Message = {
-                                id: `m-img-${Date.now()}`,
-                                incidentId: incident.id,
-                                sender: { id: SELF_ID, name: 'You', role: 'VOLUNTEER' },
-                                content: 'Photo',
-                                type: 'IMAGE',
-                                timestamp: new Date().toISOString(),
-                                mediaUrl: uri,
-                            };
-                            setMessages(prev => [...prev, imgMsg]);
+                            sendMessage(uri, 'IMAGE');
                         }} />
                     ) : (
                         <ArchivePill bottomInset={insets.bottom} />
@@ -1108,22 +977,38 @@ export default function ChatRoom() {
                     <Pressable style={st.caseModalBackdrop} onPress={() => setEditCaseOpen(false)}>
                         <View style={st.caseModalSheet}>
                             <Text style={st.caseModalTitle}>Edit Case Details</Text>
-                            <Text style={st.caseModalHint}>Add or update the case description below.</Text>
+                            <Text style={st.caseModalHint}>Add your notes, victim condition, and actions taken.</Text>
                             <TextInput
                                 style={st.caseModalInput}
                                 multiline
-                                value={caseDetails}
-                                onChangeText={setCaseDetails}
-                                placeholder="Enter case details…"
+                                value={caseDetails.notes}
+                                onChangeText={(notes) => setCaseDetails(prev => ({ ...prev, notes }))}
+                                placeholder="Notes..."
                                 placeholderTextColor="rgba(255,255,255,0.35)"
                             />
+                            <TextInput
+                                style={st.caseModalInputCompact}
+                                value={caseDetails.condition}
+                                onChangeText={(condition) => setCaseDetails(prev => ({ ...prev, condition }))}
+                                placeholder="Condition..."
+                                placeholderTextColor="rgba(255,255,255,0.35)"
+                            />
+                            <TextInput
+                                style={st.caseModalInput}
+                                multiline
+                                value={caseDetails.actionsTaken}
+                                onChangeText={(actionsTaken) => setCaseDetails(prev => ({ ...prev, actionsTaken }))}
+                                placeholder="Actions taken..."
+                                placeholderTextColor="rgba(255,255,255,0.35)"
+                            />
+                            {caseError && <Text style={st.caseModalError}>{caseError}</Text>}
 
                             <View style={st.caseModalFooter}>
                                 <TouchableOpacity style={st.caseModalCancel} onPress={() => setEditCaseOpen(false)}>
                                     <Text style={st.caseModalCancelText}>Cancel</Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity style={st.caseModalSave} onPress={handleSaveCaseDetails}>
-                                    <Text style={st.caseModalSaveText}>Save</Text>
+                                <TouchableOpacity style={[st.caseModalSave, savingCaseDetails && { opacity: 0.65 }]} onPress={handleSaveCaseDetails} disabled={savingCaseDetails}>
+                                    <Text style={st.caseModalSaveText}>{savingCaseDetails ? 'Saving...' : 'Save'}</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -1164,7 +1049,14 @@ export default function ChatRoom() {
                     visible={isRespondersOpen}
                     onClose={() => setRespondersOpen(false)}
                     data={respondersList}
-                    onRemove={handleRemoveResponder}
+                    sosUser={responderDirectory.sosUser ? {
+                        id: responderDirectory.sosUser.id,
+                        name: responderDirectory.sosUser.name,
+                        avatarUri: responderDirectory.sosUser.photoUri ?? null,
+                        role: 'USER',
+                    } : null}
+                    responderCount={responderDirectory.responderCount}
+                    maxResponders={responderDirectory.maxResponders}
                 />
 
                 {/* Responder Removed confirmation (styled) */}
@@ -1177,7 +1069,7 @@ export default function ChatRoom() {
                     </View>
                 </Modal>
 
-                {/* ── Map Overlay ─────────────────────────────────────────────────── */}
+                {/* â”€â”€ Map Overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
                 {isMapOverlayOpen && (
                     <View style={StyleSheet.absoluteFill}>
                         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
@@ -1248,7 +1140,7 @@ export default function ChatRoom() {
                             )}
                         </MapView>
 
-                        {/* Top Header — Live mode shows current instruction */}
+                        {/* Top Header â€” Live mode shows current instruction */}
                         {isLiveNavMode && navInstructions.length > 0 && currentStepIdx < navInstructions.length && (
                             <PremiumBar
                                 style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 100, borderRadius: 16 }}
@@ -1311,7 +1203,7 @@ export default function ChatRoom() {
                             {/* Responder avatars (for MY_EMERGENCY) */}
                             {isMyEmergency && !isLiveNavMode && !isReviewMode && (
                                 <View style={st.responderRow}>
-                                    {RESPONDERS.map(responder => {
+                                    {respondersList.map(responder => {
                                         const isSelected = responder.id === selectedResponderId;
                                         return (
                                             <TouchableOpacity
@@ -1332,7 +1224,7 @@ export default function ChatRoom() {
                                 </View>
                             )}
 
-                            {/* ── LIVE MODE ──────────────────────────────── */}
+                            {/* â”€â”€ LIVE MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
                             {isLiveNavMode ? (
                                 <View>
                                     {navInstructions.length > 0 && currentStepIdx < navInstructions.length && (
@@ -1365,7 +1257,7 @@ export default function ChatRoom() {
                                     </View>
                                 </View>
 
-                                /* ── REVIEW MODE ──────────────────────────────── */
+                                /* â”€â”€ REVIEW MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                             ) : isReviewMode ? (
                                 <View>
                                     <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
@@ -1389,7 +1281,7 @@ export default function ChatRoom() {
                                     </TouchableOpacity>
                                 </View>
 
-                                /* ── ROUTE OVERVIEW (default) ─────────────────── */
+                                /* â”€â”€ ROUTE OVERVIEW (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                             ) : (
                                 <View>
                                     {/* Travel Mode Selector */}
@@ -1464,7 +1356,7 @@ export default function ChatRoom() {
     );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const st = StyleSheet.create({
     root: { flex: 1 },
 
@@ -1841,8 +1733,9 @@ const st = StyleSheet.create({
     inputPill: {
         flexDirection: 'row',
         alignItems: 'center',
+        minHeight: 56,
         paddingHorizontal: 16,
-        paddingVertical: 10,
+        paddingVertical: 8,
         gap: 12,
     },
     inputAction: {
@@ -1853,10 +1746,15 @@ const st = StyleSheet.create({
     },
     input: {
         flex: 1,
+        minHeight: 36,
         fontSize: 15,
+        lineHeight: 20,
         color: '#FFFFFF',
         maxHeight: 100,
-        paddingVertical: Platform.OS === 'ios' ? 8 : 4,
+        paddingTop: 0,
+        paddingBottom: 0,
+        includeFontPadding: false,
+        textAlignVertical: 'center',
     },
     sendBtn: {
         width: 36,
@@ -2207,6 +2105,22 @@ const st = StyleSheet.create({
         marginBottom: 12,
         textAlignVertical: 'top'
     },
+    caseModalInputCompact: {
+        minHeight: 48,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+        padding: 12,
+        color: '#FFFFFF',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+        marginBottom: 12,
+    },
+    caseModalError: {
+        color: '#FCA5A5',
+        fontSize: 12,
+        fontWeight: '600',
+        marginBottom: 12,
+    },
     caseModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
     caseModalCancel: { paddingHorizontal: 14, paddingVertical: 10 },
     caseModalCancelText: { color: 'rgba(255,255,255,0.7)', fontWeight: '700' },
@@ -2240,7 +2154,7 @@ const st = StyleSheet.create({
     leaveYes: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: T.danger },
     leaveYesText: { color: T.onPrimary, fontWeight: '900' },
 
-    // ── Live Mode Top Banner ─────────────────────────────────────────────
+    // â”€â”€ Live Mode Top Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     liveTopBanner: {
         position: 'absolute', left: 0, right: 0, zIndex: 10,
     },
@@ -2260,7 +2174,7 @@ const st = StyleSheet.create({
     },
     liveStepCounter: { color: T.ink3, fontSize: 13, fontWeight: '600' },
 
-    // ── Travel Mode Selector ─────────────────────────────────────────────
+    // â”€â”€ Travel Mode Selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     travelModeRow: {
         flexDirection: 'row', gap: 6, marginBottom: 14,
     },
@@ -2276,7 +2190,7 @@ const st = StyleSheet.create({
     travelModeText: { color: T.ink3, fontSize: 11, fontWeight: '700' },
     travelModeTextActive: { color: T.onPrimary },
 
-    // ── Review Mode ──────────────────────────────────────────────────────
+    // â”€â”€ Review Mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     reviewBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999,

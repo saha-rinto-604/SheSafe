@@ -1,30 +1,96 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    View, Text, FlatList, TouchableOpacity, StyleSheet,
-    StatusBar, RefreshControl, TextInput, ActivityIndicator,
+    ActivityIndicator,
+    Animated,
+    FlatList,
+    Image,
+    Platform,
+    RefreshControl,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    UIManager,
+    View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useRouter, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
-import { incidentHistory, type IncidentRecord } from '../../../../src/services/incidentHistory';
 import { incidentService } from '../../../../src/services/incidentService';
-import { Modal, Pressable, Alert } from 'react-native';
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
 const D = {
+    cardFill: T.surfaceBulky,
+    hairline: 'rgba(255, 255, 255, 0.1)',
     title: '#FFFFFF',
     subtitle: '#C4C1D4',
     timestamp: '#A09CB2',
     neonViolet: T.violet,
-    cardRadius: 20,
     avatarSize: 44,
 } as const;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+type ChatIncidentStatus = 'ACTIVE' | 'RESOLVED' | 'CANCELLED';
+
+type UserChatIncident = {
+    id: number | string;
+    incidentCode?: string;
+    status: ChatIncidentStatus;
+    priority?: 'HIGH' | 'NORMAL';
+    createdAt: string;
+    updatedAt?: string;
+    lastMessage?: {
+        id: string;
+        senderId: string;
+        senderName: string;
+        senderRole: 'standard_user' | 'volunteer' | 'system' | string;
+        text: string;
+        createdAt: string;
+    } | null;
+    sosUser?: {
+        id: string;
+        name: string;
+        photoUri?: string | null;
+    };
+    responders?: {
+        id: string;
+        name: string;
+        photoUri?: string | null;
+        role?: string;
+        acceptedAt?: string | null;
+    }[];
+    responderCount?: number;
+    maxResponders?: number;
+};
+
+function normalizeStatus(status: string): ChatIncidentStatus {
+    const upper = String(status || 'ACTIVE').toUpperCase();
+    if (upper === 'IN_PROGRESS' || upper === 'LIVE') return 'ACTIVE';
+    if (upper === 'RESOLVED') return 'RESOLVED';
+    if (upper === 'CANCELLED' || upper === 'CANCELED') return 'CANCELLED';
+    return 'ACTIVE';
+}
+
+function incidentActivityTime(incident: UserChatIncident): number {
+    const timestamp = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
+    const time = new Date(timestamp).getTime();
+    return Number.isFinite(time) ? time : 0;
+}
+
+function compareIncidents(a: UserChatIncident, b: UserChatIncident): number {
+    const aLive = normalizeStatus(a.status) === 'ACTIVE';
+    const bLive = normalizeStatus(b.status) === 'ACTIVE';
+    if (aLive !== bLive) return aLive ? -1 : 1;
+    return incidentActivityTime(b) - incidentActivityTime(a);
+}
+
+function incidentNumber(id: number | string): string {
+    return String(id).replace(/\D/g, '').padStart(3, '0');
+}
+
 function timeAgo(iso: string): string {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
@@ -35,170 +101,191 @@ function timeAgo(iso: string): string {
     return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function formatNum(n: number): string {
-    return `#${String(n).padStart(3, '0')}`;
+function StatusPill({ status }: { status: ChatIncidentStatus }) {
+    const normalized = normalizeStatus(status);
+    const isLive = normalized === 'ACTIVE';
+    const isCancelled = normalized === 'CANCELLED';
+    return (
+        <View style={[
+            st.statusPill,
+            isLive ? st.statusPillActive : isCancelled ? st.statusPillCancelled : st.statusPillResolved,
+        ]}>
+            <Text style={[
+                st.statusPillText,
+                isLive ? st.statusTextActive : isCancelled ? st.statusTextCancelled : st.statusTextResolved,
+            ]}>
+                {normalized}
+            </Text>
+        </View>
+    );
 }
 
-// ── Status config ─────────────────────────────────────────────────────────────
-type StatusCfg = { label: string; pillBg: string; pillBorder: string; textColor: string; borderLeft: string };
+const ChatAvatar = memo(function ChatAvatar({
+    isLive,
+    uri,
+}: {
+    isLive: boolean;
+    uri?: string | null;
+}) {
+    return (
+        <View style={[st.avatar, isLive ? st.avatarLive : st.avatarResolved]}>
+            {uri ? (
+                <Image source={{ uri }} style={st.avatarImage} />
+            ) : (
+                <Feather
+                    name="alert-circle"
+                    size={18}
+                    color={isLive ? T.violet : D.subtitle}
+                />
+            )}
+            {isLive && <View style={st.activeDot} />}
+        </View>
+    );
+});
 
-function statusCfg(status: IncidentRecord['status']): StatusCfg {
-    // Normalize to uppercase to handle both 'Active' and 'ACTIVE' from different API shapes
-    const s = String(status).toUpperCase() as IncidentRecord['status'];
-    switch (s) {
-        case 'ACTIVE':
-            return {
-                label: 'ACTIVE',
-                pillBg: T.violetDim,
-                pillBorder: `${T.violet}55`,
-                textColor: T.violet,
-                borderLeft: T.violet,
-            };
-        case 'RESOLVED':
-            return {
-                label: 'RESOLVED',
-                pillBg: 'rgba(52,199,89,0.12)',
-                pillBorder: 'rgba(52,199,89,0.35)',
-                textColor: '#34C759',
-                borderLeft: '#34C759',
-            };
-        case 'CANCELLED':
-        default:
-            return {
-                label: 'CANCELLED',
-                pillBg: 'rgba(255, 69, 58, 0.12)',
-                pillBorder: 'rgba(255, 69, 58, 0.35)',
-                textColor: T.danger,
-                borderLeft: T.danger,
-            };
-    }
-}
-
-// ── IncidentCard ──────────────────────────────────────────────────────────────
 const IncidentCard = memo(function IncidentCard({
-    record,
+    incident,
     onPress,
 }: {
-    record: IncidentRecord;
+    incident: UserChatIncident;
     onPress: () => void;
 }) {
-    const cfg = statusCfg(record.status);
-    const isActive = String(record.status).toUpperCase() === 'ACTIVE';
-    const isCancelled = String(record.status).toUpperCase() === 'CANCELLED';
-    const resolvedTime = record.resolvedAt ? timeAgo(record.resolvedAt) : null;
+    const status = normalizeStatus(incident.status);
+    const isLive = status === 'ACTIVE';
+    const activityAt = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
+    const lastSender = incident.lastMessage?.senderName ?? 'System';
+    const lastText = incident.lastMessage?.text ?? 'No messages yet';
+    const responderCount = incident.responderCount ?? incident.responders?.length ?? 0;
+    const maxResponders = incident.maxResponders ?? 3;
 
     return (
         <TouchableOpacity
-            style={[st.card, { borderLeftColor: cfg.borderLeft }]}
+            style={[st.card, isLive && st.cardActive]}
             onPress={onPress}
             activeOpacity={0.75}
         >
-            {/* Avatar */}
-            <View style={[st.avatar, isActive ? st.avatarActive : isCancelled ? st.avatarCancelled : st.avatarInactive]}>
-                <Feather name="alert-circle" size={18} color={isActive ? T.violet : isCancelled ? T.danger : D.subtitle} />
-                {isActive && <View style={st.activeDot} />}
-            </View>
+            <ChatAvatar isLive={isLive} uri={incident.sosUser?.photoUri} />
 
-            {/* Center */}
             <View style={st.cardCenter}>
-                <Text style={st.cardTitle}>Incident {formatNum(record.displayNumber)}</Text>
-                <Text style={st.cardMeta} numberOfLines={1}>
-                    {record.address || 'SOS Alert triggered'}
+                <Text style={st.cardTitle} numberOfLines={1}>
+                    {incident.incidentCode ?? `Incident #${incidentNumber(incident.id)}`}
                 </Text>
-                {resolvedTime && (
-                    <Text style={st.cardResolvedTime}>
-                        {record.status === 'RESOLVED' ? 'Resolved' : 'Closed'} · {resolvedTime}
-                    </Text>
-                )}
+                <Text style={st.cardMeta} numberOfLines={1}>
+                    {incident.lastMessage ? (
+                        <>
+                            <Text style={st.cardMetaName}>{lastSender}</Text>
+                            {': '}
+                            {lastText}
+                        </>
+                    ) : (
+                        'No messages yet'
+                    )}
+                </Text>
+                <View style={st.responderMiniRow}>
+                    <Feather name="users" size={12} color={isLive ? T.violet : D.timestamp} />
+                    <Text style={st.responderMiniText}>{responderCount}/{maxResponders} responders</Text>
+                </View>
             </View>
 
-            {/* Right */}
             <View style={st.cardRight}>
-                <Text style={st.cardTime}>{timeAgo(record.createdAt)}</Text>
-                <View style={[st.statusPill, { backgroundColor: cfg.pillBg, borderColor: cfg.pillBorder }]}>
-                    <Text style={[st.statusText, { color: cfg.textColor }]}>{cfg.label}</Text>
-                </View>
+                <Text style={st.cardTime}>{timeAgo(activityAt)}</Text>
+                <StatusPill status={status} />
             </View>
         </TouchableOpacity>
     );
 });
 
-// ── Main Screen ───────────────────────────────────────────────────────────────
+function EmptyState({ isSearching }: { isSearching: boolean }) {
+    return (
+        <View style={st.empty}>
+            <View style={st.emptyCircle}>
+                <Feather name={isSearching ? 'search' : 'message-circle'} size={28} color={D.timestamp} />
+            </View>
+            <Text style={st.emptyTitle}>{isSearching ? 'No matches' : 'No SOS chats yet'}</Text>
+            <Text style={st.emptySub}>
+                {isSearching
+                    ? 'Try an incident number like 128, #128, or Incident #128.'
+                    : 'Your SOS chat history will appear here after you trigger an alert.'}
+            </Text>
+        </View>
+    );
+}
+
 export default function ChatHome() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const [records, setRecords] = useState<IncidentRecord[]>([]);
+    const [incidents, setIncidents] = useState<UserChatIncident[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [error, setError] = useState<string | null>(null);
+    const searchPulse = useRef(new Animated.Value(0)).current;
 
-    const loadHistory = useCallback(async () => {
-        // Local history (SOS sessions created on this device)
-        const local = await incidentHistory.getAll();
-        const deletedIds = new Set(await incidentHistory.getDeletedIds());
-
-        // Backend incidents for this user
-        let remote: IncidentRecord[] = [];
-        try {
-            const apiRecords = await incidentService.getMyIncidents();
-            remote = apiRecords
-                .filter(r => !deletedIds.has(String(r.id)))
-                .map((r) => ({
-                    incidentId: String(r.id),
-                    displayNumber: Number(r.id),
-                    lat: r.latitude ?? null,
-                    lng: r.longitude ?? null,
-                    address: r.address ?? '',
-                    createdAt: r.created_at ?? new Date().toISOString(),
-                    // Normalize status to uppercase ('Active' → 'ACTIVE') for UI consistency
-                    status: (String(r.status).toUpperCase() as IncidentRecord['status']),
-                }));
-        } catch {
-            // offline or unauthenticated — show local only
+    useEffect(() => {
+        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
         }
-
-        // Merge: local records override remote ones with the same incidentId
-        const map = new Map<string, IncidentRecord>();
-        for (const r of remote) map.set(r.incidentId, r);
-        for (const r of local) map.set(r.incidentId, r); // local wins (has real-time status)
-
-        const all = Array.from(map.values());
-        all.sort((a, b) => {
-            if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
-            if (b.status === 'ACTIVE' && a.status !== 'ACTIVE') return 1;
-            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
-        setRecords(all);
-        setLoading(false);
     }, []);
 
-    useFocusEffect(useCallback(() => { loadHistory(); }, [loadHistory]));
+    useEffect(() => {
+        const handle = setTimeout(() => setDebouncedSearch(searchQuery), 320);
+        return () => clearTimeout(handle);
+    }, [searchQuery]);
+
+    useEffect(() => {
+        Animated.timing(searchPulse, {
+            toValue: searchQuery ? 1 : 0,
+            duration: 180,
+            useNativeDriver: false,
+        }).start();
+    }, [searchPulse, searchQuery]);
+
+    const loadChats = useCallback(async () => {
+        setError(null);
+        const rows = await incidentService.getUserIncidentChats(debouncedSearch);
+        setIncidents((rows ?? []).map((row: any) => ({
+            ...row,
+            id: row.id,
+            status: normalizeStatus(row.status),
+            responderCount: Number(row.responderCount ?? row.responders?.length ?? 0),
+            maxResponders: Number(row.maxResponders ?? 3),
+        })).sort(compareIncidents));
+    }, [debouncedSearch]);
+
+    useFocusEffect(useCallback(() => {
+        let active = true;
+        setLoading(true);
+        loadChats()
+            .catch((err) => {
+                if (!active) return;
+                setError(err?.message || 'Unable to load chats.');
+            })
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+        return () => { active = false; };
+    }, [loadChats]));
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
-        await loadHistory();
-        setRefreshing(false);
-    }, [loadHistory]);
-
-    const filtered = searchQuery.trim()
-        ? records.filter(r =>
-            r.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            formatNum(r.displayNumber).includes(searchQuery)
-        )
-        : records;
-
-    const openChat = useCallback((record: IncidentRecord) => {
-        Haptics.selectionAsync();
-        const params: Record<string, string> = { incidentId: record.incidentId };
-        if (record.status === 'ACTIVE') {
-            params.autoMessage = 'true';
-            if (record.lat != null) {
-                params.userLat = String(record.lat);
-                params.userLng = String(record.lng ?? 0);
-            }
-            params.userAddress = record.address;
+        try {
+            await loadChats();
+        } catch (err: any) {
+            setError(err?.message || 'Unable to refresh chats.');
+        } finally {
+            setRefreshing(false);
         }
-        router.push({ pathname: '/(tabs)/users/standard-user/chat_room', params } as any);
+    }, [loadChats]);
+
+    const sorted = useMemo(() => [...incidents].sort(compareIncidents), [incidents]);
+
+    const openChat = useCallback((incident: UserChatIncident) => {
+        Haptics.selectionAsync();
+        router.push({
+            pathname: '/(tabs)/users/standard-user/chat_room',
+            params: { incidentId: String(incident.id) },
+        } as any);
     }, [router]);
 
     return (
@@ -206,21 +293,23 @@ export default function ChatHome() {
             <View style={[st.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-                {/* Header */}
                 <View style={st.header}>
                     <TouchableOpacity
                         onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         style={st.headerBtn}
                         activeOpacity={0.7}
                     >
                         <Feather name="chevron-left" size={22} color={D.title} />
                     </TouchableOpacity>
+
                     <View style={st.headerTitleArea}>
                         <Text style={st.headerTitle}>Chat Room</Text>
-                        {records.length > 0 && (
-                            <Text style={st.headerCount}>{records.length} incident{records.length !== 1 ? 's' : ''}</Text>
+                        {incidents.length > 0 && (
+                            <Text style={st.headerCount}>{incidents.length} SOS chat{incidents.length === 1 ? '' : 's'}</Text>
                         )}
                     </View>
+
                     <TouchableOpacity
                         style={st.headerBtn}
                         activeOpacity={0.7}
@@ -230,9 +319,16 @@ export default function ChatHome() {
                     </TouchableOpacity>
                 </View>
 
-                {/* Search */}
                 <View style={st.searchArea}>
-                    <View style={st.searchBlock}>
+                    <Animated.View style={[
+                        st.searchBlock,
+                        {
+                            borderColor: searchPulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: ['rgba(255,255,255,0.1)', `${T.violet}66`],
+                            }),
+                        },
+                    ]}>
                         <Feather name="search" size={16} color={D.subtitle} />
                         <TextInput
                             style={st.searchInput}
@@ -242,59 +338,59 @@ export default function ChatHome() {
                             onChangeText={setSearchQuery}
                         />
                         {searchQuery.length > 0 && (
-                            <TouchableOpacity onPress={() => setSearchQuery('')} activeOpacity={0.7}>
+                            <TouchableOpacity
+                                onPress={() => { Haptics.selectionAsync(); setSearchQuery(''); }}
+                                activeOpacity={0.7}
+                            >
                                 <Feather name="x" size={16} color={D.subtitle} />
                             </TouchableOpacity>
                         )}
-                    </View>
+                    </Animated.View>
                 </View>
 
-                {/* List */}
-                {loading ? (
-                    <View style={st.loadingWrap}>
-                        <ActivityIndicator color={T.violet} />
-                    </View>
-                ) : (
-                    <FlatList
-                        style={{ marginHorizontal: 16 }}
-                        data={filtered}
-                        renderItem={({ item }) => (
-                            <IncidentCard record={item} onPress={() => openChat(item)} />
-                        )}
-                        keyExtractor={item => item.incidentId}
-                        contentContainerStyle={st.list}
-                        showsVerticalScrollIndicator={false}
-                        refreshControl={
-                            <RefreshControl
-                                refreshing={refreshing}
-                                onRefresh={onRefresh}
-                                tintColor={D.neonViolet}
-                                colors={[D.neonViolet]}
-                            />
-                        }
-                        ListEmptyComponent={
-                            <View style={st.empty}>
-                                <View style={st.emptyCircle}>
-                                    <Feather name="shield" size={28} color={D.timestamp} />
-                                </View>
-                                <Text style={st.emptyTitle}>No incidents yet</Text>
-                                <Text style={st.emptySub}>
-                                    Your SOS chats will appear here after you trigger an alert.
-                                </Text>
-                            </View>
-                        }
-                        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-                    />
+                {error && (
+                    <TouchableOpacity style={st.errorCard} onPress={onRefresh} activeOpacity={0.8}>
+                        <Feather name="refresh-cw" size={16} color={T.danger} />
+                        <Text style={st.errorText}>{error} Tap to retry.</Text>
+                    </TouchableOpacity>
                 )}
+
+                <FlatList
+                    style={{ marginHorizontal: 20 }}
+                    data={sorted}
+                    renderItem={({ item }) => (
+                        <IncidentCard incident={item} onPress={() => openChat(item)} />
+                    )}
+                    keyExtractor={(item) => String(item.id)}
+                    contentContainerStyle={[st.list, { paddingBottom: insets.bottom + 24 }]}
+                    showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor={D.neonViolet}
+                            colors={[D.neonViolet]}
+                        />
+                    }
+                    ListEmptyComponent={
+                        loading ? (
+                            <View style={st.loadingCard}>
+                                <ActivityIndicator color={T.violet} />
+                                <Text style={st.loadingText}>Loading chats...</Text>
+                            </View>
+                        ) : (
+                            <EmptyState isSearching={!!searchQuery.trim()} />
+                        )
+                    }
+                    ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
+                />
             </View>
         </AtmosphericShell>
     );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const st = StyleSheet.create({
     root: { flex: 1 },
-
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -305,7 +401,8 @@ const st = StyleSheet.create({
         borderBottomColor: 'rgba(255,255,255,0.1)',
     },
     headerBtn: {
-        width: 36, height: 36,
+        width: 36,
+        height: 36,
         borderRadius: R.hBtn,
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
@@ -314,82 +411,225 @@ const st = StyleSheet.create({
         justifyContent: 'center',
     },
     headerTitleArea: { flex: 1, alignItems: 'center' },
-    headerTitle: { fontSize: 20, fontWeight: '700', color: D.title, letterSpacing: -0.3 },
-    headerCount: { fontSize: 11, color: D.timestamp, marginTop: 1 },
-
-    searchArea: { marginHorizontal: 16, paddingBottom: S.s4 },
-    searchBlock: {
+    headerTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: D.title,
+        letterSpacing: 0,
+    },
+    headerCount: {
+        marginTop: 2,
+        fontSize: 11,
+        fontWeight: '600',
+        color: D.timestamp,
+    },
+    searchArea: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: T.surfaceBulky,
+        marginHorizontal: 20,
+        paddingVertical: S.s4,
+    },
+    searchBlock: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: D.cardFill,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        borderRadius: D.cardRadius,
-        paddingHorizontal: 16,
-        height: 48,
+        borderRadius: 24,
+        paddingHorizontal: 18,
+        height: 50,
         gap: S.s3,
     },
-    searchInput: { flex: 1, fontSize: 15, color: D.title, paddingVertical: 0 },
-
-    list: { paddingTop: 4, paddingBottom: S.s5 },
-
-    loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-
-    // Card
+    searchInput: {
+        flex: 1,
+        fontSize: 15,
+        color: D.title,
+        paddingVertical: 0,
+        lineHeight: 20,
+    },
+    list: {
+        paddingTop: S.s1,
+        paddingBottom: S.s5,
+    },
     card: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         borderRadius: R.lg,
         paddingHorizontal: S.s4,
-        paddingVertical: 14,
-        gap: 12,
+        paddingVertical: 16,
+        gap: 14,
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
+    },
+    cardActive: {
         borderLeftWidth: 4,
+        borderLeftColor: T.violet,
     },
     avatar: {
-        width: D.avatarSize, height: D.avatarSize,
+        width: D.avatarSize,
+        height: D.avatarSize,
         borderRadius: 12,
-        alignItems: 'center', justifyContent: 'center',
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
         borderWidth: 1,
+        overflow: 'hidden',
     },
-    avatarActive: { backgroundColor: T.violetDim, borderColor: T.violet },
-    avatarInactive: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)' },
-    avatarCancelled: {
-        backgroundColor: 'rgba(255,69,58,0.08)',
-        borderColor: 'rgba(255,69,58,0.25)',
+    avatarImage: {
+        width: '100%',
+        height: '100%',
+    },
+    avatarLive: {
+        backgroundColor: T.violetDim,
+        borderColor: T.violet,
+    },
+    avatarResolved: {
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderColor: 'rgba(255,255,255,0.08)',
     },
     activeDot: {
-        position: 'absolute', top: 4, right: 4,
-        width: 8, height: 8, borderRadius: 4,
-        backgroundColor: '#FF453A',
-        borderWidth: 1.5, borderColor: T.surface,
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: T.danger,
+        borderWidth: 1,
+        borderColor: '#120B22',
     },
-
-    cardCenter: { flex: 1, minWidth: 0, gap: 3 },
-    cardTitle: { fontSize: 16, fontWeight: '800', color: D.title, letterSpacing: 0.1 },
-    cardMeta: { fontSize: 12, color: D.subtitle, lineHeight: 16 },
-    cardResolvedTime: { fontSize: 11, color: D.timestamp, marginTop: 1 },
-
-    cardRight: { flexShrink: 0, alignItems: 'flex-end', gap: S.s2 },
-    cardTime: { fontSize: 11, fontWeight: '500', color: D.timestamp },
+    cardCenter: {
+        flex: 1,
+        minWidth: 0,
+        gap: S.s1,
+        alignSelf: 'center',
+    },
+    cardTitle: {
+        fontSize: 17,
+        fontWeight: '900',
+        color: D.title,
+        letterSpacing: 0,
+    },
+    cardMeta: {
+        flex: 1,
+        fontSize: 12,
+        fontWeight: '400',
+        color: D.subtitle,
+        lineHeight: 16,
+    },
+    cardMetaName: {
+        fontWeight: '700',
+        color: D.title,
+    },
+    responderMiniRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 4,
+    },
+    responderMiniText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: D.timestamp,
+    },
+    cardRight: {
+        flexShrink: 0,
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        gap: S.s2,
+    },
+    cardTime: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: D.timestamp,
+    },
     statusPill: {
-        paddingHorizontal: 9, paddingVertical: 3,
-        borderRadius: 999, borderWidth: 1,
+        minWidth: 78,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
     },
-    statusText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6 },
-
-    // Empty
-    empty: { alignItems: 'center', paddingTop: 80, gap: S.s3 },
+    statusPillActive: {
+        backgroundColor: T.violetDim,
+        borderColor: `${T.violet}55`,
+    },
+    statusPillResolved: {
+        backgroundColor: 'rgba(16,185,129,0.12)',
+        borderColor: 'rgba(16,185,129,0.35)',
+    },
+    statusPillCancelled: {
+        backgroundColor: T.dangerLight,
+        borderColor: T.dangerBorder,
+    },
+    statusPillText: {
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.6,
+    },
+    statusTextActive: { color: T.violet },
+    statusTextResolved: { color: T.success },
+    statusTextCancelled: { color: T.danger },
+    empty: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingTop: S.s8 + S.s5,
+        gap: S.s3,
+    },
     emptyCircle: {
-        width: 72, height: 72, borderRadius: 36,
-        backgroundColor: T.surfaceBulky,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'center', justifyContent: 'center',
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: D.cardFill,
+        borderWidth: 1,
+        borderColor: D.hairline,
+        alignItems: 'center',
+        justifyContent: 'center',
         marginBottom: S.s2,
     },
     emptyTitle: { fontSize: 18, fontWeight: '700', color: D.subtitle },
-    emptySub: { fontSize: 13, color: D.timestamp, textAlign: 'center', paddingHorizontal: 32, lineHeight: 20 },
+    emptySub: {
+        fontSize: 14,
+        fontWeight: '400',
+        color: D.timestamp,
+        textAlign: 'center',
+        paddingHorizontal: S.s5,
+        lineHeight: 20,
+    },
+    loadingCard: {
+        marginTop: S.s6,
+        borderRadius: R.lg,
+        paddingVertical: S.s5,
+        alignItems: 'center',
+        gap: S.s3,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: D.hairline,
+    },
+    loadingText: {
+        color: D.subtitle,
+        fontSize: 13,
+        fontWeight: '600',
+    },
+    errorCard: {
+        marginHorizontal: 20,
+        marginBottom: S.s3,
+        borderRadius: R.lg,
+        padding: S.s4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: S.s3,
+        backgroundColor: 'rgba(226,54,54,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(226,54,54,0.28)',
+    },
+    errorText: {
+        flex: 1,
+        color: '#FCA5A5',
+        fontSize: 13,
+        fontWeight: '600',
+    },
 });

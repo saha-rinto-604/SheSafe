@@ -1,6 +1,6 @@
 /**
- * chat_room.tsx — Tactical Group Chat (Standard User)
- * ─────────────────────────────────────────────────────────────────────────
+ * chat_room.tsx â€” Tactical Group Chat (Standard User)
+ * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
  * Integrated: Standard User UI/Socket + Volunteer Attach Modal & 3-Dot Menu.
  * Removed: Mark as Resolved and Close Incident functionalities.
  */
@@ -8,8 +8,8 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
-    Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable, Alert, Dimensions, ScrollView
+    Platform, StatusBar, KeyboardAvoidingView, Keyboard,
+    Modal, Pressable, Alert, ScrollView
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -17,7 +17,6 @@ import * as Speech from 'expo-speech';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as SecureStore from 'expo-secure-store';
 
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
@@ -27,23 +26,28 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import RespondersList from '../../../../src/components/RespondersList';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
-import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
+import { type Incident, type Message, type Role } from '../../../../src/types/chat';
 import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 import { incidentService } from '../../../../src/services/incidentService';
-import { chatService } from '../../../../src/services/chatService';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { useAuth } from '../../../../src/context/AuthContext';
 
-// ─── Constants ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 type Responder = {
     id: string;
     name: string;
     avatarUri: string | null;
-    location: { latitude: number; longitude: number };
-    fallbackDistance: string;
-    fallbackDuration: string;
+    location?: { latitude: number; longitude: number };
+    fallbackDistance?: string;
+    fallbackDuration?: string;
+};
+
+type UserCaseDetailsForm = {
+    notes: string;
+    condition: string;
+    additionalInfo: string;
 };
 
 const RESPONDERS: Responder[] = [
@@ -65,7 +69,7 @@ const RESPONDERS: Responder[] = [
     },
 ];
 
-// ─── Mock Incidents (lookup) ────────────────────────────────────────────────
+// â”€â”€â”€ Mock Incidents (lookup) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const MOCK_INCIDENTS: Record<string, Incident> = {
     'inc-001': {
         id: 'inc-001', type: 'SOS Alert', status: 'LIVE',
@@ -87,7 +91,7 @@ const MOCK_INCIDENTS: Record<string, Incident> = {
     },
 };
 
-// ─── Role badge config ──────────────────────────────────────────────────────
+// â”€â”€â”€ Role badge config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ROLE_META: Record<Role, {
     label: string; color: string; bg: string; border: string;
     icon: keyof typeof Feather.glyphMap;
@@ -110,7 +114,7 @@ const ROLE_META: Record<Role, {
     },
 };
 
-// ─── Tactical Map Style ─────────────────────────────────────────────────────
+// â”€â”€â”€ Tactical Map Style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -134,19 +138,13 @@ const TACTICAL_MAP_STYLE = [
     { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function formatTime(iso: string): string {
     const d = new Date(iso);
     const h = d.getHours();
     const m = d.getMinutes().toString().padStart(2, '0');
     const ampm = h >= 12 ? 'PM' : 'AM';
     return `${h % 12 || 12}:${m} ${ampm}`;
-}
-
-function caseLabel(id: string, createdAt: string): string {
-    const year = new Date(createdAt).getFullYear();
-    const num = id.replace(/\D/g, '').padStart(3, '0');
-    return `CASE #${year}-${num}`;
 }
 
 function getManeuverIcon(maneuver?: string): React.ComponentProps<typeof Ionicons>['name'] {
@@ -189,7 +187,7 @@ function polylineDecode(str: string, precision = 5) {
     return coordinates;
 }
 
-// ─── Components ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Components â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PremiumBar = memo(function PremiumBar({ style, contentStyle, children }: { style?: any; contentStyle?: any; children: React.ReactNode }) {
     return (
         <View style={[pb.bar, style]}>
@@ -232,8 +230,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
     const role = msg.sender.role;
-    const isVictimMessage = role === 'USER' && msg.sender.id !== 'system';
-    const alignRight = isOwn || isVictimMessage;
+    const alignRight = isOwn;
 
     const tailStyle = alignRight
         ? { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 2, borderBottomLeftRadius: 16 }
@@ -242,7 +239,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     return (
         <View style={[st.bubbleRow, alignRight ? st.bubbleRowOwn : st.bubbleRowOther]}>
             {!alignRight && (
-                <Image source={{ uri: `https://i.pravatar.cc/150?u=${msg.sender.id}` }} style={st.avatar} />
+                <UserAvatar uri={msg.sender.avatarUrl ?? null} size={32} style={st.avatar} />
             )}
             <View style={st.bubbleCol}>
                 {!alignRight && (
@@ -260,7 +257,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                             </TouchableOpacity>
                             <View style={st.audioWaveform}>
                                 {[0.4, 0.7, 0.5, 0.9, 0.6, 0.8, 0.3, 0.65, 0.5, 0.85, 0.4, 0.55, 0.7, 0.3].map((h, i) => (
-                                    <View key={i} style={[st.waveBar, { height: h * 18, backgroundColor: isOwn ? 'rgba(255,255,255,0.5)' : T.ink4 }]} />
+                                    <View key={i} style={[st.waveBar, { height: h * 18, backgroundColor: alignRight ? 'rgba(255,255,255,0.5)' : T.ink4 }]} />
                                 ))}
                             </View>
                             <Text style={st.audioDur}>0:22</Text>
@@ -280,7 +277,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     );
 });
 
-// ─── Floating Input (Modal-based Attach Menu equivalent to Volunteer UI) ───
+// â”€â”€â”€ Floating Input (Modal-based Attach Menu equivalent to Volunteer UI) â”€â”€â”€
 function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: string) => void; bottomInset: number; onImagePicked: (uri: string) => void }) {
     const [text, setText] = useState('');
     const [isAttachMenuVisible, setAttachMenuVisible] = useState(false);
@@ -296,7 +293,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
     };
 
     return (
-        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 30) }]}>
+        <View style={[st.inputOuter, { paddingBottom: Math.max(bottomInset, 14) }]}>
             {isAttachMenuVisible && (
                 <Modal transparent visible animationType="fade">
                     <Pressable style={st.attachModalBackdrop} onPress={() => setAttachMenuVisible(false)}>
@@ -339,7 +336,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                     <TouchableOpacity style={st.inputAction} onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(!isAttachMenuVisible); }} activeOpacity={0.7}>
                         <Feather name="paperclip" size={20} color={isAttachMenuVisible ? T.violet : "#FFFFFF"} />
                     </TouchableOpacity>
-                    <TextInput ref={inputRef} style={st.input} placeholder="Type a message…" placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} onFocus={() => setAttachMenuVisible(false)} />
+                    <TextInput ref={inputRef} style={st.input} placeholder="Type a messageâ€¦" placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} onFocus={() => setAttachMenuVisible(false)} />
                     <TouchableOpacity style={[st.sendBtn, !hasText && st.sendBtnOff]} onPress={handleSend} disabled={!hasText} activeOpacity={0.7}>
                         <Ionicons name="send" size={18} color="#FFFFFF" />
                     </TouchableOpacity>
@@ -349,13 +346,13 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
     );
 }
 
-function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete: () => void }) {
+function ArchivePill({ bottomInset, onDelete, message }: { bottomInset: number; onDelete: () => void; message: string }) {
     return (
         <View style={[st.archiveOuter, { paddingBottom: Math.max(bottomInset, S.s4) }]}>
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
                 <View style={st.archiveInner}>
                     <Feather name="lock" size={13} color={T.ink4} />
-                    <Text style={st.archiveText}>Incident Archived — Case Read-Only</Text>
+                    <Text style={st.archiveText}>{message}</Text>
                 </View>
             </BlurView>
             <TouchableOpacity style={st.archiveDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
@@ -366,22 +363,23 @@ function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete:
     );
 }
 
-// ─── Main — Chat Room ───────────────────────────────────────────────────────
+// â”€â”€â”€ Main â€” Chat Room â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function ChatRoom() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { userId } = useAuth();
-    const { incidentId: rawIncidentId, autoMessage, userLat, userLng, userAddress, joinMode } = useLocalSearchParams<{ incidentId: string; autoMessage?: string; userLat?: string; userLng?: string; userAddress?: string; joinMode?: string; }>();
+    const { incidentId: rawIncidentId } = useLocalSearchParams<{ incidentId: string }>();
 
     const incidentId = rawIncidentId || 'inc-001';
-    const autoSent = useRef(false);
 
     // Socket
-    const { messages, sendMessage, isConnected } = useChatSocket(incidentId, userId ?? undefined);
+    const { messages, sendMessage, isConnected } = useChatSocket(incidentId, userId ?? undefined, 'USER');
     const [localMessages, setLocalMessages] = useState<Message[]>([]);
     const [incident, setIncident] = useState<Incident | null>(null);
     const flatRef = useRef<FlatList>(null);
-    const isLive = (incident?.status ?? 'LIVE') === 'LIVE';
+    const incidentStatus = String(incident?.status ?? 'ACTIVE').toUpperCase();
+    const isLive = incidentStatus === 'LIVE' || incidentStatus === 'ACTIVE';
+    const isReadOnly = incidentStatus === 'RESOLVED' || incidentStatus === 'CANCELLED';
 
     // Map & Navigation States
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
@@ -393,7 +391,7 @@ export default function ChatRoom() {
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const [isReviewMode, setIsReviewMode] = useState(false);
-    const [selectedResponderId, setSelectedResponderId] = useState(RESPONDERS[0].id);
+    const [selectedResponderId, setSelectedResponderId] = useState(RESPONDERS[0]?.id ?? '');
     const mapRef = useRef<MapView>(null);
     const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
     const [navInstructions, setNavInstructions] = useState<{ instruction: string; distance: string; maneuver?: string; endLocation?: { latitude: number; longitude: number } }[]>([]);
@@ -404,10 +402,14 @@ export default function ChatRoom() {
     // Menu / Modals
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
     const [isRespondersOpen, setRespondersOpen] = useState(false);
-    const [isResponderRemovedOpen, setResponderRemovedOpen] = useState(false);
-    const [respondersList, setRespondersList] = useState(RESPONDERS);
+    const [isResponderRemovedOpen] = useState(false);
+    const [respondersList, setRespondersList] = useState<Responder[]>([]);
+    const [sosUser, setSosUser] = useState<{ id: string; name: string; photoUri?: string | null } | null>(null);
+    const [maxResponders, setMaxResponders] = useState(3);
     const [isEditCaseOpen, setEditCaseOpen] = useState(false);
-    const [caseDetails, setCaseDetails] = useState('');
+    const [caseDetails, setCaseDetails] = useState<UserCaseDetailsForm>({ notes: '', condition: '', additionalInfo: '' });
+    const [caseError, setCaseError] = useState<string | null>(null);
+    const [savingCaseDetails, setSavingCaseDetails] = useState(false);
     const [isSaveConfirmationOpen, setSaveConfirmationOpen] = useState(false);
     const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
 
@@ -416,38 +418,65 @@ export default function ChatRoom() {
     useEffect(() => {
         incidentService.getOne(incidentId)
             .then((raw) => {
+                const status = raw.status === 'ACTIVE' || raw.status === 'IN_PROGRESS' ? 'ACTIVE' : raw.status;
                 setIncident({
                     id: String(raw.id),
                     type: 'SOS Alert',
-                    status: raw.status === 'ACTIVE' ? 'LIVE' : raw.status as any,
-                    location: { latitude: Number(raw.latitude), longitude: Number(raw.longitude), updatedAt: raw.created_at },
-                    participantCount: 1, createdAt: raw.created_at,
+                    status: status as any,
+                    location: { latitude: Number(raw.latitude), longitude: Number(raw.longitude), updatedAt: raw.updated_at ?? raw.created_at },
+                    participantCount: 1,
+                    createdAt: raw.created_at ?? raw.createdAt,
                 });
             })
             .catch(() => setIncident(MOCK_INCIDENTS[incidentId] ?? MOCK_INCIDENTS['inc-001']));
-
-        if (isRealIncident) chatService.joinIncident(incidentId).catch(() => { });
     }, [incidentId]);
 
     useEffect(() => {
-        if (autoMessage !== 'true') return;
-        let cancelled = false;
-        const timer = setTimeout(async () => {
-            if (cancelled) return;
-            const sentFor = await SecureStore.getItemAsync('resqher_sos_autosent_v1');
-            if (sentFor === incidentId) { autoSent.current = true; return; }
+        if (!isRealIncident) return;
+        let mounted = true;
+        const loadMembers = async () => {
+            const response = await incidentService.getIncidentResponders(incidentId);
+            if (!mounted) return;
+            const volunteers = (response.volunteers ?? []).map((volunteer) => ({
+                id: volunteer.id,
+                name: volunteer.name,
+                avatarUri: volunteer.photoUri ?? null,
+            }));
+            setRespondersList(volunteers);
+            setSosUser(response.sosUser ? {
+                id: response.sosUser.id,
+                name: response.sosUser.name,
+                photoUri: response.sosUser.photoUri ?? null,
+            } : null);
+            setMaxResponders(response.maxVolunteerResponders ?? 3);
+            setSelectedResponderId((prev) => prev || volunteers[0]?.id || RESPONDERS[0]?.id || '');
+        };
 
-            const lat = parseFloat(userLat ?? '');
-            const lng = parseFloat(userLng ?? '');
-            const locationText = isFinite(lat) && isFinite(lng) ? `📍 My location: ${lat.toFixed(5)}, ${lng.toFixed(5)}${userAddress ? ` (${userAddress})` : ''}` : '📍 Location not available';
+        loadMembers().catch(error => console.warn('[StandardChatRoom] responders unavailable:', error?.message || error));
+        const interval = setInterval(() => {
+            loadMembers().catch(() => undefined);
+        }, 7000);
+        return () => {
+            mounted = false;
+            clearInterval(interval);
+        };
+    }, [incidentId, isRealIncident]);
 
-            sendMessage('🆘 SOS ALERT — I need immediate help!', 'TEXT');
-            setTimeout(() => { if (!cancelled) sendMessage(locationText, 'TEXT'); }, 600);
-            autoSent.current = true;
-            await SecureStore.setItemAsync('resqher_sos_autosent_v1', incidentId);
-        }, 1200);
-        return () => { cancelled = true; clearTimeout(timer); };
-    }, [autoMessage, incidentId]);
+    useEffect(() => {
+        if (!isRealIncident) return;
+        let mounted = true;
+        incidentService.getUserCaseDetails(incidentId)
+            .then((details) => {
+                if (!mounted) return;
+                setCaseDetails({
+                    notes: details.notes ?? '',
+                    condition: details.condition ?? '',
+                    additionalInfo: details.additionalInfo ?? '',
+                });
+            })
+            .catch(error => console.warn('[StandardChatRoom] case details unavailable:', error?.message || error));
+        return () => { mounted = false; };
+    }, [incidentId, isRealIncident]);
 
     const activeMessages = isRealIncident ? messages : localMessages;
 
@@ -455,24 +484,26 @@ export default function ChatRoom() {
         if (activeMessages.length > 0) setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 150);
     }, [activeMessages.length]);
 
-    // ─── Actions ─────────────────────────
+    // â”€â”€â”€ Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const handleSend = useCallback((text: string) => {
+        if (isReadOnly) return;
         if (isRealIncident) {
             sendMessage(text, 'TEXT');
         } else {
             const newMsg: Message = { id: `m-${Date.now()}`, incidentId, sender: { id: userId ?? 'self', name: 'You', role: 'USER' }, content: text, type: 'TEXT', timestamp: new Date().toISOString() };
             setLocalMessages(p => [...p, newMsg]);
         }
-    }, [isRealIncident, sendMessage, incidentId, userId]);
+    }, [isReadOnly, isRealIncident, sendMessage, incidentId, userId]);
 
     const handleSendPhoto = useCallback((uri: string) => {
+        if (isReadOnly) return;
         if (isRealIncident) {
             sendMessage(uri, 'IMAGE');
         } else {
             const newMsg: Message = { id: `m-img-${Date.now()}`, incidentId, sender: { id: userId ?? 'self', name: 'You', role: 'USER' }, content: 'Photo', type: 'IMAGE', timestamp: new Date().toISOString(), mediaUrl: uri };
             setLocalMessages(p => [...p, newMsg]);
         }
-    }, [isRealIncident, sendMessage, incidentId, userId]);
+    }, [isReadOnly, isRealIncident, sendMessage, incidentId, userId]);
 
     const handleDeleteIncident = useCallback(() => {
         Alert.alert('Delete Incident', 'This will permanently remove this chat from your history.', [
@@ -487,18 +518,36 @@ export default function ChatRoom() {
         router.back();
     }, [router]);
 
-    const handleSaveCaseDetails = useCallback(() => {
-        setEditCaseOpen(false);
-        setSaveConfirmationOpen(true);
-        setTimeout(() => setSaveConfirmationOpen(false), 2200);
-    }, [caseDetails]);
+    const handleSaveCaseDetails = useCallback(async () => {
+        setSavingCaseDetails(true);
+        setCaseError(null);
+        try {
+            const updated = await incidentService.updateUserCaseDetails(incidentId, caseDetails);
+            setCaseDetails({
+                notes: updated.notes ?? '',
+                condition: updated.condition ?? '',
+                additionalInfo: updated.additionalInfo ?? '',
+            });
+            setEditCaseOpen(false);
+            setSaveConfirmationOpen(true);
+            setTimeout(() => setSaveConfirmationOpen(false), 2200);
+        } catch (error: any) {
+            setCaseError(error?.message || 'Unable to save case details.');
+        } finally {
+            setSavingCaseDetails(false);
+        }
+    }, [caseDetails, incidentId]);
 
-    // ─── Tactical Map Loading ─────────────────────────
-    const selectedResponder = React.useMemo(() => RESPONDERS.find(r => r.id === selectedResponderId) ?? RESPONDERS[0], [selectedResponderId]);
+    // â”€â”€â”€ Tactical Map Loading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const selectedResponder = React.useMemo(
+        () => respondersList.find(r => r.id === selectedResponderId) ?? respondersList[0] ?? RESPONDERS[0],
+        [respondersList, selectedResponderId]
+    );
 
     const loadRouteForResponder = useCallback(async (responder: Responder) => {
         if (!incident) return;
-        const origin = `${responder.location.latitude},${responder.location.longitude}`;
+        const originLocation = responder.location ?? incident.location;
+        const origin = `${originLocation.latitude},${originLocation.longitude}`;
         const destination = `${incident.location.latitude},${incident.location.longitude}`;
         const apiMode = travelMode === 'motorcycle' ? 'two_wheeler' : travelMode;
         const modeLabel = travelMode === 'motorcycle' ? 'ride' : travelMode === 'driving' ? 'drive' : travelMode === 'transit' ? 'transit' : 'walk';
@@ -508,12 +557,12 @@ export default function ChatRoom() {
             if (travelMode === 'walking') mockMins = 75;
             else if (travelMode === 'motorcycle') mockMins = 18;
 
-            setMapRouteCoords([responder.location, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
-            setMapDistance(travelMode === 'walking' ? '2.1 km' : responder.fallbackDistance);
+            setMapRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            setMapDistance(travelMode === 'walking' ? '2.1 km' : responder.fallbackDistance ?? '2.1 km');
             setMapDuration(`~${mockMins} mins ${modeLabel}`);
             setNavInstructions([]);
             setCompletedRouteCoords([]);
-            setRemainingRouteCoords([responder.location, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
+            setRemainingRouteCoords([originLocation, { latitude: incident.location.latitude, longitude: incident.location.longitude }]);
             return;
         }
 
@@ -611,7 +660,7 @@ export default function ChatRoom() {
             <View style={[st.root, { paddingTop: insets.top }]}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-                {/* ── Chat Header ── */}
+                {/* â”€â”€ Chat Header â”€â”€ */}
                 <View style={st.headerOuter}>
                     <BlurView intensity={50} tint="dark" style={st.headerBlur}>
                         <View style={st.headerInner}>
@@ -620,14 +669,14 @@ export default function ChatRoom() {
                                     <Feather name="chevron-left" size={22} color={T.ink} />
                                 </TouchableOpacity>
                                 <View style={st.headerTitleBlock}>
-                                    <Text style={st.headerTitle} numberOfLines={1}>{incident ? `${incident.type} · ${caseLabel(incident.id, incident.createdAt)}` : DEFAULT_GROUP_CHAT_NAME}</Text>
+                                    <Text style={st.headerTitle} numberOfLines={1}>ResQher Emergency Chat</Text>
                                     <View style={st.headerMeta}>
                                         <View style={[st.headerStatusPill, isLive ? st.headerStatusPillLive : st.headerStatusPillArchived]}>
                                             <Text style={isLive ? st.headerStatusTextLive : st.headerStatusTextArchived}>{isLive ? 'LIVE' : 'ARCHIVED'}</Text>
                                         </View>
                                         <View style={st.connPill}>
                                             <View style={[st.connDot, { backgroundColor: isConnected ? T.success : T.ink5 }]} />
-                                            <Text style={st.connTxt}>{isConnected ? 'Connected' : 'Reconnecting…'}</Text>
+                                            <Text style={st.connTxt}>{isConnected ? 'Connected' : 'Reconnectingâ€¦'}</Text>
                                         </View>
                                     </View>
                                 </View>
@@ -646,8 +695,8 @@ export default function ChatRoom() {
                     </BlurView>
                 </View>
 
-                {/* ── Chat Content ── */}
-                <KeyboardAvoidingView style={st.chatArea} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 56}>
+                {/* â”€â”€ Chat Content â”€â”€ */}
+                <KeyboardAvoidingView style={st.chatArea} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}>
                     <FlatList
                         ref={flatRef}
                         data={activeMessages}
@@ -664,14 +713,18 @@ export default function ChatRoom() {
                             </View>
                         }
                     />
-                    {isLive ? (
+                    {!isReadOnly ? (
                         <FloatingInput onSend={handleSend} onImagePicked={handleSendPhoto} bottomInset={insets.bottom} />
                     ) : (
-                        <ArchivePill bottomInset={insets.bottom} onDelete={handleDeleteIncident} />
+                        <ArchivePill
+                            bottomInset={insets.bottom}
+                            onDelete={handleDeleteIncident}
+                            message={incidentStatus === 'CANCELLED' ? 'This SOS was cancelled. Chat is read-only.' : 'This SOS is resolved. Chat is read-only.'}
+                        />
                     )}
                 </KeyboardAvoidingView>
 
-                {/* ── Unified Header Menu Modal (3-Dot Functionality) ── */}
+                {/* â”€â”€ Unified Header Menu Modal (3-Dot Functionality) â”€â”€ */}
                 <Modal transparent={true} visible={isHeaderMenuOpen} animationType="fade">
                     <Pressable style={st.headerMenuBackdrop} onPress={() => setHeaderMenuOpen(false)}>
                         <View style={st.headerMenuPanel}>
@@ -704,16 +757,19 @@ export default function ChatRoom() {
                     </Pressable>
                 </Modal>
 
-                {/* ── Extra Modals (Edit Case, Confirmations) ── */}
+                {/* â”€â”€ Extra Modals (Edit Case, Confirmations) â”€â”€ */}
                 <Modal transparent={true} visible={isEditCaseOpen} animationType="slide">
                     <Pressable style={st.caseModalBackdrop} onPress={() => setEditCaseOpen(false)}>
                         <View style={st.caseModalSheet}>
                             <Text style={st.caseModalTitle}>Edit Case Details</Text>
-                            <Text style={st.caseModalHint}>Add or update the case description below.</Text>
-                            <TextInput style={st.caseModalInput} multiline value={caseDetails} onChangeText={setCaseDetails} placeholder="Enter case details…" placeholderTextColor="rgba(255,255,255,0.35)" />
+                            <Text style={st.caseModalHint}>Add your notes, condition, and additional context.</Text>
+                            <TextInput style={st.caseModalInput} multiline value={caseDetails.notes} onChangeText={(notes) => setCaseDetails(prev => ({ ...prev, notes }))} placeholder="Notes..." placeholderTextColor="rgba(255,255,255,0.35)" />
+                            <TextInput style={st.caseModalInputCompact} value={caseDetails.condition} onChangeText={(condition) => setCaseDetails(prev => ({ ...prev, condition }))} placeholder="Condition..." placeholderTextColor="rgba(255,255,255,0.35)" />
+                            <TextInput style={st.caseModalInput} multiline value={caseDetails.additionalInfo} onChangeText={(additionalInfo) => setCaseDetails(prev => ({ ...prev, additionalInfo }))} placeholder="Additional info..." placeholderTextColor="rgba(255,255,255,0.35)" />
+                            {caseError && <Text style={st.caseModalError}>{caseError}</Text>}
                             <View style={st.caseModalFooter}>
                                 <TouchableOpacity style={st.caseModalCancel} onPress={() => setEditCaseOpen(false)}><Text style={st.caseModalCancelText}>Cancel</Text></TouchableOpacity>
-                                <TouchableOpacity style={st.caseModalSave} onPress={handleSaveCaseDetails}><Text style={st.caseModalSaveText}>Save</Text></TouchableOpacity>
+                                <TouchableOpacity style={[st.caseModalSave, savingCaseDetails && { opacity: 0.65 }]} onPress={handleSaveCaseDetails} disabled={savingCaseDetails}><Text style={st.caseModalSaveText}>{savingCaseDetails ? 'Saving...' : 'Save'}</Text></TouchableOpacity>
                             </View>
                         </View>
                     </Pressable>
@@ -745,7 +801,14 @@ export default function ChatRoom() {
                     visible={isRespondersOpen}
                     onClose={() => setRespondersOpen(false)}
                     data={respondersList}
-                    onRemove={(id) => { setRespondersList(p => p.filter(r => r.id !== id)); setResponderRemovedOpen(true); setTimeout(() => setResponderRemovedOpen(false), 2000); }}
+                    sosUser={sosUser ? {
+                        id: sosUser.id,
+                        name: sosUser.name,
+                        avatarUri: sosUser.photoUri ?? null,
+                        role: 'USER',
+                    } : null}
+                    responderCount={respondersList.length}
+                    maxResponders={maxResponders}
                 />
 
                 <Modal transparent={true} visible={isResponderRemovedOpen} animationType="fade">
@@ -757,7 +820,7 @@ export default function ChatRoom() {
                     </View>
                 </Modal>
 
-                {/* ── Tactical Map Overlay ── */}
+                {/* â”€â”€ Tactical Map Overlay â”€â”€ */}
                 {isMapOverlayOpen && (
                     <View style={StyleSheet.absoluteFill}>
                         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
@@ -829,7 +892,7 @@ export default function ChatRoom() {
                             {/* Responders List */}
                             {!isLiveNavMode && !isReviewMode && (
                                 <View style={st.responderRow}>
-                                    {RESPONDERS.map(responder => (
+                                    {(respondersList.length ? respondersList : RESPONDERS).map(responder => (
                                         <TouchableOpacity key={responder.id} style={st.responderAvatarWrap} onPress={() => { Haptics.selectionAsync(); setSelectedResponderId(responder.id); }} activeOpacity={0.75}>
                                             <View style={[st.responderAvatarRing, responder.id === selectedResponderId && st.responderAvatarRingActive]}>
                                                 <UserAvatar uri={responder.avatarUri} size={32} style={st.responderAvatar} />
@@ -909,7 +972,7 @@ export default function ChatRoom() {
     );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const st = StyleSheet.create({
     root: { flex: 1 },
     headerOuter: { paddingHorizontal: S.s3, paddingTop: S.s2, paddingBottom: S.s2, marginBottom: 12 },
@@ -999,6 +1062,8 @@ const st = StyleSheet.create({
     caseModalTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', marginBottom: 6 },
     caseModalHint: { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 12 },
     caseModalInput: { minHeight: 100, maxHeight: 300, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', padding: 12, color: '#FFFFFF', backgroundColor: 'rgba(255,255,255,0.02)', marginBottom: 12, textAlignVertical: 'top' },
+    caseModalInputCompact: { minHeight: 48, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', padding: 12, color: '#FFFFFF', backgroundColor: 'rgba(255,255,255,0.02)', marginBottom: 12 },
+    caseModalError: { color: '#FCA5A5', fontSize: 12, fontWeight: '600', marginBottom: 12 },
     caseModalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
     caseModalCancel: { paddingHorizontal: 14, paddingVertical: 10 },
     caseModalCancelText: { color: 'rgba(255,255,255,0.7)', fontWeight: '700' },

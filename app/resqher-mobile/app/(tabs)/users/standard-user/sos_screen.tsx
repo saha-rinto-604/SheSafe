@@ -1,7 +1,7 @@
 /**
  * app/(tabs)/users/standard-user/sos_screen.tsx
  * Premium Tactical Command Center â€” SOS Screen
- * 
+ *
  * Features:
  * - Reanimated-powered heartbeat aura (double-pulse rhythm + haptic sync)
  * - Enhanced 24-rule "Encrypted Professional" map style
@@ -570,6 +570,7 @@ export default function SOSScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapView>(null);
+    const isMountedRef = useRef(true);
     const { signOut, setSosLive, isSosLive } = useAuth();
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -593,6 +594,11 @@ export default function SOSScreen() {
     const [stopConfirmMode, setStopConfirmMode] = useState<'cancel' | 'resolve'>('cancel');
     const [searchActive, setSearchActive] = useState(false);
     const [startSearchActive, setStartSearchActive] = useState(false);
+
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => { isMountedRef.current = false; };
+    }, []);
 
     // Review Popup States
     const [reviewVisible, setReviewVisible] = useState(false);
@@ -631,6 +637,10 @@ export default function SOSScreen() {
     }, []);
 
     const handleNavigation = useCallback((tabId: string) => {
+        if (tabId === activeTab && tabId === 'Home') {
+            refreshAndRecenterMap();
+            return;
+        }
         setActiveTab(tabId);
         if (tabId === 'Chat') {
             router.push('/(tabs)/users/standard-user/chat_home');
@@ -639,7 +649,7 @@ export default function SOSScreen() {
         } else if (tabId === 'Medical') {
             router.push('/(tabs)/users/standard-user/MedicalDashboard');
         }
-    }, [router]);
+    }, [activeTab, router]);
 
     // Reset active tab and restore SOS state when screen regains focus
     useFocusEffect(
@@ -679,6 +689,34 @@ export default function SOSScreen() {
     ];
 
     // Location
+    const refreshAndRecenterMap = useCallback(async () => {
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
+                incidentService.getMyIncidents().catch(() => undefined);
+                return;
+            }
+
+            const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            if (!isMountedRef.current) return;
+            const { latitude, longitude } = pos.coords;
+            setUserLoc({ latitude, longitude });
+            setLocationStatus('ready');
+            mapRef.current?.animateToRegion({ latitude, longitude, latitudeDelta: 0.009, longitudeDelta: 0.009 }, 700);
+            incidentService.getMyIncidents().catch(() => undefined);
+        } catch (err) {
+            console.warn('[SOS] Unable to refresh map location:', err);
+            if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
+        }
+    }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            refreshAndRecenterMap();
+        }, [refreshAndRecenterMap])
+    );
+
     useEffect(() => {
         (async () => {
             const { status } = await Location.requestForegroundPermissionsAsync();
@@ -816,10 +854,11 @@ export default function SOSScreen() {
     // Navigate to chat room once the cancel window expires and SOS is still active
     useEffect(() => {
         if (!isEmergencyLive || navigatedRef.current) return;
+        if (!activeIncidentId) return;
         navigatedRef.current = true;
         const lat = userLoc?.latitude;
         const lng = userLoc?.longitude;
-        const incId = activeIncidentId ?? `temp-${Date.now()}`;
+        const incId = activeIncidentId;
         // Push (not replace) so user can return to SOS screen from chat
         router.push({
             pathname: '/(tabs)/users/standard-user/chat_room',
@@ -840,15 +879,15 @@ export default function SOSScreen() {
         setHoldPhase('idle');
         setSosLive(false);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-        
+
         const incId = activeIncidentId;
         setActiveIncidentId(null);
-        
+
         import('expo-secure-store').then(SecureStore => {
             SecureStore.deleteItemAsync('resqher_active_sos_v1');
             SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
         });
-        
+
         if (incId) {
             if (!incId.startsWith('temp-') && incId !== 'sos-new') {
                 incidentService.cancelIncident(incId).catch(() => { });

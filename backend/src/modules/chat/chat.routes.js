@@ -6,8 +6,11 @@ const router = express.Router();
 
 router.use(authenticate);
 
-// GET /api/chat/active — list ACTIVE incidents (for volunteers/police)
+// GET /api/chat/active — list ACTIVE + IN_PROGRESS incidents (for volunteers/police)
 router.get('/active', controller.getActiveIncidents);
+
+// GET /api/chat/assisted — list incidents the volunteer has assisted with (history feed)
+router.get('/assisted', controller.getAssistedChats);
 
 // GET /api/chat/:incidentId/messages — load chat history
 router.get('/:incidentId/messages', controller.getMessages);

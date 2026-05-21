@@ -1,9 +1,10 @@
 import React, { memo, useCallback, useRef } from 'react';
-import { Animated, Dimensions, Platform, StyleSheet, Text, TouchableOpacity, View, ViewStyle } from 'react-native';
+import { Animated, Dimensions, Keyboard, Platform, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Path, Circle as SvgCircle, G as SvgG, Line } from 'react-native-svg';
 import { T, R } from '../constants/theme';
 
 const { width } = Dimensions.get('window');
@@ -20,13 +21,15 @@ type NavTabConfig = {
     iconActive: string;
     iconOutline: string;
     iconFamily?: 'Ionicons' | 'MaterialCommunityIcons';
+    isCustomSvg?: boolean;
+    route: string;
 };
 
 const NAV_TABS: NavTabConfig[] = [
-    { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons' },
-    { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons' },
-    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons' },
-    { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline', iconFamily: 'Ionicons' },
+    { id: 'Home', label: 'Home', iconActive: 'home', iconOutline: 'home-outline', iconFamily: 'Ionicons', route: '/(tabs)/users/volunteer' },
+    { id: 'Messages', label: 'Messages', iconActive: 'chatbubble-ellipses', iconOutline: 'chatbubble-ellipses-outline', iconFamily: 'Ionicons', route: '/(tabs)/users/volunteer/messages' },
+    { id: 'Activity', label: 'Activity', iconActive: 'time', iconOutline: 'time-outline', iconFamily: 'Ionicons', isCustomSvg: true, route: '/(tabs)/users/volunteer/activity' },
+    { id: 'Medical', label: 'Medical', iconActive: 'medkit', iconOutline: 'medkit-outline', iconFamily: 'Ionicons', route: '/(tabs)/users/volunteer/medical' },
 ];
 
 const ACTIVE_COLOR = T.violet;
@@ -49,6 +52,30 @@ const pb = StyleSheet.create({
     tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
+
+const LeaderboardIcon = ({ color }: { color: string }) => (
+    <Svg viewBox="0 0 48 48" width={24} height={24}>
+        <SvgG stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none">
+            <SvgCircle cx="24" cy="9" r="6" />
+            <Path d="M 17 40 L 8 40 C 4 40 4 36 4 27 C 4 17 12 16 24 16 C 36 16 44 17 44 27 C 44 36 44 40 40 40 L 31 40" />
+            <Line x1="16" y1="23" x2="32" y2="23" />
+            <Path d="M 16 23 C 16 35 20 37 24 37 C 28 37 32 35 32 23" />
+            <Path d="M 19 23 C 19 32 21 34 24 34 C 27 34 29 32 29 23" />
+            <Path d="M 16 26 C 11 26 11 32 16 32" />
+            <Path d="M 32 26 C 37 26 37 32 32 32" />
+            <Path d="M 22 37 C 22 41 18 41 18 41 L 18 45 L 30 45 L 30 41 C 30 41 26 41 26 37" />
+            <Line x1="15" y1="45" x2="33" y2="45" />
+            <SvgCircle cx="10" cy="36" r="3.5" />
+            <Path d="M 10 34 L 10 36 L 12 36" />
+            <SvgCircle cx="35" cy="33" r="1" fill={color} stroke="none" />
+            <SvgCircle cx="35" cy="36.5" r="1" fill={color} stroke="none" />
+            <SvgCircle cx="35" cy="40" r="1" fill={color} stroke="none" />
+            <Line x1="38" y1="33" x2="42" y2="33" />
+            <Line x1="38" y1="36.5" x2="42" y2="36.5" />
+            <Line x1="38" y1="40" x2="42" y2="40" />
+        </SvgG>
+    </Svg>
+);
 
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
@@ -76,11 +103,15 @@ const NavTab = memo(function NavTab({
         >
             <Animated.View style={[s.navTabInner, { transform: [{ scale }] }]}>
                 <View style={[s.navIconBox, isActive && s.navIconBoxActive]}>
-                    <Icon
-                        name={(isActive ? tab.iconActive : tab.iconOutline) as any}
-                        size={20}
-                        color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
-                    />
+                    {tab.isCustomSvg ? (
+                        <LeaderboardIcon color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR} />
+                    ) : (
+                        <Icon
+                            name={(isActive ? tab.iconActive : tab.iconOutline) as any}
+                            size={20}
+                            color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
+                        />
+                    )}
                 </View>
                 <View style={[s.navUnderline, { backgroundColor: isActive ? ACTIVE_COLOR : 'transparent' }]} />
             </Animated.View>
@@ -88,10 +119,23 @@ const NavTab = memo(function NavTab({
     );
 });
 
-export default function VolunteerBottomNav({ activeTab }: { activeTab: VolunteerNavTabId }) {
+export default function VolunteerNavbar({ activeTab, onActiveTabPress }: { activeTab: VolunteerNavTabId; onActiveTabPress?: () => void }) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const navBottom = Math.max(insets.bottom, 0) + VOLUNTEER_NAV_BOTTOM_OFFSET;
+    const navigationGuardRef = useRef(false);
+
+    const navigateSafely = useCallback((path: string, tabId: VolunteerNavTabId) => {
+        if (tabId === activeTab) {
+            onActiveTabPress?.();
+            return;
+        }
+        if (navigationGuardRef.current) return;
+        navigationGuardRef.current = true;
+        Keyboard.dismiss();
+        router.push(path as any);
+        setTimeout(() => { navigationGuardRef.current = false; }, 800);
+    }, [activeTab, onActiveTabPress, router]);
 
     return (
         <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
@@ -101,17 +145,7 @@ export default function VolunteerBottomNav({ activeTab }: { activeTab: Volunteer
                         key={tab.id}
                         tab={tab}
                         isActive={tab.id === activeTab}
-                        onPress={() => {
-                            if (tab.id === 'Home') {
-                                router.push('/(tabs)/users/volunteer');
-                            } else if (tab.id === 'Messages') {
-                                router.push('/(tabs)/users/volunteer/messages');
-                            } else if (tab.id === 'Activity') {
-                                router.push('/(tabs)/users/volunteer/activity');
-                            } else if (tab.id === 'Medical') {
-                                router.push('/(tabs)/users/volunteer/medical');
-                            }
-                        }}
+                        onPress={() => navigateSafely(tab.route, tab.id)}
                     />
                 ))}
             </PremiumBar>
