@@ -18,6 +18,7 @@
 
 const express = require('express');
 const cors = require('cors');
+const env = require('./config/env');
 
 // ── Route modules ────────────────────────────────────────────────────────────
 const authRoutes            = require('./modules/auth/auth.routes');
@@ -36,13 +37,42 @@ const userChatRoutes        = require('./modules/users/user-chat.routes');
 const app = express();
 
 // ── Global middleware ────────────────────────────────────────────────────────
-app.use(cors());
+if (env.trustProxy) {
+  app.set('trust proxy', 1);
+}
+
+const allowAllCorsOrigins = env.corsOrigins.includes('*');
+const corsOptions = {
+  // Public tunnel testing can use CORS_ORIGIN=*. Production should restrict this
+  // to the deployed app origins or the current testing tunnel.
+  origin: allowAllCorsOrigins
+    ? '*'
+    : (origin, callback) => {
+        if (!origin || env.corsOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(null, false);
+      },
+  credentials: !allowAllCorsOrigins,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning'],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increased for Base64 payloads if needed
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ ok: true, message: 'Backend is running' });
+  const requestBaseUrl = `${req.protocol}://${req.get('host')}`;
+  res.status(200).json({
+    ok: true,
+    status: 'healthy',
+    service: 'resqher-backend',
+    baseUrl: env.baseUrl || requestBaseUrl,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // ── API routes ───────────────────────────────────────────────────────────────
@@ -67,12 +97,13 @@ app.use((req, res) => {
 // ── Global error handler ─────────────────────────────────────────────────────
 app.use((error, req, res, next) => {
   const status = error.status || 500;
-  const message = error.message || 'Internal server error';
-  console.error(`[ERROR] ${status} ${req.method} ${req.path}:`, message);
+  const isServerError = status >= 500;
+  const message = isServerError ? 'Internal server error' : (error.message || 'Request failed');
+  console.error(`[ERROR] ${status} ${req.method} ${req.path}:`, error.message || message);
   res.status(status).json({
     message,
-    ...(error.code ? { code: error.code } : {}),
-    ...(error.maxResponders ? { maxResponders: error.maxResponders } : {}),
+    ...(!isServerError && error.code ? { code: error.code } : {}),
+    ...(!isServerError && error.maxResponders ? { maxResponders: error.maxResponders } : {}),
   });
 });
 

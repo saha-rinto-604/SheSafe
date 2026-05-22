@@ -25,7 +25,10 @@ export interface Participant {
 export interface IncidentLocation {
     latitude: number;
     longitude: number;
+    heading?: number | null;
     updatedAt: string;
+    userId?: string;
+    role?: Role | 'standard_user' | 'volunteer' | string;
 }
 
 export interface Message {

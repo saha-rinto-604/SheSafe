@@ -4,6 +4,7 @@ export type LatLng = {
 };
 
 export type RouteSafetyZone = LatLng & {
+  id?: string | number;
   radius?: number;
   name?: string;
   incidentCount?: number;
@@ -20,6 +21,10 @@ export type RouteSafetyResult = {
   redHits: number;
   yellowHits: number;
   sampledPoints: number;
+};
+
+export type RouteSafetyOptions = {
+  ignoreStartingRedZoneUntilExit?: boolean;
 };
 
 const EARTH_RADIUS_M = 6_371_000;
@@ -57,16 +62,49 @@ function getZoneRadius(zone: RouteSafetyZone): number {
   return Number.isFinite(radius) && radius > 0 ? radius : DEFAULT_ZONE_RADIUS_M;
 }
 
-function evaluatePoint(point: LatLng, zones: RouteSafetyZone[], result: RouteSafetyResult) {
+function pointInsideZone(point: LatLng, zone: RouteSafetyZone): boolean {
+  return haversineDistance(point, zone) <= getZoneRadius(zone);
+}
+
+function getZoneKey(zone: RouteSafetyZone, index: number): string {
+  return String(zone.id ?? `${index}:${zone.latitude}:${zone.longitude}:${getZoneIncidentCount(zone)}`);
+}
+
+type PreparedZone = {
+  key: string;
+  zone: RouteSafetyZone;
+};
+
+type StartingRedZoneState = {
+  startingKeys: Set<string>;
+  exitedKeys: Set<string>;
+};
+
+function evaluatePoint(
+  point: LatLng,
+  zones: PreparedZone[],
+  result: RouteSafetyResult,
+  startingRedZoneState?: StartingRedZoneState,
+) {
   result.sampledPoints += 1;
 
-  for (const zone of zones) {
+  for (const { key, zone } of zones) {
     const incidentCount = getZoneIncidentCount(zone);
     if (incidentCount < 1) continue;
 
-    if (haversineDistance(point, zone) > getZoneRadius(zone)) continue;
+    const isInsideZone = pointInsideZone(point, zone);
+    if (!isInsideZone) {
+      if (startingRedZoneState?.startingKeys.has(key)) {
+        startingRedZoneState.exitedKeys.add(key);
+      }
+      continue;
+    }
 
     if (incidentCount >= 5) {
+      const isStartingRedZone = startingRedZoneState?.startingKeys.has(key);
+      const hasExitedStartingZone = startingRedZoneState?.exitedKeys.has(key);
+      if (isStartingRedZone && !hasExitedStartingZone) continue;
+
       result.riskScore += RED_ZONE_PENALTY;
       result.redHits += 1;
       if (!result.isUnsafe) {
@@ -83,6 +121,7 @@ function evaluatePoint(point: LatLng, zones: RouteSafetyZone[], result: RouteSaf
 export function evaluateRouteSafety(
   coordinates: LatLng[],
   zones: RouteSafetyZone[],
+  options: RouteSafetyOptions = {},
 ): RouteSafetyResult {
   const result: RouteSafetyResult = {
     isUnsafe: false,
@@ -93,17 +132,30 @@ export function evaluateRouteSafety(
   };
   if (coordinates.length === 0 || zones.length === 0) return result;
 
-  const usableZones = zones.filter((zone) =>
-    Number.isFinite(Number(zone.latitude)) &&
-    Number.isFinite(Number(zone.longitude)) &&
-    getZoneIncidentCount(zone) >= 1
-  );
+  const usableZones = zones
+    .map((zone, index) => ({ key: getZoneKey(zone, index), zone }))
+    .filter(({ zone }) =>
+      Number.isFinite(Number(zone.latitude)) &&
+      Number.isFinite(Number(zone.longitude)) &&
+      getZoneIncidentCount(zone) >= 1
+    );
   if (usableZones.length === 0) return result;
+
+  const startingRedZoneState: StartingRedZoneState | undefined = options.ignoreStartingRedZoneUntilExit
+    ? {
+      startingKeys: new Set(
+        usableZones
+          .filter(({ zone }) => getZoneIncidentCount(zone) >= 5 && pointInsideZone(coordinates[0], zone))
+          .map(({ key }) => key)
+      ),
+      exitedKeys: new Set(),
+    }
+    : undefined;
 
   for (let i = 0; i < coordinates.length - 1; i += 1) {
     const p1 = coordinates[i];
     const p2 = coordinates[i + 1];
-    evaluatePoint(p1, usableZones, result);
+    evaluatePoint(p1, usableZones, result, startingRedZoneState);
 
     const segmentDistance = haversineDistance(p1, p2);
     const steps = Math.ceil(segmentDistance / SEGMENT_SAMPLE_INTERVAL_M);
@@ -112,10 +164,10 @@ export function evaluateRouteSafety(
       evaluatePoint({
         latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
         longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction,
-      }, usableZones, result);
+      }, usableZones, result, startingRedZoneState);
     }
   }
 
-  evaluatePoint(coordinates[coordinates.length - 1], usableZones, result);
+  evaluatePoint(coordinates[coordinates.length - 1], usableZones, result, startingRedZoneState);
   return result;
 }

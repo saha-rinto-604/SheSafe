@@ -1,8 +1,10 @@
 const { WebSocketServer } = require('ws');
 const { URL } = require('url');
 const jwt = require('jsonwebtoken');
-const { jwt: jwtConfig } = require('../config/env');
+const env = require('../config/env');
 const chatService = require('../modules/chat/chat.service');
+const locationService = require('../modules/locations/location.service');
+const { jwt: jwtConfig } = env;
 
 // ── Room Management ─────────────────────────────────────────────────────────
 // rooms: Map<incidentId(string), Set<{ ws, userId, userInfo }>>
@@ -19,6 +21,21 @@ function getRoomId(pathname) {
 
 function isDispatchPath(pathname) {
   return /^\/ws\/dispatch\/?$/.test(pathname);
+}
+
+function firstHeaderValue(value) {
+  if (Array.isArray(value)) return value[0];
+  if (!value) return '';
+  return String(value).split(',')[0].trim();
+}
+
+function getRequestBaseUrl(req) {
+  if (env.baseUrl) return env.baseUrl;
+  const forwardedProto = firstHeaderValue(req.headers['x-forwarded-proto']);
+  const forwardedHost = firstHeaderValue(req.headers['x-forwarded-host']);
+  const protocol = forwardedProto || (req.socket.encrypted ? 'https' : 'http');
+  const host = forwardedHost || req.headers.host || 'resqher.local';
+  return `${protocol}://${host}`;
 }
 
 function broadcast(incidentId, event, exceptWs = null) {
@@ -159,13 +176,20 @@ function notifyMessageNew(incidentId, message) {
   });
 }
 
+function normalizeSocketRole(role) {
+  const value = String(role || '').toLowerCase();
+  if (value === 'volunteer') return 'VOLUNTEER';
+  if (value === 'law_enforcement') return 'POLICE';
+  return 'USER';
+}
+
 // ── WebSocket Server ────────────────────────────────────────────────────────
 
 function attach(server) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
-    const baseUrl = `http://${req.headers.host}`;
+    const baseUrl = getRequestBaseUrl(req);
     let parsed;
     try {
       parsed = new URL(req.url, baseUrl);
@@ -281,8 +305,28 @@ function attach(server) {
       }
 
       if (data.type === 'incident.location.update') {
-        const loc = data.payload;
-        broadcast(incidentId, { type: 'incident.location.updated', payload: loc }, ws);
+        const loc = data.payload || {};
+        const latitude = Number(loc.latitude);
+        const longitude = Number(loc.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+        try {
+          await locationService.save(userId, { latitude, longitude, address: loc.address });
+        } catch (err) {
+          console.error('[WS Chat] Failed to save live location:', err.message);
+        }
+
+        broadcast(incidentId, {
+          type: 'incident.location.updated',
+          payload: {
+            latitude,
+            longitude,
+            heading: Number.isFinite(Number(loc.heading)) ? Number(loc.heading) : null,
+            updatedAt: new Date().toISOString(),
+            userId: String(userId),
+            role: normalizeSocketRole(userPayload.role),
+          },
+        }, ws);
       }
     });
 

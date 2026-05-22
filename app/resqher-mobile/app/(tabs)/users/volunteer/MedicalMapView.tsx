@@ -38,6 +38,12 @@ import {
     SPECIALIST_CHIPS, GENERIC_CHIPS,
 } from '../../../../src/data/medicalMockData';
 import type { MedicalCategory, ShiftFilter, QuickChip } from '../../../../src/types/medical';
+import {
+    getForwardRouteProgress,
+    OFF_ROUTE_THRESHOLD_M,
+    REROUTE_DELAY_MS,
+    REROUTE_THROTTLE_MS,
+} from '../../../../src/utils/routeRealtime';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -329,6 +335,8 @@ export default function MedicalMapView() {
     const routeRequestIdRef = useRef(0);
     const mountedRef = useRef(true);
     const lastRerouteOriginRef = useRef<LatLng | null>(null);
+    const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRerouteAtRef = useRef(0);
     const routeOverlaySlideY = useRef(new RNAnimated.Value(0)).current;
 
     // ── Live Nav & Review Mode States ──
@@ -345,6 +353,10 @@ export default function MedicalMapView() {
             Speech.stop();
             locationSubRef.current?.remove();
             locationSubRef.current = null;
+            if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
         };
     }, []);
 
@@ -365,6 +377,11 @@ export default function MedicalMapView() {
         setIsReviewMode(false);
         setIsRouting(false);
         lastRerouteOriginRef.current = null;
+        if (offRouteTimerRef.current) {
+            clearTimeout(offRouteTimerRef.current);
+            offRouteTimerRef.current = null;
+        }
+        lastRerouteAtRef.current = 0;
         if (!options?.keepProvider) {
             setSelectedPin(null);
             setShowCallout(false);
@@ -796,7 +813,7 @@ export default function MedicalMapView() {
     }, [getDistanceKm, selectedProvider]);
 
     // ── Book Now → Route Preview ──────────────────────────────────────────────
-    const handleDirections = useCallback(() => {
+    const handleDirections = useCallback(async () => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
@@ -804,6 +821,21 @@ export default function MedicalMapView() {
             latitude: selectedProvider.latitude,
             longitude: selectedProvider.longitude,
         };
+        let origin: { latitude: number; longitude: number; heading?: number } = userLoc ?? KHILKHET_ORIGIN;
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status === 'granted') {
+                const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
+                origin = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    heading: position.coords.heading ?? undefined,
+                };
+                if (mountedRef.current) setUserLoc(origin);
+            }
+        } catch (err) {
+            console.warn('[MedicalMapView] Unable to refresh route origin:', err);
+        }
 
         clearRouteState({ keepProvider: true });
         hideCalloutKeepRoute();
@@ -818,8 +850,8 @@ export default function MedicalMapView() {
             friction: 12,
         }).start();
 
-        buildLiveRoute(KHILKHET_ORIGIN, destination, true);
-    }, [buildLiveRoute, clearRouteState, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY]);
+        buildLiveRoute(origin, destination, true);
+    }, [buildLiveRoute, clearRouteState, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY, userLoc]);
 
     const handleCallHotline = useCallback(async () => {
         if (!selectedProvider?.hotline) return;
@@ -892,26 +924,31 @@ export default function MedicalMapView() {
             }
         }
 
-        // Progress polyline update
         if (safeRoute && safeRoute.length > 0) {
-            let closestIdx = 0;
-            let minD = Infinity;
-            safeRoute.forEach((pt, i) => {
-                const d = haversineDistance(userLoc, pt);
-                if (d < minD) { minD = d; closestIdx = i; }
-            });
-            setCompletedRouteCoords(safeRoute.slice(0, closestIdx + 1));
-            setRemainingRouteCoords(safeRoute.slice(closestIdx));
+            const progress = getForwardRouteProgress(userLoc, safeRoute);
+            setCompletedRouteCoords(progress.completedRouteCoords);
+            setRemainingRouteCoords(progress.remainingRouteCoords);
+
+            if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
+                if (!offRouteTimerRef.current) {
+                    offRouteTimerRef.current = setTimeout(() => {
+                        offRouteTimerRef.current = null;
+                        if (!mountedRef.current || !isLiveNav || !userLoc || !selectedProvider) return;
+                        const now = Date.now();
+                        if (now - lastRerouteAtRef.current < REROUTE_THROTTLE_MS) return;
+                        lastRerouteAtRef.current = now;
+                        buildLiveRoute(
+                            { latitude: userLoc.latitude, longitude: userLoc.longitude },
+                            { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
+                            false,
+                        );
+                    }, REROUTE_DELAY_MS);
+                }
+            } else if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
         }
-
-        const lastOrigin = lastRerouteOriginRef.current;
-        if (lastOrigin && haversineDistance(lastOrigin, userLoc) < 50) return;
-
-        buildLiveRoute(
-            { latitude: userLoc.latitude, longitude: userLoc.longitude },
-            { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
-            false,
-        );
     }, [
         buildLiveRoute,
         currentStepIdx,
@@ -991,25 +1028,27 @@ export default function MedicalMapView() {
                     {/* User Origin Marker */}
                     <Marker
                         coordinate={KHILKHET_ORIGIN}
-                        anchor={{ x: 0.5, y: 0.5 }}
+                        pinColor={T.violet}
+                        title="You"
+                        description="Current location"
                         zIndex={998}
-                    >
-                        <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: T.violet, borderWidth: 2, borderColor: '#fff' }} />
-                    </Marker>
+                    />
 
                     {/* Live User Marker */}
                     {isLiveNav && userLoc && (
                         <Marker
                             coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
-                            anchor={{ x: 0.5, y: 0.5 }}
+                            pinColor={T.violet}
+                            title="You"
+                            description="Current location"
                             zIndex={1000}
-                        >
-                            <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#3B82F6', borderWidth: 2, borderColor: '#fff' }} />
-                        </Marker>
+                        />
                     )}
 
                     {/* Provider Pins */}
-                    {providers.map(p => (
+                    {providers
+                        .filter(p => !((showRouteOverview || isLiveNav) && selectedProvider?.id === p.id))
+                        .map(p => (
                         <Marker
                             key={p.id}
                             coordinate={{ latitude: p.latitude, longitude: p.longitude }}
@@ -1036,6 +1075,16 @@ export default function MedicalMapView() {
                             </View>
                         </Marker>
                     ))}
+
+                    {(showRouteOverview || isLiveNav) && selectedProvider && (
+                        <Marker
+                            coordinate={{ latitude: selectedProvider.latitude, longitude: selectedProvider.longitude }}
+                            pinColor={T.violet}
+                            title={selectedProvider.name}
+                            description={selectedProvider.address || 'Route destination'}
+                            zIndex={999}
+                        />
+                    )}
 
                     {/* Safe Route Polyline — Auto-triggered on pin select */}
                     {/* Completed route (blue) */}

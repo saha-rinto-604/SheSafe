@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { getAccessToken } from '../services/api';
+import { getAccessToken, getWebSocketUrl } from '../services/api';
 import type { NearbyIncident } from '../services/incidentService';
-
-const WS_BASE = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000')
-    .replace(/^http/, 'ws')
-    .replace(/\/+$/, '');
 
 type DispatchEvent =
     | { type: 'dispatch.connected'; payload: { userId: string } }
@@ -34,7 +30,7 @@ export function useDispatchSocket({ onNewSos, onAccepted, onClaimed }: Handlers)
     const connect = useCallback(async () => {
         try {
             const token = await getAccessToken();
-            const ws = new WebSocket(`${WS_BASE}/ws/dispatch/?token=${token || ''}`);
+            const ws = new WebSocket(getWebSocketUrl(`/ws/dispatch/?token=${encodeURIComponent(token || '')}`));
             wsRef.current = ws;
 
             ws.onopen = () => {

@@ -7,13 +7,10 @@ import { AppState } from 'react-native';
 import { chatService } from '../services/chatService';
 import { chatStore } from '../services/chatStore';
 import { notificationStore } from '../services/notificationStore';
-import { getAccessToken } from '../services/api';
+import api, { getAccessToken, getWebSocketUrl } from '../services/api';
 import type { Message, Participant, IncidentLocation } from '../types/chat';
 
 const POLL_INTERVAL_MS = 5000;
-const WS_BASE = (process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000')
-    .replace(/^http/, 'ws')
-    .replace(/\/+$/, '');
 
 type WSEvent =
     | { type: 'chat.message.new'; payload: Message }
@@ -53,8 +50,10 @@ interface UseChatSocketReturn {
     messages: Message[];
     participants: Participant[];
     victimLocation: IncidentLocation | null;
+    liveLocation: IncidentLocation | null;
     isConnected: boolean;
     sendMessage: (content: string, type?: 'TEXT' | 'IMAGE' | 'AUDIO') => Promise<void>;
+    sendLocationUpdate: (location: { latitude: number; longitude: number; heading?: number | null }) => Promise<void>;
     refreshMessages: () => Promise<void>;
 }
 
@@ -67,6 +66,7 @@ export function useChatSocket(
     const [messages, setMessages] = useState<Message[]>([]);
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [victimLocation, setVictimLocation] = useState<IncidentLocation | null>(null);
+    const [liveLocation, setLiveLocation] = useState<IncidentLocation | null>(null);
     const [isConnected, setIsConnected] = useState(false);
 
     const wsRef = useRef<WebSocket | null>(null);
@@ -105,7 +105,7 @@ export function useChatSocket(
     const connectWS = useCallback(async () => {
         try {
             const token = await getAccessToken();
-            const url = `${WS_BASE}/ws/chat/${incidentId}/?token=${token || ''}`;
+            const url = getWebSocketUrl(`/ws/chat/${incidentId}/?token=${encodeURIComponent(token || '')}`);
             const ws = new WebSocket(url);
 
             ws.onopen = () => {
@@ -179,7 +179,8 @@ export function useChatSocket(
                             setParticipants(data.payload);
                             break;
                         case 'incident.location.updated':
-                            setVictimLocation(data.payload);
+                            setLiveLocation({ ...data.payload });
+                            setVictimLocation({ ...data.payload });
                             break;
                     }
                 } catch { /* malformed message, ignore */ }
@@ -252,6 +253,34 @@ export function useChatSocket(
     }, [incidentId]);
 
     // ── Lifecycle ──
+    const sendLocationUpdate = useCallback(async (location: { latitude: number; longitude: number; heading?: number | null }) => {
+        const payload: IncidentLocation = {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            heading: location.heading ?? null,
+            updatedAt: new Date().toISOString(),
+            userId: selfIdRef.current,
+            role: selfRoleRef.current,
+        };
+
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+                type: 'incident.location.update',
+                payload,
+            }));
+            return;
+        }
+
+        try {
+            await api.post('/api/locations', {
+                latitude: payload.latitude,
+                longitude: payload.longitude,
+            });
+        } catch {
+            // Polling fallback will keep the map usable if this save fails.
+        }
+    }, []);
+
     useEffect(() => {
         mountedRef.current = true;
 
@@ -282,5 +311,5 @@ export function useChatSocket(
         };
     }, [incidentId]);
 
-    return { messages, participants, victimLocation, isConnected, sendMessage, refreshMessages };
+    return { messages, participants, victimLocation, liveLocation, isConnected, sendMessage, sendLocationUpdate, refreshMessages };
 }

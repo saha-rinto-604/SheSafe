@@ -17,23 +17,59 @@ const DB_ROLE_MAP: Record<string, string> = {
 };
 
 function normalizeBaseUrl(url: string) {
-  // allow user to pass either with or without trailing slash
   return url.replace(/\/+$/, '');
 }
 
-// Prefer EXPO_PUBLIC_API_URL, fallback to a placeholder for LAN testing.
-const BASE_URL = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:8000');
+function requireApiBaseUrl() {
+  const raw = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (!raw) {
+    throw new Error('Missing EXPO_PUBLIC_API_URL. Set it in app/resqher-mobile/.env before starting Expo.');
+  }
 
-if (__DEV__ && /\/\/(127\.0\.0\.1|localhost)(?::|\/|$)/i.test(BASE_URL)) {
-  console.warn(
-    `[API] EXPO_PUBLIC_API_URL is ${BASE_URL}. Use your backend LAN IP when testing on a physical phone.`
-  );
+  const normalized = normalizeBaseUrl(raw);
+  if (!/^https?:\/\//i.test(normalized)) {
+    throw new Error('EXPO_PUBLIC_API_URL must start with http:// or https://.');
+  }
+
+  return normalized;
+}
+
+function toWebSocketBaseUrl(apiBaseUrl: string) {
+  if (apiBaseUrl.startsWith('https://')) {
+    return apiBaseUrl.replace(/^https:\/\//, 'wss://');
+  }
+  return apiBaseUrl.replace(/^http:\/\//, 'ws://');
+}
+
+export const API_BASE_URL = requireApiBaseUrl();
+export const WS_BASE_URL = toWebSocketBaseUrl(API_BASE_URL);
+export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning';
+
+export function getWebSocketUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${WS_BASE_URL}${normalizedPath}`;
+}
+
+function redactForLog(data: unknown) {
+  if (!data) return '';
+  if (typeof FormData !== 'undefined' && data instanceof FormData) return '[form-data]';
+
+  try {
+    return JSON.stringify(data, (key, value) => (
+      /password|token|secret|otp/i.test(key) ? '[redacted]' : value
+    )).substring(0, 120);
+  } catch {
+    return '[unserializable body]';
+  }
 }
 
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: API_BASE_URL,
   timeout: 15000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    [NGROK_SKIP_BROWSER_WARNING_HEADER]: 'true',
+  },
 });
 
 export async function setTokens(access: string, refresh: string) {
@@ -72,10 +108,11 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
 
 // Attach token automatically + debug logger
 api.interceptors.request.use(async (config) => {
-  console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, config.data ? JSON.stringify(config.data).substring(0, 120) : '');
+  console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, redactForLog(config.data));
+  config.headers = config.headers ?? {};
+  config.headers[NGROK_SKIP_BROWSER_WARNING_HEADER] = 'true';
   const token = await getAccessToken();
   if (token) {
-    config.headers = config.headers ?? {};
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;

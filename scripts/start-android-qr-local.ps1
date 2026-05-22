@@ -6,11 +6,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$UseNgrok = $true
-$PublicApiUrl = "https://citric-scuba-duh.ngrok-free.dev"
-$UseExpoTunnel = $true
-$StartBackend = $true
-
 $scriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot      = Resolve-Path (Join-Path $scriptDir "..")
 $mobileDir     = Join-Path $repoRoot "app/resqher-mobile"
@@ -41,13 +36,12 @@ function Get-LanIp {
   try {
     # Use ipconfig instead of Get-NetIPConfiguration (which can hang on some Windows configs)
     $output = ipconfig 2>$null
-    $loopback = [System.Net.IPAddress]::Loopback.ToString()
     $ip = $output | Select-String 'IPv4 Address' | ForEach-Object {
       if ($_ -match ':\s*(\d+\.\d+\.\d+\.\d+)') { $matches[1] }
-    } | Where-Object { $_ -ne $loopback } | Select-Object -First 1
+    } | Where-Object { $_ -ne '127.0.0.1' } | Select-Object -First 1
     if ($ip) { return $ip }
   } catch {}
-  throw "Could not detect a LAN IPv4 address. Use NGROK mode or connect this machine to the same Wi-Fi as the phone."
+  return '127.0.0.1'
 }
 
 function Clear-MobileCache {
@@ -88,11 +82,6 @@ function Update-ExpoApiEnv {
   Write-Host "  $line"
 }
 
-function Normalize-ApiUrl {
-  param([string]$ApiUrl)
-  return $ApiUrl.Trim().TrimEnd('/')
-}
-
 function Wait-ForBackend {
   param([string]$Url, [int]$Timeout = 30)
   $deadline = (Get-Date).AddSeconds($Timeout)
@@ -106,16 +95,6 @@ function Wait-ForBackend {
   return $false
 }
 
-function Write-HealthFailureHelp {
-  param([string]$Mode, [string]$Url)
-  Write-Warning "  Backend health check failed for $Mode mode: $Url"
-  Write-Warning "  Check these common causes:"
-  Write-Warning "    1. backend not running on port $BackendPort"
-  Write-Warning "    2. ngrok terminal closed"
-  Write-Warning "    3. ngrok URL changed"
-  Write-Warning "    4. backend crashed"
-}
-
 # ===========================================================================
 # MAIN
 # ===========================================================================
@@ -126,12 +105,8 @@ Write-Host "Repo: $repoRoot"
 Write-Host ""
 
 # 1. Free ports
-Write-Host "[1/7] Preparing ports $BackendPort and $MetroPort..." -ForegroundColor Yellow
-if ($StartBackend) {
-  Stop-PortProcess -Port $BackendPort
-} else {
-  Write-Host "  Leaving backend port $BackendPort alone (StartBackend is false)."
-}
+Write-Host "[1/7] Freeing ports $BackendPort and $MetroPort..." -ForegroundColor Yellow
+Stop-PortProcess -Port $BackendPort
 Stop-PortProcess -Port $MetroPort
 
 # 2. Clear Expo cache
@@ -139,28 +114,12 @@ Write-Host ""
 Write-Host "[2/7] Clearing Expo/Metro cache..." -ForegroundColor Yellow
 Clear-MobileCache -MobilePath $mobileDir
 
-# 3. Select API mode and update .env
+# 3. Detect LAN IP and update .env
 Write-Host ""
-Write-Host "[3/7] Selecting API mode..." -ForegroundColor Yellow
-if ($UseNgrok) {
-  $apiMode = "NGROK"
-  $apiUrl = Normalize-ApiUrl -ApiUrl $PublicApiUrl
-  if (-not $apiUrl) {
-    throw "PublicApiUrl is required when UseNgrok is true."
-  }
-  if (-not $apiUrl.StartsWith("https://")) {
-    Write-Warning "  NGROK mode should use the forwarding HTTPS URL, for example https://example.ngrok-free.dev"
-  }
-} else {
-  $apiMode = "LAN"
-  $lanIp  = Get-LanIp
-  $apiUrl = "http://" + $lanIp + ":" + $BackendPort
-  Write-Host "  LAN IP : $lanIp"
-}
-Write-Host "  API Mode: $apiMode"
-Write-Host "  API URL : $apiUrl"
-$expoMode = if ($UseExpoTunnel) { "TUNNEL" } else { "LAN" }
-Write-Host "  Expo Mode: $expoMode"
+Write-Host "[3/7] Detecting LAN IP..." -ForegroundColor Yellow
+$lanIp  = Get-LanIp
+$apiUrl = "http://" + $lanIp + ":" + $BackendPort
+Write-Host "  LAN IP : $lanIp"
 Update-ExpoApiEnv -EnvPath $mobileEnvPath -ApiUrl $apiUrl
 
 # 4. Run database migrations
@@ -186,13 +145,9 @@ if ($SkipMigrations) {
 
 # 5. Start backend in a new terminal
 Write-Host ""
-if ($StartBackend) {
-  Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
-  $backendCmd = "Write-Host 'ResQher Backend - port $BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
-  Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
-} else {
-  Write-Host "[5/7] Using already-running backend on port $BackendPort." -ForegroundColor Yellow
-}
+Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
+$backendCmd = "Write-Host 'ResQher Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
 
 # 6. Wait for backend health
 $healthUrl = $apiUrl + "/api/health"
@@ -200,7 +155,7 @@ Write-Host "  Waiting for $healthUrl ..."
 if (Wait-ForBackend -Url $healthUrl -Timeout 30) {
   Write-Host "  Backend is up." -ForegroundColor Green
 } else {
-  Write-HealthFailureHelp -Mode $apiMode -Url $healthUrl
+  Write-Warning "  Backend did not respond in 30s - check the backend terminal for errors."
 }
 
 # 7. Fix Expo packages then start
@@ -212,10 +167,5 @@ npx expo install --fix
 Write-Host ""
 Write-Host "[7/7] Starting Expo - scan the QR code on your Android device." -ForegroundColor Cyan
 Write-Host "  Backend API : $apiUrl" -ForegroundColor DarkGray
-Write-Host "  Expo Mode   : $expoMode" -ForegroundColor DarkGray
 Write-Host ""
-if ($UseExpoTunnel) {
-  npx expo start --tunnel --clear
-} else {
-  npx expo start --clear
-}
+npx expo start --clear

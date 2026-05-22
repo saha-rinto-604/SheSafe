@@ -36,6 +36,12 @@ import { useDispatchSocket } from '../../../../src/hooks/useDispatchSocket';
 import { loadVerificationRecord, type VerificationRecord } from '../standard-user/volunteer-verification';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { evaluateRouteSafety, haversineDistance, type LatLng } from '../../../../src/utils/routeSafety';
+import {
+    getForwardRouteProgress,
+    OFF_ROUTE_THRESHOLD_M,
+    REROUTE_DELAY_MS,
+    REROUTE_THROTTLE_MS,
+} from '../../../../src/utils/routeRealtime';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -758,6 +764,8 @@ export default function VolunteerHome() {
     const routeRequestIdRef = useRef(0);
     const safePathRequestIdRef = useRef(0);
     const navigationGuardRef = useRef(false);
+    const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRerouteAtRef = useRef(0);
     const volunteerSosCreateSeqRef = useRef(0);
 
     const navigateSafely = useCallback((path: string, replace = false) => {
@@ -769,6 +777,10 @@ export default function VolunteerHome() {
         safePathRequestIdRef.current += 1;
         locationSubRef.current?.remove();
         locationSubRef.current = null;
+        if (offRouteTimerRef.current) {
+            clearTimeout(offRouteTimerRef.current);
+            offRouteTimerRef.current = null;
+        }
         setIsLiveNav(false);
         setAudioEnabled(false);
         setSearchActive(false);
@@ -839,6 +851,11 @@ export default function VolunteerHome() {
         setUnsafeRouteCoords([]);
         setShowSafePlace(false);
         setSafePlaceCoords([]);
+        if (offRouteTimerRef.current) {
+            clearTimeout(offRouteTimerRef.current);
+            offRouteTimerRef.current = null;
+        }
+        lastRerouteAtRef.current = 0;
         Speech.stop();
     }, []);
 
@@ -869,6 +886,10 @@ export default function VolunteerHome() {
         return () => {
             isMountedRef.current = false;
             clearInterval(interval);
+            if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
             safePathRequestIdRef.current += 1;
             routeRequestIdRef.current += 1;
         };
@@ -1369,16 +1390,35 @@ export default function VolunteerHome() {
 
         // Progress polyline update
         if (routeCoords.length > 0) {
-            let closestIdx = 0;
-            let minD = Infinity;
-            routeCoords.forEach((pt, i) => {
-                const d = haversineDistance(userLoc, pt);
-                if (d < minD) { minD = d; closestIdx = i; }
-            });
-            setCompletedRouteCoords(routeCoords.slice(0, closestIdx + 1));
-            setRemainingRouteCoords(routeCoords.slice(closestIdx));
+            const progress = getForwardRouteProgress(userLoc, routeCoords);
+            setCompletedRouteCoords(progress.completedRouteCoords);
+            setRemainingRouteCoords(progress.remainingRouteCoords);
+
+            if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
+                if (!offRouteTimerRef.current) {
+                    offRouteTimerRef.current = setTimeout(() => {
+                        offRouteTimerRef.current = null;
+                        if (!isMountedRef.current || !isLiveNav || !userLoc || !endLocation) return;
+                        const now = Date.now();
+                        if (now - lastRerouteAtRef.current < REROUTE_THROTTLE_MS) return;
+                        lastRerouteAtRef.current = now;
+                        setStartLocation({
+                            id: 'live-reroute-start',
+                            name: 'Current location',
+                            address: 'Live GPS position',
+                            latitude: userLoc.latitude,
+                            longitude: userLoc.longitude,
+                        });
+                        setCompletedRouteCoords([]);
+                        setRemainingRouteCoords([]);
+                    }, REROUTE_DELAY_MS);
+                }
+            } else if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
         }
-    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav, routeCoords]);
+    }, [userLoc, directionsMode, navInstructions, currentStepIdx, isLiveNav, routeCoords, endLocation]);
 
     // ── Decoupled Audio Alert Engine: Standalone thread — always stops previous utterance first ──
     const lastSpokenStepRef = useRef<number>(-1);
@@ -1564,6 +1604,16 @@ export default function VolunteerHome() {
         const buildRoute = async () => {
             if (!startLocation || !endLocation) return;
             const requestId = ++routeRequestIdRef.current;
+            setRouteCoords([]);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords([]);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
+            setRouteUnsafe(false);
+            setBlockedZoneName(null);
+            setShowSafePath(false);
+            setSafeRouteCoords([]);
+            setUnsafeRouteCoords([]);
             if (!GOOGLE_MAPS_API_KEY) {
                 if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
                 setRouteCoords([
@@ -1610,13 +1660,9 @@ export default function VolunteerHome() {
                     }
                 }
 
-                // Dynamic Hazard Whitelisting: filter out zones the user is currently inside
-                const startPoint = chosenCoords[0];
-                const effectiveZones = startPoint
-                    ? latestZones.filter(z => haversineDistance(startPoint, z) > z.radius)
-                    : latestZones;
-
-                const routeEvaluation = evaluateRouteSafety(chosenCoords, effectiveZones);
+                const routeEvaluation = evaluateRouteSafety(chosenCoords, latestZones, {
+                    ignoreStartingRedZoneUntilExit: true,
+                });
 
                 setRouteCoords(chosenCoords);
                 setCompletedRouteCoords([]);
@@ -1743,15 +1789,14 @@ export default function VolunteerHome() {
                 return;
             }
 
-            const initialStartPoint = { latitude: startLocation.latitude, longitude: startLocation.longitude };
-            const effectiveZones = latestZones.filter(z => haversineDistance(initialStartPoint, z) > z.radius);
-
             let bestRoute: { route: any; coords: LatLng[]; safety: ReturnType<typeof evaluateRouteSafety> } | null = null;
             let bestScore = Infinity;
 
             for (const route of data.routes) {
                 const coords = decodePolyline(route.overview_polyline?.points ?? '');
-                const safety = evaluateRouteSafety(coords, effectiveZones);
+                const safety = evaluateRouteSafety(coords, latestZones, {
+                    ignoreStartingRedZoneUntilExit: true,
+                });
                 const score = safety.riskScore;
 
                 if (score < bestScore) {
@@ -1763,7 +1808,6 @@ export default function VolunteerHome() {
             if (__DEV__) {
                 console.log('[VolunteerHome] Safe Path route evaluation', {
                     zones: latestZones.length,
-                    effectiveZones: effectiveZones.length,
                     routes: data.routes.length,
                     bestRiskScore: bestRoute?.safety.riskScore ?? null,
                     bestIsUnsafe: bestRoute?.safety.isUnsafe ?? null,
@@ -1787,11 +1831,11 @@ export default function VolunteerHome() {
 
                 if (bestRoute) {
                     const firstBadPoint = bestRoute.coords.find((p: LatLng) =>
-                        effectiveZones.some((z: any) => z.incidentCount >= 5 && haversineDistance(p, z) <= z.radius)
+                        latestZones.some((z: any) => z.incidentCount >= 5 && haversineDistance(p, z) <= z.radius)
                     );
 
                     if (firstBadPoint) {
-                        const matchedZone = effectiveZones.find((z: any) => z.incidentCount >= 5 && haversineDistance(firstBadPoint, z) <= z.radius);
+                        const matchedZone = latestZones.find((z: any) => z.incidentCount >= 5 && haversineDistance(firstBadPoint, z) <= z.radius);
 
                         if (matchedZone) {
                             const directions = [
@@ -1838,7 +1882,9 @@ export default function VolunteerHome() {
                                     if (wpData?.routes?.length) {
                                         const wpRoute = wpData.routes[0];
                                         const wpCoords = decodePolyline(wpRoute.overview_polyline?.points ?? '');
-                                        const wpSafety = evaluateRouteSafety(wpCoords, effectiveZones);
+                                        const wpSafety = evaluateRouteSafety(wpCoords, latestZones, {
+                                            ignoreStartingRedZoneUntilExit: true,
+                                        });
                                         const wpScore = wpSafety.riskScore;
 
                                         if (wpScore === 0) {
@@ -1912,6 +1958,11 @@ export default function VolunteerHome() {
             setScanState('NO_ROUTE');
         }
     }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName]);
+
+    useEffect(() => {
+        if (!isLiveNav || !showSafePath || !routeUnsafe || scanState === 'SCANNING') return;
+        triggerSafetyRecalculation();
+    }, [isLiveNav, routeUnsafe, scanState, showSafePath, triggerSafetyRecalculation]);
 
     const closeLocationCard = useCallback(() => {
         RNAnimated.parallel([
@@ -2260,9 +2311,32 @@ export default function VolunteerHome() {
         }
     }, [safePlaceAnswer, selectedPlace, closePlaceSheet, safePlaceSuccessAnim]);
 
-    const enterDirectionsMode = useCallback((destination: PlaceSuggestion) => {
+    const enterDirectionsMode = useCallback(async (destination: PlaceSuggestion) => {
         clearRouteState();
+        let origin = userLocRef.current;
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status === 'granted') {
+                const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
+                origin = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, heading: pos.coords.heading ?? undefined };
+                if (isMountedRef.current) {
+                    userLocRef.current = origin;
+                    setUserLoc(origin);
+                }
+            }
+        } catch (err) {
+            console.warn('[VolunteerHome] Unable to refresh route origin:', err);
+        }
         setDirectionsMode(true);
+        if (origin) {
+            setStartLocation({
+                id: 'current-location',
+                name: 'Your location',
+                address: address || 'Current location',
+                latitude: origin.latitude,
+                longitude: origin.longitude,
+            });
+        }
         setEndLocation(destination);
         setRouteCoords([]);
         RNAnimated.timing(directionsProgress, {
@@ -2272,7 +2346,7 @@ export default function VolunteerHome() {
             useNativeDriver: false,
         }).start();
         closePlaceSheet();
-    }, [clearRouteState, closePlaceSheet, directionsProgress]);
+    }, [address, clearRouteState, closePlaceSheet, directionsProgress]);
 
     const exitDirectionsMode = useCallback(() => {
         clearRouteState();
@@ -2423,7 +2497,7 @@ export default function VolunteerHome() {
                         );
                     })}
 
-                    {selectedPlace && (
+                    {selectedPlace && !directionsMode && (
                         <Marker
                             key={`${selectedPlace.id}-${selectedPlaceMarkerColor}`}
                             coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
@@ -2452,7 +2526,36 @@ export default function VolunteerHome() {
                     )}
 
                     {/* ── Live Navigation Modern Tracking Arrow ── */}
+                    {directionsMode && startLocation && !isLiveNav && (
+                        <Marker
+                            coordinate={{ latitude: startLocation.latitude, longitude: startLocation.longitude }}
+                            pinColor={T.violet}
+                            title="You"
+                            description="Current location"
+                            zIndex={1000}
+                        />
+                    )}
+                    {directionsMode && endLocation && (
+                        <Marker
+                            coordinate={{ latitude: endLocation.latitude, longitude: endLocation.longitude }}
+                            pinColor={selectedPlaceMarkerColor}
+                            title={selectedPlace?.name || 'Destination'}
+                            description={selectedPlace?.address || 'Route destination'}
+                            zIndex={999}
+                        />
+                    )}
+
                     {isLiveNav && userLoc && (
+                        <Marker
+                            coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
+                            pinColor={T.violet}
+                            title="You"
+                            description="Current location"
+                            zIndex={1001}
+                        />
+                    )}
+
+                    {isLiveNav && userLoc && !directionsMode && (
                         <Marker
                             coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
                             anchor={{ x: 0.5, y: 0.5 }}
@@ -2487,22 +2590,18 @@ export default function VolunteerHome() {
                                 lineCap="round"
                                 lineJoin="round"
                             />
-                            {/* start marker (user) */}
-                            <Marker coordinate={safePlaceCoords[0]} anchor={{ x: 0.5, y: 0.5 }}>
-                                <View style={s.safePlaceMarkerWrap}>
-                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerStart, { borderColor: T.violet }]}>
-                                        <Ionicons name="person" size={18} color={T.violet} />
-                                    </View>
-                                </View>
-                            </Marker>
-                            {/* destination marker (safe place) */}
-                            <Marker coordinate={safePlaceCoords[safePlaceCoords.length - 1]} anchor={{ x: 0.5, y: 0.5 }}>
-                                <View style={s.safePlaceMarkerWrap}>
-                                    <View style={[s.safePlaceMarkerIcon, s.safePlaceMarkerEnd, { borderColor: T.success }]}>
-                                        <Ionicons name="shield" size={16} color={T.success} />
-                                    </View>
-                                </View>
-                            </Marker>
+                            <Marker
+                                coordinate={safePlaceCoords[0]}
+                                pinColor={T.violet}
+                                title="You"
+                                description="Current location"
+                            />
+                            <Marker
+                                coordinate={safePlaceCoords[safePlaceCoords.length - 1]}
+                                pinColor={T.success}
+                                title="Safe Place"
+                                description="Route destination"
+                            />
                         </>
                     )}
 
@@ -2699,7 +2798,12 @@ export default function VolunteerHome() {
                                             <TouchableOpacity
                                                 key={mode}
                                                 style={[s.travelModeBtn, travelMode === mode && s.travelModeBtnActive]}
-                                                onPress={() => setTravelMode(mode)}
+                                                onPress={() => {
+                                                    Keyboard.dismiss();
+                                                    startInputRef.current?.blur();
+                                                    searchInputRef.current?.blur();
+                                                    setTravelMode(mode);
+                                                }}
                                             >
                                                 <Ionicons
                                                     name={mode === 'driving' ? 'car' : mode === 'walking' ? 'walk' : mode === 'motorcycle' ? 'bicycle' : 'bus'}
@@ -3807,7 +3911,12 @@ export default function VolunteerHome() {
                                     )}
                                     <TouchableOpacity
                                         style={ns.goLiveBtn}
-                                        onPress={() => setIsLiveNav(true)}
+                                        onPress={() => {
+                                            Keyboard.dismiss();
+                                            setCompletedRouteCoords([]);
+                                            setRemainingRouteCoords(routeCoords);
+                                            setIsLiveNav(true);
+                                        }}
                                         activeOpacity={0.7}
                                     >
                                         <Ionicons name="navigate" size={12} color={T.onPrimary} style={{ marginRight: 4 }} />

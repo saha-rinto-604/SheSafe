@@ -10,7 +10,10 @@ async function start() {
     const server = http.createServer(app);
     chatWsServer.attach(server);
     server.listen(env.port, () => {
-      console.log(`Backend listening on http://localhost:${env.port}`);
+      console.log(`Backend listening on port ${env.port}`);
+      if (env.baseUrl) {
+        console.log(`Public base URL: ${env.baseUrl}`);
+      }
     });
   } catch (error) {
     console.error('Failed to start backend:', error.message);

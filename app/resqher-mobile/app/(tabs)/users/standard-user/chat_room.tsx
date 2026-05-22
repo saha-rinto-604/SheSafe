@@ -31,6 +31,13 @@ import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 import { incidentService } from '../../../../src/services/incidentService';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { useAuth } from '../../../../src/context/AuthContext';
+import {
+    ENDPOINT_MOVE_THRESHOLD_M,
+    OFF_ROUTE_THRESHOLD_M,
+    REROUTE_DELAY_MS,
+    REROUTE_THROTTLE_MS,
+    getReverseRouteProgress,
+} from '../../../../src/utils/routeRealtime';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -384,7 +391,7 @@ export default function ChatRoom() {
     const incidentId = rawIncidentId || 'inc-001';
 
     // Socket
-    const { messages, sendMessage, isConnected } = useChatSocket(incidentId, userId ?? undefined, 'USER');
+    const { messages, sendMessage, liveLocation, sendLocationUpdate, isConnected } = useChatSocket(incidentId, userId ?? undefined, 'USER');
     const [localMessages, setLocalMessages] = useState<Message[]>([]);
     const [incident, setIncident] = useState<Incident | null>(null);
     const flatRef = useRef<FlatList>(null);
@@ -410,6 +417,9 @@ export default function ChatRoom() {
     const routeRequestIdRef = useRef(0);
     const routePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const lastRouteRefreshRef = useRef(0);
+    const lastOverviewRouteRef = useRef<{ origin: RoutePoint; destination: RoutePoint; mode: TravelMode; targetId?: string } | null>(null);
+    const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRerouteAtRef = useRef(0);
     const [travelMode, setTravelMode] = useState<TravelMode>('walking');
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
@@ -572,6 +582,12 @@ export default function ChatRoom() {
             clearInterval(routePollRef.current);
             routePollRef.current = null;
         }
+        if (offRouteTimerRef.current) {
+            clearTimeout(offRouteTimerRef.current);
+            offRouteTimerRef.current = null;
+        }
+        lastRerouteAtRef.current = 0;
+        lastOverviewRouteRef.current = null;
         setMapRouteCoords([]);
         setCompletedRouteCoords([]);
         setRemainingRouteCoords([]);
@@ -599,13 +615,18 @@ export default function ChatRoom() {
         victimLocation: RoutePoint,
         responder: Responder,
         mode: TravelMode,
-        options: { fit?: boolean } = {},
+        options: { fit?: boolean; clearExisting?: boolean } = {},
     ) => {
         const originLocation = sanitizeCoordinate(victimLocation.latitude, victimLocation.longitude);
         const responderLocation = responder.location
             ? sanitizeCoordinate(responder.location.latitude, responder.location.longitude)
             : null;
         if (!originLocation || !responderLocation) {
+            setMapRouteCoords([]);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords([]);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
             setRouteLoading(false);
             setRouteError('Selected responder location is unavailable.');
             return;
@@ -616,6 +637,13 @@ export default function ChatRoom() {
         const modeLabel = routeModeLabel(mode);
         setRouteLoading(true);
         setRouteError(null);
+        if (options.clearExisting !== false) {
+            setMapRouteCoords([]);
+            setCompletedRouteCoords([]);
+            setRemainingRouteCoords([]);
+            setNavInstructions([]);
+            setCurrentStepIdx(0);
+        }
 
         const applyRoute = (coords: RoutePoint[], distance = '', duration = '', instructions: NavStep[] = []) => {
             if (routeRequestIdRef.current !== requestId) return;
@@ -712,12 +740,10 @@ export default function ChatRoom() {
 
     const openMapOverlay = useCallback(async () => {
         Keyboard.dismiss();
+        clearRouteOverview();
         setIsMapOverlayOpen(true);
         setIsLiveNavMode(false);
         setIsReviewMode(false);
-        setRouteError(null);
-        setCompletedRouteCoords([]);
-        setRemainingRouteCoords([]);
         Haptics.selectionAsync();
         try {
             const context = await applyRouteContext();
@@ -733,11 +759,21 @@ export default function ChatRoom() {
         } catch (error: any) {
             setRouteError(error?.message || 'Unable to load this route.');
         }
-    }, [applyRouteContext, loadRouteForResponder, travelMode]);
+    }, [applyRouteContext, clearRouteOverview, loadRouteForResponder, travelMode]);
 
     useEffect(() => {
         if (!isMapOverlayOpen || !userLoc || !selectedResponder || isLiveNavMode) return;
         Keyboard.dismiss();
+        const destination = selectedResponder.location;
+        if (!destination) return;
+        const previous = lastOverviewRouteRef.current;
+        const modeChanged = previous?.mode !== travelMode || previous?.targetId !== selectedResponder.id;
+        const originMoved = !previous || haversineDistance(previous.origin, userLoc) >= ENDPOINT_MOVE_THRESHOLD_M;
+        const destinationMoved = !previous || haversineDistance(previous.destination, destination) >= ENDPOINT_MOVE_THRESHOLD_M;
+        if (!modeChanged && !originMoved && !destinationMoved) return;
+        if (!modeChanged && Date.now() - lastRouteRefreshRef.current < REROUTE_THROTTLE_MS) return;
+        lastRouteRefreshRef.current = Date.now();
+        lastOverviewRouteRef.current = { origin: userLoc, destination, mode: travelMode, targetId: selectedResponder.id };
         setMapRouteCoords([]);
         setCompletedRouteCoords([]);
         setRemainingRouteCoords([]);
@@ -782,9 +818,9 @@ export default function ChatRoom() {
 
                 const selectedMoved = haversineDistance(selectedResponder.location, nextSelected.location);
                 const victimMoved = contextVictim && userLoc ? haversineDistance(userLoc, contextVictim) : 0;
-                if ((selectedMoved >= 40 || victimMoved >= 40) && Date.now() - lastRouteRefreshRef.current > 15000) {
+                if ((selectedMoved >= ENDPOINT_MOVE_THRESHOLD_M || victimMoved >= ENDPOINT_MOVE_THRESHOLD_M) && Date.now() - lastRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
                     lastRouteRefreshRef.current = Date.now();
-                    loadRouteForResponder(activeVictim, nextSelected, travelMode, { fit: !isLiveNavMode });
+                    loadRouteForResponder(activeVictim, nextSelected, travelMode, { fit: !isLiveNavMode, clearExisting: false });
                 }
             } catch {
                 // Route context polling is best effort; chat remains usable.
@@ -800,7 +836,46 @@ export default function ChatRoom() {
     }, [incidentId, isLiveNavMode, isMapOverlayOpen, loadRouteForResponder, selectedResponder, selectedResponderId, travelMode, userLoc]);
 
     useEffect(() => {
-        if (!isLiveNavMode) {
+        if (!isMapOverlayOpen || !liveLocation) return;
+        const role = String(liveLocation.role || '').toUpperCase();
+        const liveUserId = liveLocation.userId ? String(liveLocation.userId) : '';
+        const isVolunteerLocation = role === 'VOLUNTEER' || (!role && !!liveUserId && liveUserId !== String(userId ?? ''));
+        if (!isVolunteerLocation) return;
+
+        const nextVolunteerLocation = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
+        if (!nextVolunteerLocation) return;
+
+        setRespondersList(prev => {
+            let changed = false;
+            const next = prev.map(responder => {
+                if (liveUserId && String(responder.id) !== liveUserId) return responder;
+                const movedM = responder.location ? haversineDistance(responder.location, nextVolunteerLocation) : Infinity;
+                if (movedM < 1) return responder;
+                changed = true;
+                return { ...responder, location: { ...nextVolunteerLocation } };
+            });
+            return changed ? next : prev;
+        });
+
+        if (!selectedResponder) return;
+        if (liveUserId && String(selectedResponder.id) !== liveUserId) return;
+
+        const movedM = selectedResponder.location
+            ? haversineDistance(selectedResponder.location, nextVolunteerLocation)
+            : Infinity;
+        if (userLoc && movedM >= ENDPOINT_MOVE_THRESHOLD_M && Date.now() - lastRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
+            lastRouteRefreshRef.current = Date.now();
+            loadRouteForResponder(
+                userLoc,
+                { ...selectedResponder, location: { ...nextVolunteerLocation } },
+                travelMode,
+                { fit: !isLiveNavMode, clearExisting: false },
+            );
+        }
+    }, [isLiveNavMode, isMapOverlayOpen, liveLocation, loadRouteForResponder, selectedResponder, travelMode, userId, userLoc]);
+
+    useEffect(() => {
+        if (!isMapOverlayOpen) {
             if (locationSubRef.current) { locationSubRef.current.remove(); locationSubRef.current = null; }
             return;
         }
@@ -817,23 +892,31 @@ export default function ChatRoom() {
                         longitude: loc.coords.longitude,
                         heading: loc.coords.heading ?? undefined,
                     };
+                    sendLocationUpdate(nextVictim);
                     setUserLoc(prev => {
-                        if (prev && selectedResponder?.location && haversineDistance(prev, nextVictim) >= 40 && Date.now() - lastRouteRefreshRef.current > 15000) {
+                        if (prev && selectedResponder?.location && haversineDistance(prev, nextVictim) >= ENDPOINT_MOVE_THRESHOLD_M && Date.now() - lastRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
                             lastRouteRefreshRef.current = Date.now();
-                            loadRouteForResponder(nextVictim, selectedResponder, travelMode, { fit: false });
+                            loadRouteForResponder(nextVictim, selectedResponder, travelMode, { fit: false, clearExisting: false });
                         }
-                        return nextVictim;
+                        return { ...nextVictim };
                     });
                 }
             );
         })();
         return () => { mounted = false; if (locationSubRef.current) { locationSubRef.current.remove(); locationSubRef.current = null; } };
-    }, [isLiveNavMode, loadRouteForResponder, selectedResponder, travelMode]);
+    }, [isMapOverlayOpen, loadRouteForResponder, selectedResponder, sendLocationUpdate, travelMode]);
 
     useEffect(() => {
-        if (!isLiveNavMode || !selectedResponder?.location) return;
+        if (!isLiveNavMode || !selectedResponder?.location) {
+            if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
+            return;
+        }
         const volunteerLocation = selectedResponder.location;
-        mapRef.current?.animateCamera({ center: volunteerLocation, pitch: 45, heading: 0, zoom: 19 }, { duration: 1000 });
+        const focusLocation = userLoc ?? volunteerLocation;
+        mapRef.current?.animateCamera({ center: focusLocation, pitch: 45, heading: userLoc?.heading ?? 0, zoom: 19 }, { duration: 1000 });
 
         if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
             const currentStep = navInstructions[currentStepIdx];
@@ -842,13 +925,27 @@ export default function ChatRoom() {
             }
         }
 
-        if (mapRouteCoords && mapRouteCoords.length > 0) {
-            let closestIdx = 0, minD = Infinity;
-            mapRouteCoords.forEach((pt, i) => { const d = haversineDistance(volunteerLocation, pt); if (d < minD) { minD = d; closestIdx = i; } });
-            setCompletedRouteCoords(mapRouteCoords.slice(closestIdx));
-            setRemainingRouteCoords(mapRouteCoords.slice(0, closestIdx + 1));
+        if (mapRouteCoords.length > 0) {
+            const progress = getReverseRouteProgress(volunteerLocation, mapRouteCoords);
+            setCompletedRouteCoords(progress.completedRouteCoords);
+            setRemainingRouteCoords(progress.remainingRouteCoords);
+
+            if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
+                if (!offRouteTimerRef.current && userLoc) {
+                    offRouteTimerRef.current = setTimeout(() => {
+                        offRouteTimerRef.current = null;
+                        if (!userLoc || !selectedResponder?.location) return;
+                        if (Date.now() - lastRerouteAtRef.current < REROUTE_THROTTLE_MS) return;
+                        lastRerouteAtRef.current = Date.now();
+                        loadRouteForResponder(userLoc, selectedResponder, travelMode, { fit: false, clearExisting: false });
+                    }, REROUTE_DELAY_MS);
+                }
+            } else if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
+            }
         }
-    }, [isLiveNavMode, selectedResponder, currentStepIdx, navInstructions, mapRouteCoords]);
+    }, [isLiveNavMode, selectedResponder, currentStepIdx, navInstructions, mapRouteCoords, userLoc, loadRouteForResponder, travelMode]);
 
     useEffect(() => {
         if (isLiveNavMode && audioEnabled && navInstructions.length > 0 && currentStepIdx < navInstructions.length) {
@@ -863,6 +960,10 @@ export default function ChatRoom() {
             if (routePollRef.current) {
                 clearInterval(routePollRef.current);
                 routePollRef.current = null;
+            }
+            if (offRouteTimerRef.current) {
+                clearTimeout(offRouteTimerRef.current);
+                offRouteTimerRef.current = null;
             }
         };
     }, []);
@@ -1155,7 +1256,7 @@ export default function ChatRoom() {
                                         <Text style={st.liveStepCounter}>
                                             {navInstructions.length > 0 ? `Step ${currentStepIdx + 1} of ${navInstructions.length}` : 'Live route tracking'}
                                         </Text>
-                                        <TouchableOpacity style={st.exitNavBtn} onPress={() => { setIsLiveNavMode(false); mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 }); mapRef.current?.fitToCoordinates(mapRouteCoords, { edgePadding: { top: 140, right: 60, bottom: 280, left: 60 }, animated: true }); }}>
+                                        <TouchableOpacity style={st.exitNavBtn} onPress={() => { if (offRouteTimerRef.current) { clearTimeout(offRouteTimerRef.current); offRouteTimerRef.current = null; } setIsLiveNavMode(false); mapRef.current?.animateCamera({ pitch: 0, heading: 0, zoom: 14 }); mapRef.current?.fitToCoordinates(mapRouteCoords, { edgePadding: { top: 140, right: 60, bottom: 280, left: 60 }, animated: true }); }}>
                                             <Text style={st.exitNavBtnText}>Exit Live Mode</Text>
                                         </TouchableOpacity>
                                     </View>
@@ -1206,11 +1307,16 @@ export default function ChatRoom() {
                                                     setRouteError('Please wait for the selected route to load.');
                                                     return;
                                                 }
+                                                if (offRouteTimerRef.current) {
+                                                    clearTimeout(offRouteTimerRef.current);
+                                                    offRouteTimerRef.current = null;
+                                                }
+                                                lastRerouteAtRef.current = 0;
                                                 setCompletedRouteCoords([]);
                                                 setRemainingRouteCoords(mapRouteCoords);
                                                 setIsLiveNavMode(true);
-                                                const volunteerPoint = selectedResponder?.location ?? mapRouteCoords[mapRouteCoords.length - 1];
-                                                mapRef.current?.animateCamera({ center: volunteerPoint, pitch: 60, heading: 145, zoom: 18 }, { duration: 1000 });
+                                                const victimPoint = userLoc ?? mapRouteCoords[0];
+                                                mapRef.current?.animateCamera({ center: victimPoint, pitch: 60, heading: userLoc?.heading ?? 0, zoom: 18 }, { duration: 1000 });
                                             }}>
                                                 <Ionicons name="navigate" size={16} color={T.onPrimary} />
                                                 <Text style={st.startNavBtnText}>Live Mode</Text>
