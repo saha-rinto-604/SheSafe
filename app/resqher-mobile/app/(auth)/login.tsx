@@ -55,6 +55,15 @@ export default function Login() {
         return;
       }
 
+      // Admin mock login
+      if (['admin', '9', '0', '90'].includes(phone.toLowerCase()) && ['admin', '9', '0', '90'].includes(password.toLowerCase())) {
+        setTimeout(() => {
+          setSubmitting(false);
+          router.replace('/(tabs)/users/admin/dashboard' as any);
+        }, 600);
+        return;
+      }
+
       const { role } = await signIn(phone, password);
       let route = ROLE_DEFAULT_ROUTE[role] || ROLE_DEFAULT_ROUTE.USER;
       router.replace(route as any);
@@ -92,7 +101,7 @@ export default function Login() {
           {/* ── Header ── */}
           <View style={st.header}>
             <Text style={st.title}>Welcome back</Text>
-            <Text style={st.subtitle}>Sign in to your ResQher account</Text>
+            <Text style={st.subtitle}>Sign in to your SheSafe account</Text>
           </View>
 
           {/* ── Fields ── */}

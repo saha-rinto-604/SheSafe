@@ -669,7 +669,7 @@ export default function ChatRoom() {
                                     <Feather name="chevron-left" size={22} color={T.ink} />
                                 </TouchableOpacity>
                                 <View style={st.headerTitleBlock}>
-                                    <Text style={st.headerTitle} numberOfLines={1}>ResQher Emergency Chat</Text>
+                                    <Text style={st.headerTitle} numberOfLines={1}>SheSafe Emergency Chat</Text>
                                     <View style={st.headerMeta}>
                                         <View style={[st.headerStatusPill, isLive ? st.headerStatusPillLive : st.headerStatusPillArchived]}>
                                             <Text style={isLive ? st.headerStatusTextLive : st.headerStatusTextArchived}>{isLive ? 'LIVE' : 'ARCHIVED'}</Text>

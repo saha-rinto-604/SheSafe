@@ -10,8 +10,8 @@ import * as SecureStore from 'expo-secure-store';
 // import api from './api'; // uncomment and use in TODO blocks when backend is ready
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
-const TWO_FACTOR_KEY = 'resqher_2fa_enabled_v1';
-const BLOCKED_USERS_KEY = 'resqher_blocked_users_v1';
+const TWO_FACTOR_KEY = 'shesafe_2fa_enabled_v1';
+const BLOCKED_USERS_KEY = 'shesafe_blocked_users_v1';
 
 // ── Types (export so screens can import them) ─────────────────────────────────
 export type BlockedUser = {

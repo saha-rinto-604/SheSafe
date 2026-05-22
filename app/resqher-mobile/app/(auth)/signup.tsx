@@ -244,7 +244,7 @@ export default function Signup() {
         ROLE_TO_AUTH[role] ?? 'USER'
       );
 
-      showToast({ type: 'success', title: 'Welcome to ResQher!', message: 'Your account has been created successfully.' });
+      showToast({ type: 'success', title: 'Welcome to SheSafe!', message: 'Your account has been created successfully.' });
 
       const rolePaths: Record<string, string> = {
         USER: '/(tabs)/users/standard-user/sos_screen',
@@ -275,7 +275,7 @@ export default function Signup() {
 
 
   const STEP_TITLES = {
-    1: { title: 'Join ResQher', subtitle: 'Select how you want to use the app.' },
+    1: { title: 'Join SheSafe', subtitle: 'Select how you want to use the app.' },
     2: { title: 'Your Identity', subtitle: 'Tell us who you are.' },
     3: { title: 'Secure Account', subtitle: 'Create a strong password.' },
   };

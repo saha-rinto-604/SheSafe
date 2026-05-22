@@ -125,7 +125,7 @@ const LEADERBOARD_BY_MONTH: Record<(typeof MONTHS)[number], LeaderRow[]> = {
 
 const CURRENT_USER_ID = 'ldr-4';
 
-const DEFAULT_AVATAR = 'https://i.pravatar.cc/120?img=47&u=resqher';
+const DEFAULT_AVATAR = 'https://i.pravatar.cc/120?img=47&u=shesafe';
 
 const MED = {
     muted: '#A09CB2',

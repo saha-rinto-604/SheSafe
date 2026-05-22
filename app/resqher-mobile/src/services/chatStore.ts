@@ -9,7 +9,7 @@ interface Slim {
 }
 
 function cacheKey(incidentId: string) {
-    return `resqher_cc_${incidentId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}`;
+    return `shesafe_cc_${incidentId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 20)}`;
 }
 
 function slim(m: Message): Slim {

@@ -248,7 +248,7 @@ export default function ProfileMenuScreen() {
                         <Feather name="log-out" size={26} color={T.danger} />
                     </View>
                     <Text style={s.modalTitle}>Logout?</Text>
-                    <Text style={s.modalBody}>Are you sure you want to log out of ResQher?</Text>
+                    <Text style={s.modalBody}>Are you sure you want to log out of SheSafe?</Text>
                     <TouchableOpacity
                         style={s.modalBtnPrimary}
                         onPress={() => setLogoutModalVisible(false)}

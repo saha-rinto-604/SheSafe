@@ -462,7 +462,7 @@ const Drawer = memo(function Drawer({
             <RNAnimated.View style={[s.drawer, { transform: [{ translateX: slideX }] }]}>
                 <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={s.drawerHd}>
                     <View style={s.drawerAvatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
-                    <Text style={s.drawerAppName}>ResQher</Text>
+                    <Text style={s.drawerAppName}>SheSafe</Text>
                     <Text style={s.drawerSub}>Emergency Assistance Platform</Text>
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
@@ -622,7 +622,7 @@ export default function SOSScreen() {
     useEffect(() => {
         import('../../../../src/constants/theme').then(() => {
             import('expo-secure-store').then(SecureStore => {
-                SecureStore.getItemAsync('resqher_safety_settings_v1').then(raw => {
+                SecureStore.getItemAsync('shesafe_safety_settings_v1').then(raw => {
                     if (raw) {
                         try {
                             const parsed = JSON.parse(raw);
@@ -656,7 +656,7 @@ export default function SOSScreen() {
         useCallback(() => {
             setActiveTab('Home');
             import('expo-secure-store').then(SecureStore => {
-                SecureStore.getItemAsync('resqher_active_sos_v1').then(raw => {
+                SecureStore.getItemAsync('shesafe_active_sos_v1').then(raw => {
                     if (raw) {
                         try {
                             const parsed = JSON.parse(raw);
@@ -767,11 +767,11 @@ export default function SOSScreen() {
                     const id = String(incident.id);
                     setActiveIncidentId(id);
                     const SecureStore = await import('expo-secure-store');
-                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const raw = await SecureStore.getItemAsync('shesafe_sos_count_v1');
                     const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    await SecureStore.setItemAsync('shesafe_sos_count_v1', String(displayNumber));
                     const createdAt = new Date().toISOString();
-                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                    await SecureStore.setItemAsync('shesafe_active_sos_v1', JSON.stringify({
                         incidentId: id, displayNumber, lat, lng, address: address || '',
                         createdAt,
                     }));
@@ -791,11 +791,11 @@ export default function SOSScreen() {
                     const id = `temp-${Date.now()}`;
                     setActiveIncidentId(id);
                     const SecureStore = await import('expo-secure-store');
-                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                    const raw = await SecureStore.getItemAsync('shesafe_sos_count_v1');
                     const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+                    await SecureStore.setItemAsync('shesafe_sos_count_v1', String(displayNumber));
                     const createdAt = new Date().toISOString();
-                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                    await SecureStore.setItemAsync('shesafe_active_sos_v1', JSON.stringify({
                         incidentId: id, displayNumber, lat, lng, address: address || '',
                         createdAt,
                     }));
@@ -817,10 +817,10 @@ export default function SOSScreen() {
             (async () => {
                 const createdAt = new Date().toISOString();
                 const SecureStore = await import('expo-secure-store');
-                const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+                const raw = await SecureStore.getItemAsync('shesafe_sos_count_v1');
                 const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
-                await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                await SecureStore.setItemAsync('shesafe_sos_count_v1', String(displayNumber));
+                await SecureStore.setItemAsync('shesafe_active_sos_v1', JSON.stringify({
                     incidentId: id, displayNumber, lat: null, lng: null, address: '',
                     createdAt,
                 }));
@@ -884,8 +884,8 @@ export default function SOSScreen() {
         setActiveIncidentId(null);
 
         import('expo-secure-store').then(SecureStore => {
-            SecureStore.deleteItemAsync('resqher_active_sos_v1');
-            SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+            SecureStore.deleteItemAsync('shesafe_active_sos_v1');
+            SecureStore.deleteItemAsync('shesafe_sos_autosent_v1');
         });
 
         if (incId) {
@@ -965,8 +965,8 @@ export default function SOSScreen() {
         setActiveIncidentId(null);
         try {
             await import('expo-secure-store').then(ss => {
-                ss.deleteItemAsync('resqher_active_sos_v1');
-                ss.deleteItemAsync('resqher_sos_autosent_v1');
+                ss.deleteItemAsync('shesafe_active_sos_v1');
+                ss.deleteItemAsync('shesafe_sos_autosent_v1');
             });
             if (incId && !incId.startsWith('temp-') && incId !== 'sos-new') {
                 await incidentService.resolveIncident(incId);

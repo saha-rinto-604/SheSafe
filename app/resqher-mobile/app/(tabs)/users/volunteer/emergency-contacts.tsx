@@ -2,7 +2,7 @@
  * emergency-contacts.tsx — Emergency Contacts Screen (Standard User)
  * ─────────────────────────────────────────────────────────────────────────
  * Sections: Contact List · Add Emergency Contact (floating blur-card form)
- * Persistence: expo-secure-store (key: resqher_emergency_contacts_v1)
+ * Persistence: expo-secure-store (key: shesafe_emergency_contacts_v1)
  * Rules: Max 5 contacts · One Primary contact at a time
  */
 
@@ -31,7 +31,7 @@ import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'resqher_emergency_contacts_v1';
+const STORAGE_KEY = 'shesafe_emergency_contacts_v1';
 const MAX_CONTACTS = 5;
 const PRIORITY_OPTIONS: ContactPriority[] = ['Primary', 'Secondary'];
 

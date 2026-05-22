@@ -15,7 +15,7 @@ import * as SecureStore from 'expo-secure-store';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
-const BOOKINGS_KEY = 'resqher_bookings_v1';
+const BOOKINGS_KEY = 'shesafe_bookings_v1';
 
 type Booking = {
     id: string;

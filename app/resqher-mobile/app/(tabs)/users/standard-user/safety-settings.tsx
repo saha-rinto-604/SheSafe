@@ -2,7 +2,7 @@
  * safety-settings.tsx — Safety Settings Screen (Standard User)
  * ─────────────────────────────────────────────────────────────────────────
  * Sections: SOS Behavior · Alert Settings · Volunteer Assistance
- * Persistence: expo-secure-store (key: resqher_safety_settings_v1)
+ * Persistence: expo-secure-store (key: shesafe_safety_settings_v1)
  * Auto-saves on every control interaction — no "Save" button needed.
  */
 
@@ -25,7 +25,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-export const SAFETY_SETTINGS_KEY = 'resqher_safety_settings_v1';
+export const SAFETY_SETTINGS_KEY = 'shesafe_safety_settings_v1';
 
 export type SafetySettings = {
     sosCancelTimerSec: 10 | 15 | 20;

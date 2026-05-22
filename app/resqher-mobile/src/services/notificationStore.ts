@@ -1,11 +1,11 @@
 import * as SecureStore from 'expo-secure-store';
 
-const INDEX_KEY = 'resqher_notif_index_v1';
-const SEQ_KEY = 'resqher_notif_seq_v1';
+const INDEX_KEY = 'shesafe_notif_index_v1';
+const SEQ_KEY = 'shesafe_notif_seq_v1';
 const MAX_NOTIFS = 50;
 
 function recordKey(n: number) {
-    return `resqher_notif_${n}`;
+    return `shesafe_notif_${n}`;
 }
 
 export type NotifType =
@@ -123,12 +123,12 @@ export const notificationStore = {
     },
 };
 
-const SEED_KEY = 'resqher_notif_seeded_v1';
+const SEED_KEY = 'shesafe_notif_seeded_v1';
 
 const DEFAULT_NOTIFS = [
     {
         type: 'system' as const,
-        title: 'Welcome to ResQher',
+        title: 'Welcome to SheSafe',
         body: 'Your account is active and ready. Hold the SOS button for 3 seconds to trigger an emergency alert.',
         createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
     },

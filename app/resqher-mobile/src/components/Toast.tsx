@@ -1,5 +1,5 @@
 /**
- * Toast.tsx — Premium notification system for ResQher
+ * Toast.tsx — Premium notification system for SheSafe
  * ────────────────────────────────────────────────────
  * Color-coded toast with glassmorphism, Feather icons, entrance/exit
  * animations, auto-dismiss, and optional action button.
@@ -261,12 +261,16 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
 const st = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: S.s4,
-    right: S.s4,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: S.s4,
     zIndex: 9999,
     elevation: 999,
   },
   card: {
+    width: '100%',
+    maxWidth: 420,
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingTop: S.s3,

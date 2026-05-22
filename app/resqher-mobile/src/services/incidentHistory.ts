@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 
-const INDEX_KEY = 'resqher_inc_index_v1';
-const DELETED_KEY = 'resqher_inc_deleted_v1';
+const INDEX_KEY = 'shesafe_inc_index_v1';
+const DELETED_KEY = 'shesafe_inc_deleted_v1';
 
 export interface IncidentRecord {
   incidentId: string;
@@ -15,7 +15,7 @@ export interface IncidentRecord {
 }
 
 function recordKey(displayNumber: number) {
-  return `resqher_inc_${displayNumber}`;
+  return `shesafe_inc_${displayNumber}`;
 }
 
 async function getIndex(): Promise<number[]> {
@@ -114,8 +114,8 @@ export const incidentHistory = {
     }
     await SecureStore.deleteItemAsync(INDEX_KEY);
     await SecureStore.deleteItemAsync(DELETED_KEY);
-    await SecureStore.deleteItemAsync('resqher_sos_count_v1');
-    await SecureStore.deleteItemAsync('resqher_active_sos_v1');
-    await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+    await SecureStore.deleteItemAsync('shesafe_sos_count_v1');
+    await SecureStore.deleteItemAsync('shesafe_active_sos_v1');
+    await SecureStore.deleteItemAsync('shesafe_sos_autosent_v1');
   },
 };

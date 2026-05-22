@@ -4,9 +4,9 @@ import { jwtDecode } from 'jwt-decode';
 
 export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
 
-const ACCESS_KEY = 'resqher_access_token';
-const REFRESH_KEY = 'resqher_refresh_token';
-const IDENTITY_KEY = 'resqher_identity_v1';
+const ACCESS_KEY = 'shesafe_access_token';
+const REFRESH_KEY = 'shesafe_refresh_token';
+const IDENTITY_KEY = 'shesafe_identity_v1';
 
 type StoredIdentity = { role: string; userId: string };
 

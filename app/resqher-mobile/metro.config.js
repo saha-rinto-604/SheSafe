@@ -1,6 +1,8 @@
 // metro.config.js
 // Configured to prevent OOM crashes on large module graphs (1600+ modules).
 const { getDefaultConfig } = require('expo/metro-config');
+const { resolve } = require('metro-resolver');
+const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
@@ -22,5 +24,24 @@ config.resolver.sourceExts = Array.from(new Set([
   'cjs',
   'mjs',
 ]));
+
+// ─── Web-only shims ────────────────────────────────────────────────────────
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'web') {
+    if (moduleName === 'react-native-maps') {
+      return {
+        type: 'sourceFile',
+        filePath: path.resolve(__dirname, 'src/web/react-native-maps.tsx'),
+      };
+    }
+    if (moduleName === 'expo-secure-store') {
+      return {
+        type: 'sourceFile',
+        filePath: path.resolve(__dirname, 'src/web/expo-secure-store.ts'),
+      };
+    }
+  }
+  return resolve(context, moduleName, platform);
+};
 
 module.exports = config;

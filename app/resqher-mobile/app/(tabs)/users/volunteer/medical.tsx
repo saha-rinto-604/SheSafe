@@ -1,5 +1,5 @@
 /**
- * MedicalDashboard.tsx — ResQher Medical Hub Launchpad
+ * MedicalDashboard.tsx — SheSafe Medical Hub Launchpad
  * ─────────────────────────────────────────────────────────────────────────
  * 2-column Bulky Glass category grid with Sheba-style shift filter.
  * NO navbar — this is a Launchpad. Back button returns to SOS/Explore.

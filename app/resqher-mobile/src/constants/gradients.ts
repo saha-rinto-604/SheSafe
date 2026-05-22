@@ -1,6 +1,6 @@
 import { T } from './theme';
 
-// ─── ResQher Gradient System — Premium Tactical Dark Mode ───────────────────
+// ─── SheSafe Gradient System — Premium Tactical Dark Mode ───────────────────
 export const G = {
     // ── Premium Glow Background — vertical gradient for auth & home
     // Deep Midnight → subtle purple center → soft violet aura at bottom

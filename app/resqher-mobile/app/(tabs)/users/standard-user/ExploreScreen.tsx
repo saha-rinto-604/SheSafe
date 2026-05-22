@@ -495,7 +495,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
             <RNAnimated.View style={[dr.drawer, { transform: [{ translateX: slideX }] }]}>
                 <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={dr.hd}>
                     <View style={dr.avatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
-                    <Text style={dr.appName}>ResQher</Text>
+                    <Text style={dr.appName}>SheSafe</Text>
                     <Text style={dr.sub}>Emergency Assistance Platform</Text>
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">

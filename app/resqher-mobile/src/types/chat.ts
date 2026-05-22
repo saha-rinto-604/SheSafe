@@ -1,8 +1,8 @@
-// ─── ResQher Chat Domain Types ──────────────────────────────────────────────
+// ─── SheSafe Chat Domain Types ──────────────────────────────────────────────
 // SF-04 — Incident Group Chat Messaging
 
 // Central placeholder group name (easy to swap when backend provides it)
-export const DEFAULT_GROUP_CHAT_NAME = 'ResQher Emergency Chat' as const;
+export const DEFAULT_GROUP_CHAT_NAME = 'SheSafe Emergency Chat' as const;
 
 export type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
 export type IncidentStatus = 'ACTIVE' | 'LIVE' | 'RESOLVED' | 'CANCELLED';

@@ -1,4 +1,4 @@
-// ─── ResQher Medical Module Domain Types ────────────────────────────────────
+// ─── SheSafe Medical Module Domain Types ────────────────────────────────────
 // V3.0 — Map-Centric Discovery & Tactical Emergency Response
 
 export type MedicalCategory =

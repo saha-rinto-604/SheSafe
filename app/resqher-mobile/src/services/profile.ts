@@ -13,7 +13,7 @@ import api from './api';
 import type { Identity, Role } from '../identity/identity.types';
 
 // ── Storage key ──────────────────────────────────────────────────────────────
-export const PROFILE_KEY = 'resqher_user_profile_v1';
+export const PROFILE_KEY = 'shesafe_user_profile_v1';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type UserProfile = {
