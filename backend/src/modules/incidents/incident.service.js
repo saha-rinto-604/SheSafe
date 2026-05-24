@@ -109,6 +109,7 @@ async function getMyIncidents(userId) {
   return rows.map((row) => {
     const statusMap = {
       ACTIVE: 'Active',
+      IN_PROGRESS: 'In Progress',
       RESOLVED: 'Resolved',
       CANCELLED: 'Cancelled',
     };
