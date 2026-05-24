@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle, Image, TextInput,
+    Modal, ScrollView, ViewStyle, Image, TextInput, ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
@@ -597,6 +597,7 @@ export default function SOSScreen() {
 
     // Review Popup States
     const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewLoading, setReviewLoading] = useState(false);
     const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>([]);
     const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
@@ -909,6 +910,7 @@ export default function SOSScreen() {
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
+        setReviewLoading(false);
         setReviewQueue([]);
         setReviewIncidentId(null);
         setReviewFeedback('');
@@ -929,14 +931,24 @@ export default function SOSScreen() {
 
     const openReviewPopup = useCallback(async (incidentId: string | null) => {
         if (!incidentId || incidentId.startsWith('temp-') || incidentId === 'sos-new') return;
+        // Show the card immediately so there is no perceived delay.
+        setReviewVisible(true);
+        setReviewLoading(true);
         try {
             const volunteers = await loadReviewVolunteers(incidentId);
-            if (!isMountedRef.current || !volunteers.length) return;
+            if (!isMountedRef.current) return;
+            if (!volunteers.length) {
+                setReviewVisible(false);
+                setReviewLoading(false);
+                return;
+            }
             setReviewIncidentId(incidentId);
             setReviewQueue(volunteers);
-            setReviewVisible(true);
         } catch (error) {
             console.warn('[SOS] Unable to load responders for review:', error);
+            if (isMountedRef.current) setReviewVisible(false);
+        } finally {
+            if (isMountedRef.current) setReviewLoading(false);
         }
     }, [loadReviewVolunteers]);
 
@@ -1213,6 +1225,13 @@ export default function SOSScreen() {
 
                         <View style={s.reviewCard}>
                             <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                            {reviewLoading ? (
+                                <ActivityIndicator
+                                    color={T.violet}
+                                    size="large"
+                                    style={{ marginVertical: 40 }}
+                                />
+                            ) : (<>
                             <View style={s.reviewAvatarRow}>
                                 {reviewQueue.map((volunteer, index) => {
                                     const isCurrent = index === 0;
@@ -1279,6 +1298,7 @@ export default function SOSScreen() {
                                     <Text style={s.reviewSubmitText}>Submit Review</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
+                            </>)}
                         </View>
                     </View>
                 </Modal>
