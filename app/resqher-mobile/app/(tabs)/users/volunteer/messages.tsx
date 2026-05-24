@@ -20,7 +20,7 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
 import { type Incident, type IncidentCategory } from '../../../../src/types/chat';
 import { incidentService } from '../../../../src/services/incidentService';
-import { notificationStore } from '../../../../src/services/notificationStore';
+import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
 
 const D = {
     cardFill: T.surfaceBulky,
@@ -305,15 +305,12 @@ export default function VolunteerMessages() {
         }
     }, []);
 
-    useFocusEffect(
-        useCallback(() => {
-            let isActive = true;
-            notificationStore.getUnreadCount().then(count => {
-                if (isActive) setHasUnreadNotif(count > 0);
-            }).catch(() => undefined);
-            return () => { isActive = false; };
-        }, []),
-    );
+    // Subscribe to unread count so the red dot updates in real-time.
+    useEffect(() => {
+        const unsub = subscribeUnread(count => setHasUnreadNotif(count > 0));
+        notificationStore.getUnreadCount().catch(() => {});
+        return unsub;
+    }, []);
 
     // Sliding indicator animation — identical to activity.tsx
     useEffect(() => {

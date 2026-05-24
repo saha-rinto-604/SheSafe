@@ -15,7 +15,7 @@ import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle, Image, TextInput,
+    Modal, ScrollView, ViewStyle, Image, TextInput, ActivityIndicator,
 } from 'react-native';
 import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
@@ -40,7 +40,7 @@ import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
-import { notificationStore } from '../../../../src/services/notificationStore';
+import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PremiumBar â€” dark glassmorphism surface for header + navbar
@@ -597,6 +597,7 @@ export default function SOSScreen() {
 
     // Review Popup States
     const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewLoading, setReviewLoading] = useState(false);
     const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>([]);
     const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
@@ -609,9 +610,16 @@ export default function SOSScreen() {
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
-            notificationStore.getUnreadCount().then(n => setHasUnreadNotif(n > 0));
         }, []),
     );
+
+    // Subscribe to unread count so the red dot updates in real-time.
+    useEffect(() => {
+        const unsub = subscribeUnread(count => setHasUnreadNotif(count > 0));
+        // Initialise the cache if it hasn't been loaded yet.
+        notificationStore.getUnreadCount().catch(() => {});
+        return unsub;
+    }, []);
 
     // (navigation now happens immediately inside triggerSOS, not here)
 
@@ -902,6 +910,7 @@ export default function SOSScreen() {
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
+        setReviewLoading(false);
         setReviewQueue([]);
         setReviewIncidentId(null);
         setReviewFeedback('');
@@ -922,14 +931,24 @@ export default function SOSScreen() {
 
     const openReviewPopup = useCallback(async (incidentId: string | null) => {
         if (!incidentId || incidentId.startsWith('temp-') || incidentId === 'sos-new') return;
+        // Show the card immediately so there is no perceived delay.
+        setReviewVisible(true);
+        setReviewLoading(true);
         try {
             const volunteers = await loadReviewVolunteers(incidentId);
-            if (!isMountedRef.current || !volunteers.length) return;
+            if (!isMountedRef.current) return;
+            if (!volunteers.length) {
+                setReviewVisible(false);
+                setReviewLoading(false);
+                return;
+            }
             setReviewIncidentId(incidentId);
             setReviewQueue(volunteers);
-            setReviewVisible(true);
         } catch (error) {
             console.warn('[SOS] Unable to load responders for review:', error);
+            if (isMountedRef.current) setReviewVisible(false);
+        } finally {
+            if (isMountedRef.current) setReviewLoading(false);
         }
     }, [loadReviewVolunteers]);
 
@@ -1206,6 +1225,13 @@ export default function SOSScreen() {
 
                         <View style={s.reviewCard}>
                             <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                            {reviewLoading ? (
+                                <ActivityIndicator
+                                    color={T.violet}
+                                    size="large"
+                                    style={{ marginVertical: 40 }}
+                                />
+                            ) : (<>
                             <View style={s.reviewAvatarRow}>
                                 {reviewQueue.map((volunteer, index) => {
                                     const isCurrent = index === 0;
@@ -1272,6 +1298,7 @@ export default function SOSScreen() {
                                     <Text style={s.reviewSubmitText}>Submit Review</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
+                            </>)}
                         </View>
                     </View>
                 </Modal>

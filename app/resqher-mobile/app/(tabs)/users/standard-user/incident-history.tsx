@@ -23,7 +23,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-type IncidentStatus = 'Active' | 'Resolved' | 'Cancelled';
+type IncidentStatus = 'Active' | 'In Progress' | 'Resolved' | 'Cancelled';
 
 type Incident = {
     id: string;
@@ -55,6 +55,13 @@ function statusStyle(status: IncidentStatus): StatusStyle {
                 border: `${T.success}35`,
                 dot: T.success,
             };
+        case 'In Progress':
+            return {
+                color: '#F59E0B',
+                bg: 'rgba(245,158,11,0.12)',
+                border: 'rgba(245,158,11,0.3)',
+                dot: '#F59E0B',
+            };
         case 'Cancelled':
             return {
                 color: T.danger,
@@ -66,11 +73,15 @@ function statusStyle(status: IncidentStatus): StatusStyle {
 }
 
 // ── IncidentCard component ─────────────────────────────────────────────────────
-function IncidentCard({ incident }: { incident: Incident }) {
+function IncidentCard({ incident, onPress }: { incident: Incident; onPress: () => void }) {
     const ss = statusStyle(incident.status);
     const isCancelled = incident.status === 'Cancelled';
     return (
-        <View style={[s.card, isCancelled && s.cardCancelled]}>
+        <TouchableOpacity
+            style={[s.card, isCancelled && s.cardCancelled]}
+            onPress={onPress}
+            activeOpacity={0.75}
+        >
             {/* ── Top row: ID + Status badge ── */}
             <View style={s.cardTopRow}>
                 <View style={s.incidentIdRow}>
@@ -107,7 +118,7 @@ function IncidentCard({ incident }: { incident: Incident }) {
                     {incident.status}
                 </Text>
             </View>
-        </View>
+        </TouchableOpacity>
     );
 }
 
@@ -193,7 +204,14 @@ export default function IncidentHistoryScreen() {
                         <EmptyState />
                     ) : (
                         incidents.map(incident => (
-                            <IncidentCard key={incident.id} incident={incident} />
+                            <IncidentCard
+                                key={incident.id}
+                                incident={incident}
+                                onPress={() => router.push({
+                                    pathname: '/users/standard-user/incident-chat',
+                                    params: { incidentId: incident.id, status: incident.status },
+                                })}
+                            />
                         ))
                     )}
                 </ScrollView>

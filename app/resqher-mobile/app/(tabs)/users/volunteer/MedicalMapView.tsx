@@ -587,6 +587,7 @@ export default function MedicalMapView() {
         }, 600);
     }, []);
 
+    // Request permission and get a quick initial fix so the pin appears immediately.
     useEffect(() => {
         let mounted = true;
 
@@ -597,13 +598,11 @@ export default function MedicalMapView() {
                 setLocationPermitted(false);
                 return;
             }
-
             setLocationPermitted(true);
-
+            // Balanced accuracy — fast enough for a first fix, with a natural short delay.
             const position = await Location.getCurrentPositionAsync({
                 accuracy: Location.Accuracy.Balanced,
             });
-
             if (!mounted) return;
             setUserLoc({
                 latitude: position.coords.latitude,
@@ -612,33 +611,26 @@ export default function MedicalMapView() {
             });
         })();
 
-        return () => {
-            mounted = false;
-            if (locationSubRef.current) {
-                locationSubRef.current.remove();
-                locationSubRef.current = null;
-            }
-        };
+        return () => { mounted = false; };
     }, []);
 
+    // Continuous watch — always active once permission is granted.
+    // Balanced accuracy while browsing, BestForNavigation during live turn-by-turn.
     useEffect(() => {
-        if (!isLiveNav || !locationPermitted) {
-            if (locationSubRef.current) {
-                locationSubRef.current.remove();
-                locationSubRef.current = null;
-            }
-            return;
-        }
+        if (!locationPermitted) return;
 
         let cancelled = false;
         (async () => {
             const subscription = await Location.watchPositionAsync(
                 {
-                    accuracy: Location.Accuracy.BestForNavigation,
-                    timeInterval: 2000,
-                    distanceInterval: 5,
+                    accuracy: isLiveNav
+                        ? Location.Accuracy.BestForNavigation
+                        : Location.Accuracy.Balanced,
+                    timeInterval: isLiveNav ? 1000 : 3000,
+                    distanceInterval: isLiveNav ? 3 : 10,
                 },
                 (loc) => {
+                    if (cancelled) return;
                     setUserLoc({
                         latitude: loc.coords.latitude,
                         longitude: loc.coords.longitude,
@@ -660,7 +652,7 @@ export default function MedicalMapView() {
                 locationSubRef.current = null;
             }
         };
-    }, [isLiveNav, locationPermitted]);
+    }, [locationPermitted, isLiveNav]);
 
     useEffect(() => {
         if (!mapReady || !providers.length) return;
