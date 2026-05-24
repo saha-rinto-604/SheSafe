@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { authService, getAccessToken, getStoredIdentity } from '../services/api';
 import { getUserProfile, toIdentity } from '../services/profile';
+import { setCurrentUser as setNotifUser } from '../services/notificationStore';
 import type { Role, Identity } from '../identity/identity.types';
 
 type AuthState = {
@@ -54,6 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (identity) {
             setRole(identity.role as Role);
             setUserId(identity.userId);
+            setNotifUser(identity.userId);
           }
         }
       } finally {
@@ -92,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const resolvedRole: Role = (identity?.role as Role) ?? 'USER';
           setRole(resolvedRole);
           setUserId(identity?.userId ?? null);
+          setNotifUser(identity?.userId ?? 'anon');
           await hydrateIdentity(resolvedRole);
           return { role: resolvedRole };
         } finally {
@@ -116,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('[AUTH_CTX] signUp resolved role:', resolvedRole, 'identity:', identity);
           setRole(resolvedRole);
           setUserId(identity?.userId ?? null);
+          setNotifUser(identity?.userId ?? 'anon');
           await hydrateIdentity(resolvedRole);
           return { role: resolvedRole };
         } finally {
@@ -136,6 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserId(null);
           setIdentityCache(null);
           setIsSosLive(false);
+          setNotifUser('anon');
           return true;
         } finally {
           setIsLoading(false);

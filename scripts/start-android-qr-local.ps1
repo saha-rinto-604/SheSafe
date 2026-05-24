@@ -34,12 +34,18 @@ function Stop-PortProcess {
 
 function Get-LanIp {
   try {
-    # Use ipconfig instead of Get-NetIPConfiguration (which can hang on some Windows configs)
-    $output = ipconfig 2>$null
-    $ip = $output | Select-String 'IPv4 Address' | ForEach-Object {
-      if ($_ -match ':\s*(\d+\.\d+\.\d+\.\d+)') { $matches[1] }
-    } | Where-Object { $_ -ne '127.0.0.1' } | Select-Object -First 1
-    if ($ip) { return $ip }
+    # Split ipconfig output into per-adapter blocks.
+    # VirtualBox / VMware host-only adapters have no Default Gateway — skip them.
+    # The real WiFi/Ethernet adapter always has a Default Gateway set.
+    $raw = (ipconfig 2>$null) -join "`n"
+    $blocks = ($raw + "`n") -split '(?m)(?=^\S)'
+    foreach ($block in $blocks) {
+      if ($block -match '(?m)Default Gateway[^:]*:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})') {
+        if ($block -match '(?m)IPv4 Address[^:]*:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})') {
+          return $matches[1]
+        }
+      }
+    }
   } catch {}
   return '127.0.0.1'
 }

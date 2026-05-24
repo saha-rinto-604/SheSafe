@@ -40,7 +40,7 @@ import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
-import { notificationStore } from '../../../../src/services/notificationStore';
+import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // PremiumBar â€” dark glassmorphism surface for header + navbar
@@ -609,9 +609,16 @@ export default function SOSScreen() {
     useFocusEffect(
         useCallback(() => {
             getUserProfile().then(setProfile);
-            notificationStore.getUnreadCount().then(n => setHasUnreadNotif(n > 0));
         }, []),
     );
+
+    // Subscribe to unread count so the red dot updates in real-time.
+    useEffect(() => {
+        const unsub = subscribeUnread(count => setHasUnreadNotif(count > 0));
+        // Initialise the cache if it hasn't been loaded yet.
+        notificationStore.getUnreadCount().catch(() => {});
+        return unsub;
+    }, []);
 
     // (navigation now happens immediately inside triggerSOS, not here)
 

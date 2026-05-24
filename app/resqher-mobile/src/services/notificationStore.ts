@@ -1,11 +1,40 @@
 import * as SecureStore from 'expo-secure-store';
 
-const INDEX_KEY = 'resqher_notif_index_v1';
-const SEQ_KEY = 'resqher_notif_seq_v1';
-const MAX_NOTIFS = 50;
+// Scoped per logged-in user so two accounts on the same device never share notifications.
+let _uid = 'anon';
+
+const idxKey = () => `resqher_notif_index_${_uid}_v1`;
+const seqKey = () => `resqher_notif_seq_${_uid}_v1`;
+const seedKeyFor = () => `resqher_notif_seeded_${_uid}_v1`;
 
 function recordKey(n: number) {
-    return `resqher_notif_${n}`;
+    return `resqher_notif_${_uid}_${n}`;
+}
+
+// In-memory unread count cache. -1 means not yet initialised from SecureStore.
+let _unreadCount = -1;
+const _subs: Set<(count: number) => void> = new Set();
+
+function _emit(count: number) {
+    _unreadCount = count;
+    _subs.forEach(cb => cb(count));
+}
+
+/** Call after every login/logout so all subsequent store ops use the correct bucket. */
+export function setCurrentUser(userId: string): void {
+    _uid = userId || 'anon';
+    _unreadCount = -1; // reset cache on user switch
+}
+
+/**
+ * Subscribe to real-time unread count changes.
+ * The callback fires immediately if the count is already cached.
+ * Returns an unsubscribe function.
+ */
+export function subscribeUnread(cb: (count: number) => void): () => void {
+    _subs.add(cb);
+    if (_unreadCount >= 0) cb(_unreadCount);
+    return () => { _subs.delete(cb); };
 }
 
 export type NotifType =
@@ -28,21 +57,23 @@ export interface AppNotification {
 }
 
 async function getIndex(): Promise<number[]> {
-    const raw = await SecureStore.getItemAsync(INDEX_KEY);
+    const raw = await SecureStore.getItemAsync(idxKey());
     if (!raw) return [];
     try { return JSON.parse(raw); } catch { return []; }
 }
 
 async function saveIndex(idx: number[]): Promise<void> {
-    await SecureStore.setItemAsync(INDEX_KEY, JSON.stringify(idx));
+    await SecureStore.setItemAsync(idxKey(), JSON.stringify(idx));
 }
 
 async function nextSeq(): Promise<number> {
-    const raw = await SecureStore.getItemAsync(SEQ_KEY);
+    const raw = await SecureStore.getItemAsync(seqKey());
     const n = raw ? parseInt(raw, 10) + 1 : 1;
-    await SecureStore.setItemAsync(SEQ_KEY, String(n));
+    await SecureStore.setItemAsync(seqKey(), String(n));
     return n;
 }
+
+const MAX_NOTIFS = 50;
 
 export const notificationStore = {
     async add(payload: Omit<AppNotification, 'n' | 'id' | 'read' | 'createdAt'> & { createdAt?: string }): Promise<void> {
@@ -64,6 +95,8 @@ export const notificationStore = {
             }
         }
         await saveIndex(idx);
+        // Optimistically increment the cached count so subscribers get an instant update.
+        if (_unreadCount >= 0) _emit(_unreadCount + 1);
     },
 
     async getAll(): Promise<AppNotification[]> {
@@ -90,6 +123,7 @@ export const notificationStore = {
                 }
             } catch { /* skip */ }
         }
+        _emit(0);
     },
 
     async markRead(n: number): Promise<void> {
@@ -97,15 +131,25 @@ export const notificationStore = {
         if (!raw) return;
         try {
             const notif: AppNotification = JSON.parse(raw);
-            notif.read = true;
-            await SecureStore.setItemAsync(recordKey(n), JSON.stringify(notif));
+            if (!notif.read) {
+                notif.read = true;
+                await SecureStore.setItemAsync(recordKey(n), JSON.stringify(notif));
+                if (_unreadCount > 0) _emit(_unreadCount - 1);
+            }
         } catch { /* skip */ }
     },
 
     async remove(n: number): Promise<void> {
+        // Check whether the notification being removed was unread before deleting it.
+        const raw = await SecureStore.getItemAsync(recordKey(n));
+        let wasUnread = false;
+        if (raw) {
+            try { wasUnread = !JSON.parse(raw).read; } catch { /* ignore */ }
+        }
         await SecureStore.deleteItemAsync(recordKey(n));
         const idx = await getIndex();
         await saveIndex(idx.filter(i => i !== n));
+        if (wasUnread && _unreadCount > 0) _emit(_unreadCount - 1);
     },
 
     async getUnreadCount(): Promise<number> {
@@ -119,11 +163,10 @@ export const notificationStore = {
                 if (!notif.read) count++;
             } catch { /* skip */ }
         }
+        _emit(count);
         return count;
     },
 };
-
-const SEED_KEY = 'resqher_notif_seeded_v1';
 
 const DEFAULT_NOTIFS = [
     {
@@ -153,10 +196,10 @@ const DEFAULT_NOTIFS = [
 ];
 
 export async function seedDefaultNotifications(): Promise<void> {
-    const already = await SecureStore.getItemAsync(SEED_KEY);
+    const already = await SecureStore.getItemAsync(seedKeyFor());
     if (already) return;
     for (const payload of DEFAULT_NOTIFS) {
         await notificationStore.add(payload);
     }
-    await SecureStore.setItemAsync(SEED_KEY, '1');
+    await SecureStore.setItemAsync(seedKeyFor(), '1');
 }
