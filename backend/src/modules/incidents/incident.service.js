@@ -813,6 +813,23 @@ async function getVolunteerLeaderboard(userId) {
   return { me, rankings };
 }
 
+async function getVolunteerCertificateData(userId, role) {
+  if (String(role || '').toLowerCase() !== 'volunteer') {
+    throw httpError(403, 'Volunteer certificate is available only to volunteers.');
+  }
+
+  const { me } = await getVolunteerLeaderboard(userId);
+  if (!me) {
+    throw httpError(404, 'Volunteer profile not found.');
+  }
+
+  return {
+    name: me.name,
+    assistedIncidents: Number(me.resolvedIncidentCount || 0),
+    totalPoints: Number(me.points || 0),
+  };
+}
+
 /**
  * Toggle volunteer online status.
  */
@@ -867,6 +884,7 @@ module.exports = {
   submitIncidentReview,
   getVolunteerActivity,
   getVolunteerLeaderboard,
+  getVolunteerCertificateData,
   updateOnlineStatus,
   getDispatchList,
 };

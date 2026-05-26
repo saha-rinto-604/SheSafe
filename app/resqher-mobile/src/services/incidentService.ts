@@ -229,6 +229,12 @@ export interface VolunteerLeaderboardResponse {
   rankings: VolunteerLeaderboardRow[];
 }
 
+export interface VolunteerCertificateData {
+  name: string;
+  assistedIncidents: number;
+  totalPoints: number;
+}
+
 function normalizeApiError(error: any) {
   const data = error?.response?.data;
   const next = new Error(data?.message || data?.detail || error?.message || 'Request failed') as Error & {
@@ -429,6 +435,15 @@ export const incidentService = {
       me: res.data?.me ?? null,
       rankings: res.data?.rankings ?? [],
     } as VolunteerLeaderboardResponse;
+  },
+
+  async getVolunteerCertificateData(): Promise<VolunteerCertificateData> {
+    const res = await api.get('/api/volunteer/certificate-data');
+    return {
+      name: String(res.data?.name ?? ''),
+      assistedIncidents: Number(res.data?.assistedIncidents ?? 0),
+      totalPoints: Number(res.data?.totalPoints ?? 0),
+    };
   },
 };
 

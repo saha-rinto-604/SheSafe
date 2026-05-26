@@ -28,6 +28,7 @@ import UserAvatar from '../../../../src/components/shared/UserAvatar';
 
 type MenuItem = {
     label: string;
+    subtitle?: string;
     icon: React.ComponentProps<typeof Feather>['name'];
     danger?: boolean;
     isToggle?: boolean;
@@ -50,6 +51,16 @@ const MENU_SECTIONS: MenuSection[] = [
             { icon: 'shield', label: 'Safety Settings' },
             { icon: 'clipboard', label: 'Incident History' },
             { icon: 'bell', label: 'Receive SOS Alerts', isToggle: true },
+        ],
+    },
+    {
+        title: 'Achievements',
+        items: [
+            {
+                icon: 'award',
+                label: 'Volunteer Certificate',
+                subtitle: 'Preview and download your ResQher achievement certificate',
+            },
         ],
     },
     {
@@ -99,6 +110,11 @@ export default function ProfileMenuScreen() {
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
             setLogoutConfirmVisible(true);
+            return;
+        }
+
+        if (item.label === 'Volunteer Certificate') {
+            router.push('/(tabs)/users/volunteer/certificate');
             return;
         }
 
@@ -262,7 +278,14 @@ export default function ProfileMenuScreen() {
                                         <View style={s.iconBox}>
                                             <Feather name={item.icon} size={18} color={T.violet} />
                                         </View>
-                                        <Text style={s.rowLabel}>{item.label}</Text>
+                                        <View style={s.rowText}>
+                                            <Text style={[s.rowLabel, item.subtitle ? s.rowLabelStacked : null]}>
+                                                {item.label}
+                                            </Text>
+                                            {item.subtitle ? (
+                                                <Text style={s.rowSubtitle}>{item.subtitle}</Text>
+                                            ) : null}
+                                        </View>
                                         <Feather name="chevron-right" size={15} color={T.ink4} />
                                     </TouchableOpacity>
                                 )}
@@ -432,6 +455,10 @@ const s = StyleSheet.create({
         marginRight: 12,
         backgroundColor: T.violetDim,
     },
+    rowText: {
+        flex: 1,
+        paddingRight: 10,
+    },
     iconBoxDanger: {
         backgroundColor: `${T.danger}18`,
     },
@@ -440,6 +467,16 @@ const s = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: T.ink,
+    },
+    rowLabelStacked: {
+        flex: 0,
+    },
+    rowSubtitle: {
+        marginTop: 3,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '500',
+        color: T.ink3,
     },
     rowLabelDanger: {
         color: T.danger,

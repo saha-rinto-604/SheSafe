@@ -13,6 +13,7 @@ export default function VolunteerLayout() {
             <Stack.Screen name="dashboard" />
             <Stack.Screen name="notifications" />
             <Stack.Screen name="profile-menu" />
+            <Stack.Screen name="certificate" />
             <Stack.Screen name="profile-information" />
             <Stack.Screen name="edit-profile" />
             <Stack.Screen name="emergency-contacts" />

@@ -264,6 +264,15 @@ async function volunteerLeaderboard(req, res, next) {
 /**
  * PATCH /api/incidents/online-status — Toggle volunteer online/offline status.
  */
+async function volunteerCertificateData(req, res, next) {
+  try {
+    const result = await incidentService.getVolunteerCertificateData(req.user.id, req.user.role);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function onlineStatus(req, res, next) {
   try {
     const isOnline = req.body.isOnline === true;
@@ -299,5 +308,6 @@ module.exports = {
   createReview,
   volunteerActivity,
   volunteerLeaderboard,
+  volunteerCertificateData,
   onlineStatus,
 };

@@ -11,5 +11,6 @@ router.get('/incidents/assisted', incidentController.assisted);
 router.get('/notifications', incidentController.volunteerNotifications);
 router.get('/activity', incidentController.volunteerActivity);
 router.get('/leaderboard', incidentController.volunteerLeaderboard);
+router.get('/certificate-data', incidentController.volunteerCertificateData);
 
 module.exports = router;
