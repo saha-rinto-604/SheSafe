@@ -120,27 +120,73 @@ function StatusPill({ status }: { status: ChatIncidentStatus }) {
     );
 }
 
-const ChatAvatar = memo(function ChatAvatar({
-    isLive,
-    uri,
-}: {
-    isLive: boolean;
-    uri?: string | null;
-}) {
+const SEP = '#0A0A12';
+
+const MiniPhoto = memo(function MiniPhoto({ uri, style }: { uri?: string | null; style?: any }) {
     return (
-        <View style={[st.avatar, isLive ? st.avatarLive : st.avatarResolved]}>
-            {uri ? (
-                <Image source={{ uri }} style={st.avatarImage} />
-            ) : (
-                <Feather
-                    name="alert-circle"
-                    size={18}
-                    color={isLive ? T.violet : D.subtitle}
-                />
-            )}
-            {isLive && <View style={st.activeDot} />}
+        <View style={[av.mini, style]}>
+            {uri
+                ? <Image source={{ uri }} style={StyleSheet.absoluteFill} />
+                : <View style={[StyleSheet.absoluteFill, av.miniFallback]} />}
         </View>
     );
+});
+
+const GroupChatAvatar = memo(function GroupChatAvatar({
+    uris, isLive,
+}: {
+    uris: (string | null | undefined)[];
+    isLive: boolean;
+}) {
+    const slots = uris.slice(0, 3);
+    const n = slots.length;
+    return (
+        <View style={av.wrap}>
+            <View style={[av.collage, isLive ? av.collageLive : av.collageResolved]}>
+                {n <= 1 ? (
+                    slots[0]
+                        ? <Image source={{ uri: slots[0] }} style={av.single} />
+                        : <Feather name="alert-circle" size={18} color={isLive ? T.violet : D.subtitle} />
+                ) : n === 2 ? (
+                    <>
+                        <MiniPhoto uri={slots[0]} style={av.twoA} />
+                        <MiniPhoto uri={slots[1]} style={av.twoB} />
+                    </>
+                ) : (
+                    <>
+                        <MiniPhoto uri={slots[0]} style={av.threeA} />
+                        <MiniPhoto uri={slots[1]} style={av.threeB} />
+                        <MiniPhoto uri={slots[2]} style={av.threeC} />
+                    </>
+                )}
+            </View>
+            {isLive && <View style={av.dot} />}
+        </View>
+    );
+});
+
+const av = StyleSheet.create({
+    wrap: { width: D.avatarSize, height: D.avatarSize, flexShrink: 0 },
+    collage: {
+        width: D.avatarSize, height: D.avatarSize,
+        borderRadius: 12, borderWidth: 1,
+        overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+    },
+    collageLive: { backgroundColor: T.violetDim, borderColor: T.violet },
+    collageResolved: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)' },
+    single: { width: '100%', height: '100%' },
+    mini: { position: 'absolute', overflow: 'hidden', borderWidth: 1.5, borderColor: SEP },
+    miniFallback: { backgroundColor: 'rgba(138,56,246,0.18)' },
+    twoA: { top: 0, left: 0, width: 29, height: 29, borderRadius: 9 },
+    twoB: { bottom: 0, right: 0, width: 27, height: 27, borderRadius: 8 },
+    threeA: { top: 0, left: 0, width: 25, height: 25, borderRadius: 7 },
+    threeB: { top: 0, right: 0, width: 25, height: 25, borderRadius: 7 },
+    threeC: { bottom: 0, left: 9, width: 25, height: 25, borderRadius: 7 },
+    dot: {
+        position: 'absolute', bottom: -1, right: -1,
+        width: 10, height: 10, borderRadius: 5,
+        backgroundColor: T.danger, borderWidth: 1.5, borderColor: '#120B22', zIndex: 10,
+    },
 });
 
 const IncidentCard = memo(function IncidentCard({
@@ -164,7 +210,13 @@ const IncidentCard = memo(function IncidentCard({
             onPress={onPress}
             activeOpacity={0.75}
         >
-            <ChatAvatar isLive={isLive} uri={incident.sosUser?.photoUri} />
+            <GroupChatAvatar
+                isLive={isLive}
+                uris={[
+                    incident.sosUser?.photoUri,
+                    ...(incident.responders ?? []).slice(0, 2).map(r => r.photoUri),
+                ]}
+            />
 
             <View style={st.cardCenter}>
                 <Text style={st.cardTitle} numberOfLines={1}>
@@ -465,39 +517,6 @@ const st = StyleSheet.create({
     cardActive: {
         borderLeftWidth: 4,
         borderLeftColor: T.violet,
-    },
-    avatar: {
-        width: D.avatarSize,
-        height: D.avatarSize,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-        borderWidth: 1,
-        overflow: 'hidden',
-    },
-    avatarImage: {
-        width: '100%',
-        height: '100%',
-    },
-    avatarLive: {
-        backgroundColor: T.violetDim,
-        borderColor: T.violet,
-    },
-    avatarResolved: {
-        backgroundColor: 'rgba(255,255,255,0.04)',
-        borderColor: 'rgba(255,255,255,0.08)',
-    },
-    activeDot: {
-        position: 'absolute',
-        top: 5,
-        right: 5,
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: T.danger,
-        borderWidth: 1,
-        borderColor: '#120B22',
     },
     cardCenter: {
         flex: 1,
