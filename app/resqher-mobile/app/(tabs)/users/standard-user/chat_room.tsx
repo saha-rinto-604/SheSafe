@@ -11,7 +11,7 @@ import {
     Platform, StatusBar, KeyboardAvoidingView, Keyboard,
     Modal, Pressable, Alert, ScrollView
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -375,7 +375,7 @@ function ArchivePill({ bottomInset, onDelete, message }: { bottomInset: number; 
             </BlurView>
             <TouchableOpacity style={st.archiveDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
                 <Feather name="trash-2" size={14} color="#FF453A" />
-                <Text style={st.archiveDeleteText}>Delete Incident</Text>
+                <Text style={st.archiveDeleteText}>Delete Chat</Text>
             </TouchableOpacity>
         </View>
     );
@@ -413,7 +413,7 @@ export default function ChatRoom() {
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const [isReviewMode, setIsReviewMode] = useState(false);
     const [selectedResponderId, setSelectedResponderId] = useState('');
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
     const routeRequestIdRef = useRef(0);
     const routePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const lastRouteRefreshRef = useRef(0);
@@ -536,17 +536,26 @@ export default function ChatRoom() {
     }, [isReadOnly, isRealIncident, sendMessage, incidentId, userId]);
 
     const handleDeleteIncident = useCallback(() => {
-        Alert.alert('Delete Incident', 'This will permanently remove this chat from your history.', [
+        Alert.alert('Delete this chat from your inbox?', 'This will only remove the chat from your side. It will not delete incident history.', [
             { text: 'Cancel', style: 'cancel' },
-            { text: 'Delete', style: 'destructive', onPress: async () => { await incidentHistory.remove(incidentId); router.back(); } },
+            {
+                text: 'Delete Chat',
+                style: 'destructive',
+                onPress: async () => {
+                    if (isRealIncident) await incidentService.deleteChatForMe(incidentId);
+                    await incidentHistory.remove(incidentId);
+                    router.back();
+                },
+            },
         ]);
-    }, [incidentId, router]);
+    }, [incidentId, isRealIncident, router]);
 
-    const handleConfirmLeave = useCallback(() => {
+    const handleConfirmLeave = useCallback(async () => {
         Haptics.selectionAsync();
         setLeaveConfirmOpen(false);
+        if (isRealIncident) await incidentService.leaveChat(incidentId);
         router.back();
-    }, [router]);
+    }, [incidentId, isRealIncident, router]);
 
     const handleSaveCaseDetails = useCallback(async () => {
         setSavingCaseDetails(true);
@@ -982,7 +991,7 @@ export default function ChatRoom() {
                                     <Feather name="chevron-left" size={22} color={T.ink} />
                                 </TouchableOpacity>
                                 <View style={st.headerTitleBlock}>
-                                    <Text style={st.headerTitle} numberOfLines={1}>ResQher Emergency Chat</Text>
+                                    <Text style={st.headerTitle} numberOfLines={1}>SheSafe Emergency Chat</Text>
                                     <View style={st.headerMeta}>
                                         <View style={[st.headerStatusPill, isLive ? st.headerStatusPillLive : st.headerStatusPillArchived]}>
                                             <Text style={isLive ? st.headerStatusTextLive : st.headerStatusTextArchived}>{isLive ? 'LIVE' : 'ARCHIVED'}</Text>
@@ -1063,7 +1072,7 @@ export default function ChatRoom() {
                             ) : (
                                 <TouchableOpacity style={st.headerMenuRow} onPress={() => { setHeaderMenuOpen(false); handleDeleteIncident(); }}>
                                     <Feather name="trash-2" size={16} color="#FF453A" />
-                                    <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Delete Incident</Text>
+                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Delete Chat</Text>
                                 </TouchableOpacity>
                             )}
                         </View>

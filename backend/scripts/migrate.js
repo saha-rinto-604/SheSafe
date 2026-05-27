@@ -22,6 +22,7 @@ const MIGRATIONS = [
   'migration_add_profile_and_modules.sql',
   '003_multi_volunteer_incidents.sql',
   '004_user_case_details.sql',
+  '006_admin_module.sql',
   'seed_medical.sql',        // idempotent — INSERT IGNORE
   'seed_incidents_demo.sql', // idempotent — WHERE NOT EXISTS
 ]; // add new migration files here in order

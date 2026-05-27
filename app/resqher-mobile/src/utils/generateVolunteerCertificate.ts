@@ -35,7 +35,7 @@ export function getVolunteerCertificateHtml(data: VolunteerCertificateData) {
       ? 'Outstanding Volunteer Contributor'
       : totalPoints >= 800
         ? 'Active Community Supporter'
-        : 'ResQher Volunteer Contributor';
+        : 'SheSafe Volunteer Contributor';
 
   const generatedDate = new Date().toLocaleDateString();
 
@@ -92,11 +92,19 @@ export function getVolunteerCertificateHtml(data: VolunteerCertificateData) {
       }
 
       .brand {
-        color: #b48a2c;
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 4px;
-        text-transform: uppercase;
+        font-family: Arial, sans-serif;
+        font-size: 20px;
+        line-height: 24px;
+        font-weight: 900;
+        letter-spacing: 0;
+      }
+
+      .brand-she {
+        color: #8A38F6;
+      }
+
+      .brand-safe {
+        color: #2f3442;
       }
 
       .title {
@@ -234,7 +242,7 @@ export function getVolunteerCertificateHtml(data: VolunteerCertificateData) {
     <div class="page">
       <div class="certificate">
         <div class="inner-border">
-          <div class="brand">ResQher</div>
+          <div class="brand"><span class="brand-she">She</span><span class="brand-safe">Safe</span></div>
           <h1 class="title">CERTIFICATE</h1>
           <h2 class="subtitle">OF APPRECIATION</h2>
 
@@ -245,9 +253,9 @@ export function getVolunteerCertificateHtml(data: VolunteerCertificateData) {
 
           <p class="message">
             This certificate is proudly awarded to <b>${name}</b> for successfully assisting in
-            <b>${assistedIncidents}</b> verified volunteer works through the <b>ResQher app</b>
+            <b>${assistedIncidents}</b> verified volunteer works through the <b>SheSafe app</b>
             and earning <b>${totalPoints}</b> points. Their dedication, responsibility, and
-            contribution reflect ResQher's mission of safer and faster community support.
+            contribution reflect SheSafe's mission of safer and faster community support.
           </p>
 
           <div class="stats">
@@ -261,7 +269,7 @@ export function getVolunteerCertificateHtml(data: VolunteerCertificateData) {
             </div>
           </div>
 
-          <div class="badge">RESQHER</div>
+          <div class="badge">SHESAFE</div>
 
           <div class="footer">
             <div class="date">Generated on: ${generatedDate}</div>
@@ -297,7 +305,7 @@ export async function shareVolunteerCertificatePdf(data: VolunteerCertificateDat
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(result.uri, {
       mimeType: 'application/pdf',
-      dialogTitle: 'Download or share your ResQher certificate',
+      dialogTitle: 'Download or share your SheSafe certificate',
       UTI: 'com.adobe.pdf',
     });
   }

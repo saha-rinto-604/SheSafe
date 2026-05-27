@@ -2,18 +2,19 @@ import api from './api';
 import type { Message, Incident, Participant } from '../types/chat';
 
 function toMessage(raw: any): Message {
+  const isSystem = raw.type === 'SYSTEM' || raw.message_type === 'SYSTEM' || raw.senderRole === 'system';
   if (raw.senderName || raw.text) {
     return {
       id: String(raw.id),
       incidentId: String(raw.incidentId ?? raw.incident_id),
       sender: {
         id: String(raw.senderId ?? raw.sender_id),
-        name: raw.senderName ?? raw.name ?? '',
+        name: isSystem ? '' : raw.senderName ?? raw.name ?? '',
         role: raw.senderRole === 'volunteer' ? 'VOLUNTEER' : raw.senderRole === 'law_enforcement' ? 'POLICE' : 'USER',
         avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
       },
       content: raw.text ?? raw.content ?? '',
-      type: raw.type ?? raw.message_type ?? (raw.senderRole === 'system' ? 'SYSTEM' : 'TEXT'),
+      type: raw.type ?? raw.message_type ?? (isSystem ? 'SYSTEM' : 'TEXT'),
       timestamp: raw.createdAt ?? raw.timestamp ?? raw.created_at,
       mediaUrl: raw.mediaUrl ?? raw.media_url,
     };
@@ -25,16 +26,17 @@ function toMessage(raw: any): Message {
     sender: raw.sender
       ? {
           ...raw.sender,
+          name: isSystem ? '' : raw.sender.name,
           avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
         }
       : {
           id: String(raw.sender_id),
-          name: raw.name ?? '',
+          name: isSystem ? '' : raw.name ?? '',
           role: raw.role ?? 'USER',
           avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
         },
     content: raw.content,
-    type: raw.type ?? raw.message_type ?? 'TEXT',
+    type: raw.type ?? raw.message_type ?? (isSystem ? 'SYSTEM' : 'TEXT'),
     timestamp: raw.timestamp ?? raw.created_at,
     mediaUrl: raw.mediaUrl ?? raw.media_url,
   };
@@ -75,5 +77,17 @@ export const chatService = {
       params: search?.trim() ? { search: search.trim() } : undefined,
     });
     return (res.data?.incidents ?? []) as Incident[];
+  },
+
+  async archiveForMe(incidentId: string): Promise<void> {
+    await api.patch(`/api/chat/${incidentId}/archive-for-me`);
+  },
+
+  async deleteForMe(incidentId: string): Promise<void> {
+    await api.patch(`/api/chat/${incidentId}/delete-for-me`);
+  },
+
+  async leave(incidentId: string): Promise<void> {
+    await api.patch(`/api/chat/${incidentId}/leave`);
   },
 };

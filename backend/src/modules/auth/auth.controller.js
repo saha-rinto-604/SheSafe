@@ -18,6 +18,15 @@ async function login(req, res, next) {
   }
 }
 
+async function adminLogin(req, res, next) {
+  try {
+    const result = await authService.adminLogin(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function getRoles(req, res, next) {
   try {
     const roles = await authService.getRoles();
@@ -65,6 +74,7 @@ async function changePassword(req, res, next) {
 module.exports = {
   signup,
   login,
+  adminLogin,
   getRoles,
   forgotPassword,
   resetPassword,

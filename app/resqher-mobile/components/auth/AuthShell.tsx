@@ -8,6 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { T } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
+import SheSafeMark from '../../src/components/SheSafeMark';
 
 type Props = {
   children: React.ReactNode;
@@ -46,7 +47,7 @@ export default function AuthShell({ children, onBack }: Props) {
 
           <View style={styles.logoContainer}>
             <View style={styles.logoIconBg}>
-              <Feather name="shield" size={42} color={T.violet} />
+              <SheSafeMark size={76} />
             </View>
           </View>
 

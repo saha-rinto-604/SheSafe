@@ -22,11 +22,13 @@ type WSEvent =
     | { type: 'incident.location.updated'; payload: IncidentLocation };
 
 function normalizeSocketMessage(raw: any): Message {
+    const isSystem = raw?.type === 'SYSTEM' || raw?.message_type === 'SYSTEM' || raw?.senderRole === 'system';
     if (raw?.sender) {
         return {
             ...raw,
             sender: {
                 ...raw.sender,
+                name: isSystem ? '' : raw.sender.name,
                 avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
             },
         } as Message;
@@ -36,7 +38,7 @@ function normalizeSocketMessage(raw: any): Message {
         incidentId: String(raw.incidentId ?? raw.incident_id),
         sender: {
             id: String(raw.senderId ?? raw.sender_id),
-            name: raw.senderName ?? raw.name ?? '',
+            name: isSystem ? '' : raw.senderName ?? raw.name ?? '',
             role: raw.senderRole === 'volunteer' ? 'VOLUNTEER' : raw.senderRole === 'law_enforcement' ? 'POLICE' : 'USER',
             avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
         },

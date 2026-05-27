@@ -16,6 +16,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import type { UserRole } from '../../src/services/api';
 import { useToast } from '../../src/components/Toast';
 import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
+import SheSafeLogo from '../../src/components/SheSafeLogo';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -244,7 +245,7 @@ export default function Signup() {
         ROLE_TO_AUTH[role] ?? 'USER'
       );
 
-      showToast({ type: 'success', title: 'Welcome to ResQher!', message: 'Your account has been created successfully.' });
+      showToast({ type: 'success', title: 'Welcome to SheSafe!', message: 'Your account has been created successfully.' });
 
       const rolePaths: Record<string, string> = {
         USER: '/(tabs)/users/standard-user/sos_screen',
@@ -275,7 +276,7 @@ export default function Signup() {
 
 
   const STEP_TITLES = {
-    1: { title: 'Join ResQher', subtitle: 'Select how you want to use the app.' },
+    1: { title: 'Join SheSafe', subtitle: 'Select how you want to use the app.' },
     2: { title: 'Your Identity', subtitle: 'Tell us who you are.' },
     3: { title: 'Secure Account', subtitle: 'Create a strong password.' },
   };
@@ -290,6 +291,7 @@ export default function Signup() {
         contentContainerStyle={{ flexGrow: 1 }}
       >
         <View style={st.card}>
+          <SheSafeLogo size={32} center style={st.logo} />
           {/* ── Progress + Header ── */}
           <StepProgress step={step} />
           <View style={st.header}>
@@ -460,6 +462,8 @@ const st = StyleSheet.create({
   },
 
   // ── 3-node progress tracker
+  logo: { marginBottom: S.s4 },
+
   progressWrap: {
     flexDirection: 'row', alignItems: 'center',
     marginBottom: S.s4, paddingHorizontal: S.s1,

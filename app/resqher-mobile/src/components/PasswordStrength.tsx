@@ -2,7 +2,7 @@
  * PasswordStrength.tsx — Real-time password validation + strength meter
  * ──────────────────────────────────────────────────────────────────────
  * Shows a dynamic checklist and color-coded progress bar as the user types.
- * Designed for the ResQher dark theme with smooth animations.
+ * Designed for the SheSafe dark theme with smooth animations.
  */
 
 import React, { useMemo, useRef, useEffect } from 'react';

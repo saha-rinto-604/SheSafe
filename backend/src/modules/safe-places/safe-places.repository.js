@@ -17,11 +17,54 @@ async function createSafePlace({ userId, latitude, longitude, name, address, des
   return rows[0];
 }
 
+async function countPendingByUser(userId) {
+  const rows = await query(
+    `SELECT COUNT(*) AS count
+     FROM safe_places
+     WHERE reported_by = ?
+       AND status = 'PENDING'`,
+    [userId]
+  );
+  return Number(rows[0]?.count || 0);
+}
+
+async function findExactDuplicate({ latitude, longitude, name }) {
+  const rows = await query(
+    `SELECT id
+     FROM safe_places
+     WHERE LOWER(name) = LOWER(?)
+       AND latitude = ?
+       AND longitude = ?
+       AND status IN ('PENDING','CONFIRMED')
+     LIMIT 1`,
+    [name, latitude, longitude]
+  );
+  return rows[0] || null;
+}
+
+async function findNearbyDuplicate({ latitude, longitude, radiusMeters = 100 }) {
+  const rows = await query(
+    `SELECT id, name,
+            (6371000 * ACOS(LEAST(1,
+              COS(RADIANS(?)) * COS(RADIANS(latitude)) *
+              COS(RADIANS(longitude) - RADIANS(?)) +
+              SIN(RADIANS(?)) * SIN(RADIANS(latitude))
+            ))) AS distance_m
+     FROM safe_places
+     WHERE status IN ('PENDING','CONFIRMED')
+     HAVING distance_m <= ?
+     ORDER BY distance_m ASC
+     LIMIT 1`,
+    [latitude, longitude, latitude, radiusMeters]
+  );
+  return rows[0] || null;
+}
+
 async function getConfirmedSafePlaces() {
   return query(
     `SELECT id, latitude, longitude, name, address, description, status, created_at
      FROM safe_places
-     WHERE status = 'CONFIRMED'
+     WHERE UPPER(status) IN ('CONFIRMED', 'APPROVED')
      ORDER BY created_at DESC`
   );
 }
@@ -41,4 +84,12 @@ async function deleteByUser(userId) {
   return { deleted: result.affectedRows };
 }
 
-module.exports = { createSafePlace, getConfirmedSafePlaces, getAllSafePlaces, deleteByUser };
+module.exports = {
+  createSafePlace,
+  countPendingByUser,
+  findExactDuplicate,
+  findNearbyDuplicate,
+  getConfirmedSafePlaces,
+  getAllSafePlaces,
+  deleteByUser,
+};

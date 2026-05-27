@@ -121,7 +121,7 @@ function Write-HealthFailureHelp {
 # ===========================================================================
 
 Write-Host ""
-Write-Host "=== ResQher Android QR Launcher ===" -ForegroundColor Cyan
+Write-Host "=== SheSafe Android QR Launcher ===" -ForegroundColor Cyan
 Write-Host "Repo: $repoRoot"
 Write-Host ""
 
@@ -188,7 +188,7 @@ if ($SkipMigrations) {
 Write-Host ""
 if ($StartBackend) {
   Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
-  $backendCmd = "Write-Host 'ResQher Backend - port $BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+  $backendCmd = "Write-Host 'SheSafe Backend - port $BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
   Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
 } else {
   Write-Host "[5/7] Using already-running backend on port $BackendPort." -ForegroundColor Yellow

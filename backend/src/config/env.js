@@ -37,4 +37,8 @@ module.exports = {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+  admin: {
+    phoneNumber: (process.env.ADMIN_PHONE_NUMBER || '').trim(),
+    passwordHash: (process.env.ADMIN_PASSWORD_HASH || '').trim(),
+  },
 };

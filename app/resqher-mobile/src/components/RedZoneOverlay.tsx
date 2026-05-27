@@ -12,7 +12,7 @@
  */
 
 import React, { memo } from 'react';
-import { Circle } from 'react-native-maps';
+import { Circle } from './shared/MapViewCompat';
 import type { RedZone } from '../types/medical';
 
 interface Props {

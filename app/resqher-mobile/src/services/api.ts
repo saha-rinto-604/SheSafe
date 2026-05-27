@@ -1,6 +1,7 @@
 import axios, { AxiosError, isAxiosError } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { jwtDecode } from 'jwt-decode';
+import { Platform } from 'react-native';
 
 export type UserRole = 'standard_user' | 'volunteer' | 'law_enforcement';
 
@@ -10,10 +11,40 @@ const IDENTITY_KEY = 'resqher_identity_v1';
 
 type StoredIdentity = { role: string; userId: string };
 
+const canUseWebStorage = () => (
+  Platform.OS === 'web'
+  && typeof window !== 'undefined'
+  && typeof window.localStorage !== 'undefined'
+);
+
+async function setStoredItem(key: string, value: string) {
+  if (canUseWebStorage()) {
+    window.localStorage.setItem(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value);
+}
+
+async function getStoredItem(key: string) {
+  if (canUseWebStorage()) {
+    return window.localStorage.getItem(key);
+  }
+  return SecureStore.getItemAsync(key);
+}
+
+async function deleteStoredItem(key: string) {
+  if (canUseWebStorage()) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key);
+}
+
 const DB_ROLE_MAP: Record<string, string> = {
   standard_user: 'USER',
   volunteer: 'VOLUNTEER',
   law_enforcement: 'POLICE',
+  admin: 'ADMIN',
 };
 
 function normalizeBaseUrl(url: string) {
@@ -73,8 +104,8 @@ const api = axios.create({
 });
 
 export async function setTokens(access: string, refresh: string) {
-  await SecureStore.setItemAsync(ACCESS_KEY, access);
-  await SecureStore.setItemAsync(REFRESH_KEY, refresh);
+  await setStoredItem(ACCESS_KEY, access);
+  await setStoredItem(REFRESH_KEY, refresh);
   // Decode JWT to extract role and userId for the app
   try {
     const decoded = jwtDecode<{ sub: string; role: string }>(access);
@@ -82,26 +113,26 @@ export async function setTokens(access: string, refresh: string) {
       userId: decoded.sub,
       role: DB_ROLE_MAP[decoded.role] ?? 'USER',
     };
-    await SecureStore.setItemAsync(IDENTITY_KEY, JSON.stringify(identity));
+    await setStoredItem(IDENTITY_KEY, JSON.stringify(identity));
   } catch { /* token malformed — identity stays stale */ }
 }
 
 export async function clearTokens() {
-  await SecureStore.deleteItemAsync(ACCESS_KEY);
-  await SecureStore.deleteItemAsync(REFRESH_KEY);
-  await SecureStore.deleteItemAsync(IDENTITY_KEY);
+  await deleteStoredItem(ACCESS_KEY);
+  await deleteStoredItem(REFRESH_KEY);
+  await deleteStoredItem(IDENTITY_KEY);
 }
 
 export async function getAccessToken() {
-  return SecureStore.getItemAsync(ACCESS_KEY);
+  return getStoredItem(ACCESS_KEY);
 }
 
 export async function getRefreshToken() {
-  return SecureStore.getItemAsync(REFRESH_KEY);
+  return getStoredItem(REFRESH_KEY);
 }
 
 export async function getStoredIdentity(): Promise<StoredIdentity | null> {
-  const raw = await SecureStore.getItemAsync(IDENTITY_KEY);
+  const raw = await getStoredItem(IDENTITY_KEY);
   if (!raw) return null;
   try { return JSON.parse(raw) as StoredIdentity; } catch { return null; }
 }
@@ -156,11 +187,10 @@ function friendlyError(err: unknown) {
   return new Error('Request failed');
 }
 
-const ROLE_MAP: Record<string, string> = {
+const ROLE_MAP: Record<'USER' | 'VOLUNTEER' | 'POLICE', string> = {
   USER: 'standard_user',
   VOLUNTEER: 'volunteer',
   POLICE: 'law_enforcement',
-  ADMIN: 'standard_user',
 };
 
 export const authService = {
@@ -171,13 +201,16 @@ export const authService = {
     lastName: string,
     role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
   ) {
+    if (role === 'ADMIN') {
+      throw new Error('Admin accounts cannot be created through public signup.');
+    }
     try {
       const res = await api.post('/api/auth/signup', {
         phoneNumber: phone,
         password,
         firstName,
         lastName,
-        role: ROLE_MAP[role] ?? 'standard_user',
+        role: ROLE_MAP[role],
       });
       const { accessToken } = res.data || {};
       if (accessToken) {
@@ -192,6 +225,18 @@ export const authService = {
   async login(username: string, password: string) {
     try {
       const res = await api.post('/api/auth/login', { phoneNumber: username, password });
+      const { accessToken } = res.data || {};
+      if (!accessToken) throw new Error('Invalid token response');
+      await setTokens(accessToken, accessToken);
+      return accessToken as string;
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
+  async adminLogin(phone: string, password: string) {
+    try {
+      const res = await api.post('/api/auth/admin-login', { phoneNumber: phone, password });
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);

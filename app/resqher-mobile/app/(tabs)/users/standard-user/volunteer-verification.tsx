@@ -52,13 +52,14 @@ const INITIAL_RECORD: VerificationRecord = { status: 'not_applied' };
 /** Transform API response to local shape. */
 function apiToRecord(v: any): VerificationRecord {
     if (!v) return { ...INITIAL_RECORD };
+    const docs = v.documents || {};
     return {
         status: v.status || 'not_applied',
         submittedOn: v.submittedAt || v.submitted_at || undefined,
         documents: {
-            idCardUri: v.idCardUrl || v.id_card_url || undefined,
-            selfieUri: v.selfieUrl || v.selfie_url || undefined,
-            certificateUri: v.certificateUrl || v.certificate_url || undefined,
+            idCardUri: docs.idCardUrl || v.idCardUrl || v.id_card_url || undefined,
+            selfieUri: docs.selfieUrl || v.selfieUrl || v.selfie_url || undefined,
+            certificateUri: docs.certificateUrl || v.certificateUrl || v.certificate_url || undefined,
         },
         rejectionReason: v.rejectionReason || v.rejection_reason || undefined,
     };
@@ -81,12 +82,21 @@ function formatDate(iso: string): string {
     } catch { return iso; }
 }
 
+function getErrorMessage(err: any, fallback: string) {
+    return err?.response?.data?.message
+        || err?.response?.data?.error?.message
+        || err?.response?.data?.error
+        || err?.message
+        || fallback;
+}
+
 /** Upload a document image to the backend. */
 async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localUri: string): Promise<string | null> {
     const formData = new FormData();
     const filename = localUri.split('/').pop() || 'doc.jpg';
     const match = /\.(\w+)$/.exec(filename);
-    const mimeType = match ? `image/${match[1]}` : 'image/jpeg';
+    const ext = match?.[1]?.toLowerCase();
+    const mimeType = ext === 'jpg' ? 'image/jpeg' : ext ? `image/${ext}` : 'image/jpeg';
 
     formData.append('document', {
         uri: localUri,
@@ -97,7 +107,10 @@ async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localU
     const { data } = await api.post(`/api/verification/upload/${type}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
     });
-    return data?.url || data?.verification?.[`${type}_url`] || localUri;
+    const docs = data?.verification?.documents || {};
+    if (type === 'id_card') return docs.idCardUrl || data?.verification?.idCardUrl || data?.verification?.id_card_url || localUri;
+    if (type === 'selfie') return docs.selfieUrl || data?.verification?.selfieUrl || data?.verification?.selfie_url || localUri;
+    return docs.certificateUrl || data?.verification?.certificateUrl || data?.verification?.certificate_url || localUri;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -234,7 +247,7 @@ export default function VolunteerVerificationScreen() {
             setRecord(rec);
             setViewState('form');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not start application.';
+            const msg = getErrorMessage(err, 'Could not start application.');
             Alert.alert('Error', msg);
         }
     };
@@ -260,7 +273,7 @@ export default function VolunteerVerificationScreen() {
             setRecord(rec);
             setViewState('status');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not submit verification.';
+            const msg = getErrorMessage(err, 'Could not submit verification.');
             Alert.alert('Error', msg);
         } finally {
             setSubmitting(false);
@@ -277,7 +290,7 @@ export default function VolunteerVerificationScreen() {
             setCertUri(undefined);
             setViewState('form');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not reapply.';
+            const msg = getErrorMessage(err, 'Could not reapply.');
             Alert.alert('Error', msg);
         }
     };

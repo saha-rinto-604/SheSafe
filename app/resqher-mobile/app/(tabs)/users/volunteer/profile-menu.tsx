@@ -59,7 +59,7 @@ const MENU_SECTIONS: MenuSection[] = [
             {
                 icon: 'award',
                 label: 'Volunteer Certificate',
-                subtitle: 'Preview and download your ResQher achievement certificate',
+                subtitle: 'Preview and download your SheSafe achievement certificate',
             },
         ],
     },

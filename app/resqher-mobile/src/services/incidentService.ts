@@ -121,6 +121,8 @@ export interface IncidentResponder {
   id: string;
   name: string;
   photoUri?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   role: 'volunteer';
   acceptedAt?: string | null;
 }
@@ -132,10 +134,22 @@ export interface IncidentSosUser {
   role: 'standard_user';
 }
 
+export interface IncidentChatParticipant {
+  id: string;
+  name: string;
+  photoUri?: string | null;
+  role?: string;
+  status?: string | null;
+  leftAt?: string | null;
+  archivedAt?: string | null;
+  deletedForUserAt?: string | null;
+}
+
 export interface IncidentRespondersResponse {
   incidentId: number | string;
   sosUser: IncidentSosUser;
   volunteers: IncidentResponder[];
+  activeParticipants?: IncidentChatParticipant[];
   totalMembers: number;
   maxVolunteerResponders: number;
 }
@@ -361,6 +375,18 @@ export const incidentService = {
       params: search?.trim() ? { search: search.trim() } : undefined,
     });
     return res.data?.incidents ?? [];
+  },
+
+  async archiveChatForMe(id: number | string) {
+    await api.patch(`/api/chat/${id}/archive-for-me`);
+  },
+
+  async deleteChatForMe(id: number | string) {
+    await api.patch(`/api/chat/${id}/delete-for-me`);
+  },
+
+  async leaveChat(id: number | string) {
+    await api.patch(`/api/chat/${id}/leave`);
   },
 
   async getIncidentResponders(id: number | string): Promise<IncidentRespondersResponse> {

@@ -134,6 +134,47 @@ async function ensureVolunteerDispatchSchema() {
   );
 
   await query(
+    `CREATE TABLE IF NOT EXISTS incident_participants (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+       incident_id BIGINT UNSIGNED NOT NULL,
+       user_id BIGINT UNSIGNED NOT NULL,
+       joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       archived_at TIMESTAMP NULL DEFAULT NULL,
+       deleted_for_user_at TIMESTAMP NULL DEFAULT NULL,
+       left_at TIMESTAMP NULL DEFAULT NULL,
+       PRIMARY KEY (id),
+       UNIQUE KEY uq_participant (incident_id, user_id),
+       KEY idx_participants_incident_id (incident_id),
+       KEY idx_participants_user_visibility (user_id, archived_at, deleted_for_user_at),
+       CONSTRAINT fk_part_incident FOREIGN KEY (incident_id)
+         REFERENCES incidents (id) ON UPDATE CASCADE ON DELETE CASCADE,
+       CONSTRAINT fk_part_user FOREIGN KEY (user_id)
+         REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
+     )`
+  );
+
+  if (!(await hasColumn('incident_participants', 'archived_at'))) {
+    await query(
+      `ALTER TABLE incident_participants
+       ADD COLUMN archived_at TIMESTAMP NULL DEFAULT NULL AFTER joined_at`
+    );
+  }
+
+  if (!(await hasColumn('incident_participants', 'deleted_for_user_at'))) {
+    await query(
+      `ALTER TABLE incident_participants
+       ADD COLUMN deleted_for_user_at TIMESTAMP NULL DEFAULT NULL AFTER archived_at`
+    );
+  }
+
+  if (!(await hasColumn('incident_participants', 'left_at'))) {
+    await query(
+      `ALTER TABLE incident_participants
+       ADD COLUMN left_at TIMESTAMP NULL DEFAULT NULL AFTER deleted_for_user_at`
+    );
+  }
+
+  await query(
     `CREATE TABLE IF NOT EXISTS reviews (
        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
        incident_id BIGINT UNSIGNED NOT NULL,
@@ -185,6 +226,15 @@ async function createIncident({ userId, latitude, longitude, address }) {
      FROM incidents WHERE id = ? LIMIT 1`,
     [result.insertId]
   );
+  await query(
+    `INSERT INTO incident_participants (incident_id, user_id)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE
+       archived_at = NULL,
+       deleted_for_user_at = NULL,
+       left_at = NULL`,
+    [result.insertId, userId]
+  );
   return rows[0];
 }
 
@@ -209,7 +259,7 @@ async function getUnavailableIncidentIdsForVolunteer(volunteerId) {
   return query(
     `SELECT incident_id
      FROM incident_volunteers
-     WHERE volunteer_id = ? AND status = 'ACCEPTED'
+     WHERE volunteer_id = ? AND status IN ('ACCEPTED', 'LEFT', 'REMOVED')
      UNION
      SELECT incident_id
      FROM incident_volunteer_rejections
@@ -440,18 +490,40 @@ async function acceptIncidentAtomic(incidentId, volunteerId) {
     }
 
     const incident = rows[0];
+    if (Number(incident.user_id) === Number(volunteerId)) {
+      await conn.rollback();
+      return { success: false, reason: 'OWN_INCIDENT' };
+    }
     if (['RESOLVED', 'CANCELLED'].includes(String(incident.status).toUpperCase())) {
       await conn.rollback();
       return { success: false, reason: 'CLOSED' };
     }
 
+    const [ownLiveRows] = await conn.execute(
+      `SELECT id
+       FROM incidents
+       WHERE user_id = ?
+         AND status IN ('ACTIVE', 'IN_PROGRESS')
+       LIMIT 1`,
+      [volunteerId]
+    );
+    if (ownLiveRows.length > 0) {
+      await conn.rollback();
+      return { success: false, reason: 'OWN_SOS_ACTIVE' };
+    }
+
     const [existing] = await conn.execute(
-      `SELECT id FROM incident_volunteers
-       WHERE incident_id = ? AND volunteer_id = ? AND status = 'ACCEPTED'
+      `SELECT id, status FROM incident_volunteers
+       WHERE incident_id = ? AND volunteer_id = ?
        LIMIT 1`,
       [incidentId, volunteerId]
     );
-    const alreadyAccepted = existing.length > 0;
+    const existingStatus = existing[0]?.status;
+    const alreadyAccepted = existingStatus === 'ACCEPTED';
+    if (existingStatus && existingStatus !== 'ACCEPTED') {
+      await conn.rollback();
+      return { success: false, reason: 'PREVIOUSLY_LEFT' };
+    }
 
     const [countRows] = await conn.execute(
       `SELECT COUNT(*) AS count
@@ -535,6 +607,10 @@ async function getAssistedByVolunteer(volunteerId) {
      JOIN incident_volunteers iv ON iv.incident_id = i.id
        AND iv.volunteer_id = ?
        AND iv.status = 'ACCEPTED'
+     JOIN incident_participants ip ON ip.incident_id = i.id
+       AND ip.user_id = iv.volunteer_id
+       AND ip.archived_at IS NULL
+       AND ip.deleted_for_user_at IS NULL
      JOIN users u ON i.user_id = u.id
      LEFT JOIN chat_messages lm ON lm.id = (
        SELECT m2.id FROM chat_messages m2
@@ -575,12 +651,16 @@ async function getChatsByUser(userId) {
      )
      LEFT JOIN users lu ON lm.sender_id = lu.id
      LEFT JOIN roles lr ON lu.role_id = lr.id
+     LEFT JOIN incident_participants ip
+       ON ip.incident_id = i.id
+      AND ip.user_id = ?
      WHERE i.user_id = ?
        AND i.status IN ('ACTIVE', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED')
+       AND (ip.id IS NULL OR (ip.archived_at IS NULL AND ip.deleted_for_user_at IS NULL))
      ORDER BY
        CASE WHEN i.status IN ('ACTIVE', 'IN_PROGRESS') THEN 0 ELSE 1 END,
        COALESCE(lm.created_at, i.updated_at, i.created_at) DESC`,
-    [userId]
+    [userId, userId]
   );
 }
 
@@ -604,8 +684,11 @@ async function getIncidentResponders(incidentId) {
         u.latest_longitude,
         iv.accepted_at
      FROM incident_volunteers iv
+     JOIN incidents i ON i.id = iv.incident_id
      JOIN users u ON iv.volunteer_id = u.id
-     WHERE iv.incident_id = ? AND iv.status = 'ACCEPTED'
+     WHERE iv.incident_id = ?
+       AND iv.status = 'ACCEPTED'
+       AND iv.volunteer_id <> i.user_id
      ORDER BY iv.accepted_at ASC, iv.id ASC`,
     [incidentId]
   );
@@ -631,6 +714,97 @@ async function isIncidentMember(incidentId, userId) {
     [userId, incidentId, userId]
   );
   return rows.length > 0;
+}
+
+async function getIncidentParticipantState(incidentId, userId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT archived_at, deleted_for_user_at, left_at
+     FROM incident_participants
+     WHERE incident_id = ? AND user_id = ?
+     LIMIT 1`,
+    [incidentId, userId]
+  );
+  return rows[0] || null;
+}
+
+async function leaveActiveAssistedIncidentsForVolunteer(volunteerId) {
+  await ensureVolunteerDispatchSchema();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [rows] = await conn.execute(
+      `SELECT iv.incident_id
+       FROM incident_volunteers iv
+       JOIN incidents i ON i.id = iv.incident_id
+       WHERE iv.volunteer_id = ?
+         AND iv.status = 'ACCEPTED'
+         AND i.user_id <> ?
+         AND i.status IN ('ACTIVE', 'IN_PROGRESS')
+       FOR UPDATE`,
+      [volunteerId, volunteerId]
+    );
+
+    const incidentIds = rows.map((row) => row.incident_id);
+    if (!incidentIds.length) {
+      await conn.commit();
+      return { incidentIds: [], count: 0 };
+    }
+
+    for (const incidentId of incidentIds) {
+      await conn.execute(
+        `UPDATE incident_volunteers
+         SET status = 'LEFT', updated_at = NOW()
+         WHERE incident_id = ?
+           AND volunteer_id = ?
+           AND status = 'ACCEPTED'`,
+        [incidentId, volunteerId]
+      );
+
+      await conn.execute(
+        `INSERT INTO incident_participants (incident_id, user_id, archived_at, left_at)
+         VALUES (?, ?, NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           archived_at = COALESCE(archived_at, NOW()),
+           left_at = COALESCE(left_at, NOW())`,
+        [incidentId, volunteerId]
+      );
+
+      await conn.execute(
+        `UPDATE incidents
+         SET volunteer_id = (
+             SELECT next_volunteer_id FROM (
+               SELECT volunteer_id AS next_volunteer_id
+               FROM incident_volunteers
+               WHERE incident_id = ?
+                 AND status = 'ACCEPTED'
+                 AND volunteer_id <> ?
+               ORDER BY accepted_at ASC, id ASC
+               LIMIT 1
+             ) next_responder
+           ),
+           updated_at = NOW()
+         WHERE id = ?
+           AND volunteer_id = ?`,
+        [incidentId, volunteerId, incidentId, volunteerId]
+      );
+
+      await conn.execute(
+        `INSERT INTO chat_messages (incident_id, sender_id, content, message_type)
+         VALUES (?, ?, 'A responder left this dispatch.', 'SYSTEM')`,
+        [incidentId, volunteerId]
+      );
+    }
+
+    await conn.commit();
+    return { incidentIds: incidentIds.map(String), count: incidentIds.length };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 async function getIncidentRouteContext(incidentId) {
@@ -951,4 +1125,7 @@ module.exports = {
   getVolunteerSummary,
   ensureDefaultIncidentMessages,
   setUserOnlineStatus,
+  ensureVolunteerDispatchSchema,
+  getIncidentParticipantState,
+  leaveActiveAssistedIncidentsForVolunteer,
 };

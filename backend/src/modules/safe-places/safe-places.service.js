@@ -1,5 +1,12 @@
 const { httpError } = require('../../utils/httpError');
-const { createSafePlace, getConfirmedSafePlaces, deleteByUser } = require('./safe-places.repository');
+const {
+  createSafePlace,
+  countPendingByUser,
+  findExactDuplicate,
+  findNearbyDuplicate,
+  getConfirmedSafePlaces,
+  deleteByUser,
+} = require('./safe-places.repository');
 
 function formatZone(row) {
   return {
@@ -29,6 +36,21 @@ async function report(userId, payload) {
   }
   if (!name) throw httpError(400, 'Place name is required.');
   if (!description) throw httpError(400, 'Description is required.');
+
+  const pendingCount = await countPendingByUser(userId);
+  if (pendingCount >= 5) {
+    throw httpError(429, 'You can have at most 5 pending safe place requests.');
+  }
+
+  const exactDuplicate = await findExactDuplicate({ latitude, longitude, name });
+  if (exactDuplicate) {
+    throw httpError(409, 'This safe place has already been submitted.');
+  }
+
+  const nearbyDuplicate = await findNearbyDuplicate({ latitude, longitude, radiusMeters: 100 });
+  if (nearbyDuplicate) {
+    throw httpError(409, 'A nearby safe place already exists or is pending review.');
+  }
 
   const row = await createSafePlace({ userId, latitude, longitude, name, address, description });
   return formatZone(row);

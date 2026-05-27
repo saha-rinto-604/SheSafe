@@ -171,7 +171,7 @@ export const notificationStore = {
 const DEFAULT_NOTIFS = [
     {
         type: 'system' as const,
-        title: 'Welcome to ResQher',
+        title: 'Welcome to SheSafe',
         body: 'Your account is active and ready. Hold the SOS button for 3 seconds to trigger an emergency alert.',
         createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
     },

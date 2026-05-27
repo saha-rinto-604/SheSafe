@@ -1,4 +1,4 @@
-# ResQher App Styling Documentation
+# SheSafe App Styling Documentation
 **Generated:** March 7, 2026  
 **Purpose:** Complete reference of styling values, constants, and component styles
 

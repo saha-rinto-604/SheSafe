@@ -1,5 +1,5 @@
 const { httpError } = require('../../utils/httpError');
-const { findIncidentById, isIncidentMember } = require('../incidents/incident.repository');
+const { findIncidentById, isIncidentMember, getIncidentParticipantState } = require('../incidents/incident.repository');
 const {
   joinIncident,
   getParticipants,
@@ -7,6 +7,8 @@ const {
   getMessages,
   getActiveIncidents,
   getAssistedChats,
+  archiveForUser,
+  leaveForUser,
 } = require('./chat.repository');
 
 function formatMessage(row) {
@@ -16,7 +18,7 @@ function formatMessage(row) {
     incidentId: String(row.incident_id),
     sender: {
       id: isSystem ? 'system' : String(row.sender_id),
-      name: isSystem ? 'System' : `${row.first_name} ${row.last_name}`.trim(),
+      name: isSystem ? '' : `${row.first_name} ${row.last_name}`.trim(),
       role: isSystem ? 'USER' : normalizeRole(row.role_name),
       photoUrl: isSystem ? undefined : row.photo_url || undefined,
     },
@@ -61,6 +63,8 @@ async function ensureAccess(userId, incidentId, role) {
   if (role === 'admin') return;
   const allowed = await isIncidentMember(incidentId, userId);
   if (!allowed) throw httpError(403, 'You are not a member of this incident chat.');
+  const participant = await getIncidentParticipantState(incidentId, userId);
+  if (participant?.left_at) throw httpError(403, 'You have left this incident chat.');
 }
 
 async function fetchMessages(incidentId, userId, role) {
@@ -124,4 +128,30 @@ async function listAssistedIncidents(volunteerId) {
   return rows.map(formatIncident);
 }
 
-module.exports = { fetchMessages, sendMessage, join, listActiveIncidents, listAssistedIncidents };
+async function archiveForMe(userId, incidentId, { deleted = false } = {}) {
+  const incident = await findIncidentById(incidentId);
+  if (!incident) throw httpError(404, 'Incident not found.');
+  const allowed = await isIncidentMember(incidentId, userId);
+  if (!allowed) throw httpError(403, 'You are not a member of this incident chat.');
+  await archiveForUser(incidentId, userId, { deleted });
+  return { incidentId: String(incidentId), archived: true, deleted };
+}
+
+async function leave(userId, incidentId) {
+  const incident = await findIncidentById(incidentId);
+  if (!incident) throw httpError(404, 'Incident not found.');
+  const allowed = await isIncidentMember(incidentId, userId);
+  if (!allowed) throw httpError(403, 'You are not a member of this incident chat.');
+  const result = await leaveForUser(incidentId, userId);
+  return { incidentId: String(incidentId), archived: true, left: true, leftResponder: result.leftResponder };
+}
+
+module.exports = {
+  fetchMessages,
+  sendMessage,
+  join,
+  listActiveIncidents,
+  listAssistedIncidents,
+  archiveForMe,
+  leave,
+};

@@ -49,4 +49,40 @@ async function getAssistedChats(req, res, next) {
   }
 }
 
-module.exports = { getMessages, sendMessage, joinIncident, getActiveIncidents, getAssistedChats };
+async function archiveForMe(req, res, next) {
+  try {
+    const result = await chatService.archiveForMe(req.user.id, req.params.incidentId, { deleted: false });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function deleteForMe(req, res, next) {
+  try {
+    const result = await chatService.archiveForMe(req.user.id, req.params.incidentId, { deleted: true });
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function leave(req, res, next) {
+  try {
+    const result = await chatService.leave(req.user.id, req.params.incidentId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = {
+  getMessages,
+  sendMessage,
+  joinIncident,
+  getActiveIncidents,
+  getAssistedChats,
+  archiveForMe,
+  deleteForMe,
+  leave,
+};

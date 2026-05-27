@@ -24,7 +24,7 @@ import Animated, {
     interpolate, Extrapolation,
 } from 'react-native-reanimated';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -36,8 +36,11 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import { G } from '../../../../src/constants/gradients';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import SheSafeLogo from '../../../../src/components/SheSafeLogo';
+import SheSafeMark from '../../../../src/components/SheSafeMark';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
+import { getConfirmedSafePlaces, type SafePlace } from '../../../../src/services/safePlaceService';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
@@ -456,8 +459,8 @@ const Drawer = memo(function Drawer({
             <TouchableOpacity style={s.drawerOverlay} activeOpacity={1} onPress={onClose} />
             <RNAnimated.View style={[s.drawer, { transform: [{ translateX: slideX }] }]}>
                 <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={s.drawerHd}>
-                    <View style={s.drawerAvatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
-                    <Text style={s.drawerAppName}>ResQher</Text>
+                    <View style={s.drawerAvatarRing}><SheSafeMark size={50} /></View>
+                    <SheSafeLogo size={26} center />
                     <Text style={s.drawerSub}>Emergency Assistance Platform</Text>
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
@@ -564,7 +567,7 @@ const lb = StyleSheet.create({
 export default function SOSScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
     const isMountedRef = useRef(true);
     const { signOut, setSosLive, isSosLive } = useAuth();
 
@@ -576,11 +579,13 @@ export default function SOSScreen() {
     const [cancelDuration, setCancelDuration] = useState(CANCEL_DURATION_DEFAULT);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
     const [address, setAddress] = useState('');
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const navigatedRef = useRef(false);
+    const sosCreateSeqRef = useRef(0);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
     const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
     const [endSosModalVisible, setEndSosModalVisible] = useState(false);
@@ -694,7 +699,18 @@ export default function SOSScreen() {
     ];
 
     // Location
+    const loadConfirmedSafePlaces = useCallback(async () => {
+        try {
+            const places = await getConfirmedSafePlaces();
+            if (isMountedRef.current) setConfirmedSafePlaces(places);
+        } catch (err) {
+            console.warn('[SOS] Unable to load confirmed safe places:', err);
+            if (isMountedRef.current) setConfirmedSafePlaces([]);
+        }
+    }, []);
+
     const refreshAndRecenterMap = useCallback(async () => {
+        loadConfirmedSafePlaces();
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
@@ -714,7 +730,7 @@ export default function SOSScreen() {
             console.warn('[SOS] Unable to refresh map location:', err);
             if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
         }
-    }, []);
+    }, [loadConfirmedSafePlaces]);
 
     useFocusEffect(
         useCallback(() => {
@@ -756,105 +772,92 @@ export default function SOSScreen() {
     }, []);
 
     // SOS logic â€” create incident and start cancel countdown
+    const completeSOSCountdown = useCallback(async (createSeq: number) => {
+        let lat = userLoc?.latitude;
+        let lng = userLoc?.longitude;
+
+        try {
+            if (!lat || !lng) {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') throw new Error('Location permission is required to send an SOS.');
+                const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                lat = pos.coords.latitude;
+                lng = pos.coords.longitude;
+                if (isMountedRef.current) setUserLoc({ latitude: lat, longitude: lng });
+            }
+
+            const incident = await incidentService.createIncident({
+                latitude: lat,
+                longitude: lng,
+                address: address || undefined,
+                sourceRole: 'standard_user',
+            });
+
+            if (sosCreateSeqRef.current !== createSeq || !isMountedRef.current) {
+                incidentService.cancelIncident(incident.id).catch(() => undefined);
+                return;
+            }
+
+            const id = String(incident.id);
+            setActiveIncidentId(id);
+            setSosLive(true);
+
+            const SecureStore = await import('expo-secure-store');
+            const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
+            const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
+            await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+            const createdAt = new Date().toISOString();
+            await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                incidentId: id, displayNumber, lat, lng, address: address || '', createdAt,
+            }));
+            await incidentHistory.add({
+                incidentId: id, displayNumber, lat, lng,
+                address: address || '', createdAt, status: 'ACTIVE',
+            });
+            await notificationStore.add({
+                type: 'sos_triggered',
+                title: 'SOS Alert Sent',
+                body: `Emergency alert triggered at ${address || 'your location'}`,
+                incidentId: id,
+                createdAt: new Date().toISOString(),
+            });
+        } catch {
+            if (sosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
+            setSosActive(false);
+            setCancelCountdown(0);
+            setLocationStatus('ready');
+            setHoldPhase('idle');
+            setSosLive(false);
+        }
+    }, [address, setSosLive, userLoc]);
+
     const triggerSOS = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setHoldPhase('idle');
-        setSosActive(true); setLocationStatus('sharing'); setCancelCountdown(cancelDuration);
-        setSosLive(true);
+        setSosActive(true);
+        setLocationStatus('sharing');
+        setCancelCountdown(cancelDuration);
+        setSosLive(false);
+        setActiveIncidentId(null);
         navigatedRef.current = false;
-
-        const lat = userLoc?.latitude;
-        const lng = userLoc?.longitude;
-
-        if (lat && lng) {
-            incidentService.createIncident({ latitude: lat, longitude: lng, address: address || undefined })
-                .then(async (incident) => {
-                    const id = String(incident.id);
-                    setActiveIncidentId(id);
-                    const SecureStore = await import('expo-secure-store');
-                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
-                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
-                    const createdAt = new Date().toISOString();
-                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
-                        incidentId: id, displayNumber, lat, lng, address: address || '',
-                        createdAt,
-                    }));
-                    await incidentHistory.add({
-                        incidentId: id, displayNumber, lat, lng,
-                        address: address || '', createdAt, status: 'ACTIVE',
-                    });
-                    await notificationStore.add({
-                        type: 'sos_triggered',
-                        title: 'SOS Alert Sent',
-                        body: `Emergency alert triggered at ${address || 'your location'}`,
-                        incidentId: id,
-                        createdAt: new Date().toISOString(),
-                    });
-                })
-                .catch(async () => {
-                    const id = `temp-${Date.now()}`;
-                    setActiveIncidentId(id);
-                    const SecureStore = await import('expo-secure-store');
-                    const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
-                    const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                    await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
-                    const createdAt = new Date().toISOString();
-                    await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
-                        incidentId: id, displayNumber, lat, lng, address: address || '',
-                        createdAt,
-                    }));
-                    await incidentHistory.add({
-                        incidentId: id, displayNumber, lat, lng,
-                        address: address || '', createdAt, status: 'ACTIVE',
-                    });
-                    await notificationStore.add({
-                        type: 'sos_triggered',
-                        title: 'SOS Alert Sent',
-                        body: `Emergency alert triggered at ${address || 'your location'}`,
-                        incidentId: id,
-                        createdAt: new Date().toISOString(),
-                    });
-                });
-        } else {
-            const id = 'sos-new';
-            setActiveIncidentId(id);
-            (async () => {
-                const createdAt = new Date().toISOString();
-                const SecureStore = await import('expo-secure-store');
-                const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
-                const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-                await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
-                await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
-                    incidentId: id, displayNumber, lat: null, lng: null, address: '',
-                    createdAt,
-                }));
-                await incidentHistory.add({
-                    incidentId: id, displayNumber, lat: null, lng: null,
-                    address: '', createdAt, status: 'ACTIVE',
-                });
-                await notificationStore.add({
-                    type: 'sos_triggered',
-                    title: 'SOS Alert Sent',
-                    body: 'Emergency alert triggered (location unavailable)',
-                    incidentId: id,
-                    createdAt,
-                });
-            })();
-        }
-    }, [cancelDuration, userLoc, address]);
+        sosCreateSeqRef.current += 1;
+    }, [cancelDuration, setSosLive]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
         cancelTimerRef.current = setInterval(() => {
             setCancelCountdown(prev => {
-                if (prev <= 1) { clearInterval(cancelTimerRef.current!); return 0; }
+                if (prev <= 1) {
+                    clearInterval(cancelTimerRef.current!);
+                    completeSOSCountdown(sosCreateSeqRef.current);
+                    return 0;
+                }
                 return prev - 1;
             });
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sosActive, cancelCountdown === cancelDuration]);
+    }, [sosActive, cancelCountdown === cancelDuration, completeSOSCountdown]);
 
     // Navigate to chat room once the cancel window expires and SOS is still active
     useEffect(() => {
@@ -879,6 +882,7 @@ export default function SOSScreen() {
 
     const cancelSOS = useCallback(() => {
         setEndSosModalVisible(false);
+        sosCreateSeqRef.current += 1;
         navigatedRef.current = false;
         setSosActive(false); setCancelCountdown(0); setLocationStatus('ready');
         setHoldPhase('idle');
@@ -1315,6 +1319,18 @@ export default function SOSScreen() {
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
                 >
+                    {confirmedSafePlaces.map((place) => (
+                        <Marker
+                            key={`confirmed-safe-place-${place.id}`}
+                            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
+                            tracksViewChanges={true}
+                            pinColor={T.violet}
+                            title="Safe Place"
+                            description={place.description || place.address || place.name}
+                            zIndex={700}
+                        />
+                    ))}
+
                     {userLoc && !isEmergencyLive && (
                         <Marker coordinate={userLoc} tracksViewChanges={false}>
                             <VioletGlowMarker />

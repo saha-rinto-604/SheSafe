@@ -26,6 +26,8 @@ const {
   setUserOnlineStatus,
   getUnavailableIncidentIdsForVolunteer,
   recordIncidentRejection,
+  getIncidentParticipantState,
+  leaveActiveAssistedIncidentsForVolunteer,
 } = require('./incident.repository');
 const chatService = require('../chat/chat.service');
 
@@ -49,6 +51,9 @@ async function reportIncident(userId, payload) {
 
   const incident = await createIncident({ userId, latitude, longitude, address });
   await ensureDefaultIncidentMessages(incident.id);
+  if (String(payload.sourceRole || '').toLowerCase() === 'volunteer') {
+    await leaveActiveAssistedIncidentsForVolunteer(userId);
+  }
   return incident;
 }
 
@@ -310,11 +315,20 @@ async function acceptIncident(volunteerId, incidentId) {
     if (result.reason === 'CLOSED') {
       throw httpError(409, 'This incident is no longer active.');
     }
+    if (result.reason === 'OWN_INCIDENT') {
+      throw httpError(409, 'You cannot accept your own SOS.');
+    }
+    if (result.reason === 'OWN_SOS_ACTIVE') {
+      throw httpError(409, 'You cannot accept incidents while your own SOS is active.');
+    }
     if (result.reason === 'MAX_RESPONDERS_EXCEEDED') {
       throw httpError(409, 'Maximum responders exceeded for this incident.', {
         code: 'MAX_RESPONDERS_EXCEEDED',
         maxResponders: result.maxResponders || 3,
       });
+    }
+    if (result.reason === 'PREVIOUSLY_LEFT') {
+      throw httpError(409, 'You have already left this incident.');
     }
     throw httpError(500, 'Failed to accept incident.');
   }
@@ -382,7 +396,7 @@ function formatLatestMessage(row) {
   return {
     id: String(row.latest_message_id),
     senderId: isSystem ? 'system' : String(row.latest_sender_id),
-    senderName: isSystem ? 'System' : userName(row, 'latest_sender_first_name', 'latest_sender_last_name'),
+    senderName: isSystem ? '' : userName(row, 'latest_sender_first_name', 'latest_sender_last_name'),
     senderRole: isSystem ? 'system' : normalizeRole(row.latest_sender_role),
     text: row.latest_message,
     createdAt: iso(row.latest_message_created_at),
@@ -398,6 +412,8 @@ function formatResponder(row) {
     id: String(row.id),
     name: userName(row),
     photoUri: row.photo_url || null,
+    latitude: row.latest_latitude == null ? null : Number(row.latest_latitude),
+    longitude: row.latest_longitude == null ? null : Number(row.latest_longitude),
     role: 'volunteer',
     acceptedAt: iso(row.accepted_at),
   };
@@ -420,6 +436,19 @@ function formatSosUser(row) {
   };
 }
 
+function activeParticipantsForChat(sosUser, volunteers) {
+  return [
+    sosUser,
+    ...volunteers.map((volunteer) => ({
+      id: volunteer.id,
+      name: volunteer.name,
+      photoUri: volunteer.photoUri || null,
+      role: 'volunteer',
+      status: 'ACCEPTED',
+    })),
+  ];
+}
+
 async function getResponders(incidentId, userId, role) {
   if (userId && role !== 'admin') {
     const allowed = await isIncidentMember(incidentId, userId);
@@ -439,6 +468,7 @@ async function getResponders(incidentId, userId, role) {
     incidentId: Number(incidentId),
     sosUser,
     volunteers,
+    activeParticipants: activeParticipantsForChat(sosUser, volunteers),
     totalMembers: volunteers.length + 1,
     maxVolunteerResponders: 3,
   };
@@ -523,10 +553,11 @@ async function getAssistedIncidents(volunteerId, search = '') {
           role: latestMessage.senderRole === 'volunteer' ? 'VOLUNTEER' : 'USER',
         },
         timestamp: latestMessage.createdAt,
-        type: 'TEXT',
+        type: latestMessage.senderRole === 'system' ? 'SYSTEM' : 'TEXT',
       } : null,
       sosUser: responders.sosUser,
       responders: responders.volunteers,
+      activeParticipants: responders.activeParticipants,
       responderCount: responders.volunteers.length,
       maxResponders: 3,
       participantCount: responders.totalMembers,
@@ -568,6 +599,7 @@ async function getUserIncidentChats(userId, search = '', role) {
       lastMessage: latestMessage,
       sosUser: responders.sosUser,
       responders: responders.volunteers,
+      activeParticipants: responders.activeParticipants,
       responderCount: responders.volunteers.length,
       maxResponders: 3,
     };
@@ -595,6 +627,10 @@ async function ensureChatAccess(userId, incidentId, role) {
   if (!allowed) {
     throw httpError(403, 'You are not a member of this incident chat.');
   }
+  const participant = await getIncidentParticipantState(incidentId, userId);
+  if (participant?.left_at) {
+    throw httpError(403, 'You have left this incident chat.');
+  }
   return incident;
 }
 
@@ -606,7 +642,7 @@ async function getIncidentMessages(userId, incidentId, role) {
     id: message.id,
     incidentId: Number(message.incidentId),
     senderId: message.type === 'SYSTEM' ? 'system' : message.sender.id,
-    senderName: message.type === 'SYSTEM' ? 'System' : message.sender.name,
+    senderName: message.type === 'SYSTEM' ? '' : message.sender.name,
     senderRole: message.type === 'SYSTEM'
       ? 'system'
       : message.sender.role === 'VOLUNTEER'

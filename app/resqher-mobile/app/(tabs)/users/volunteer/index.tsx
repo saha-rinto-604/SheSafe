@@ -9,10 +9,10 @@ import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
     TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
-    BackHandler,
+    BackHandler, AppState,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import Svg, { Path, Circle as SvgCircle, Rect, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
@@ -31,6 +31,7 @@ import VolunteerNavbar from '../../../../src/components/VolunteerBottomNav';
 import { useAuth } from '../../../../src/context/AuthContext';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone, type NearbyIncident } from '../../../../src/services/incidentService';
+import { getConfirmedSafePlaces, mapSafePlaceToDestination, type SafePlace } from '../../../../src/services/safePlaceService';
 import api from '../../../../src/services/api';
 import { useDispatchSocket } from '../../../../src/hooks/useDispatchSocket';
 import { loadVerificationRecord, type VerificationRecord } from '../standard-user/volunteer-verification';
@@ -42,6 +43,7 @@ import {
     REROUTE_DELAY_MS,
     REROUTE_THROTTLE_MS,
 } from '../../../../src/utils/routeRealtime';
+import { useRouteAudio } from '../../../../src/hooks/useRouteAudio';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
@@ -278,6 +280,9 @@ type PlaceSuggestion = {
     longitude: number;
     placeId?: string;
     zoneSeverity?: 'red' | 'yellow';
+    source?: 'search' | 'zone' | 'safe_place';
+    description?: string | null;
+    status?: string;
 };
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 260;
@@ -663,10 +668,11 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
 export default function VolunteerHome() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
     const { signOut } = useAuth();
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
+    const { playRouteAudio, stopRouteAudio } = useRouteAudio('VolunteerHome');
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [locationRetryKey, setLocationRetryKey] = useState(0);
@@ -685,7 +691,6 @@ export default function VolunteerHome() {
     const [sosPanelOpen, setSosPanelOpen] = useState(false);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [verificationRecord, setVerificationRecord] = useState<VerificationRecord | null>(null);
-    const [verificationGateAcknowledged, setVerificationGateAcknowledged] = useState(false);
     const [verificationGateVisible, setVerificationGateVisible] = useState(false);
     const verificationNavRef = useRef(false);
     const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
@@ -697,7 +702,7 @@ export default function VolunteerHome() {
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
-    const [showSOS, setShowSOS] = useState(false);
+    const [isSosButtonVisible, setIsSosButtonVisible] = useState(false);
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [sosActive, setSosActive] = useState(false);
     const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
@@ -772,7 +777,7 @@ export default function VolunteerHome() {
         if (navigationGuardRef.current) return;
         navigationGuardRef.current = true;
         Keyboard.dismiss();
-        Speech.stop();
+        void stopRouteAudio();
         routeRequestIdRef.current += 1;
         safePathRequestIdRef.current += 1;
         locationSubRef.current?.remove();
@@ -794,7 +799,7 @@ export default function VolunteerHome() {
         setStopConfirmVisible(false);
         setReviewVisible(false);
         setVerificationGateVisible(false);
-        setShowSOS(false);
+        setIsSosButtonVisible(false);
         setScanState(null);
         if (replace) {
             router.replace(path as any);
@@ -802,11 +807,13 @@ export default function VolunteerHome() {
             router.push(path as any);
         }
         setTimeout(() => { navigationGuardRef.current = false; }, 800);
-    }, [router]);
+    }, [router, stopRouteAudio]);
 
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
     const [zonesLoading, setZonesLoading] = useState(true);
     const [zonesError, setZonesError] = useState<string | null>(null);
+    const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
+    const safePlaceTapRef = useRef<{ id: string; at: number } | null>(null);
 
     const normalizedIncidentZones = useMemo(() => {
         return (incidentZones || [])
@@ -824,6 +831,8 @@ export default function VolunteerHome() {
         : selectedPlaceZoneSeverity === 'red'
             ? '#EF4444'
             : T.violet;
+
+    const safePlaceToSuggestion = useCallback((place: SafePlace): PlaceSuggestion => mapSafePlaceToDestination(place), []);
 
     const clearRouteState = useCallback(() => {
         routeRequestIdRef.current += 1;
@@ -856,8 +865,8 @@ export default function VolunteerHome() {
             offRouteTimerRef.current = null;
         }
         lastRerouteAtRef.current = 0;
-        Speech.stop();
-    }, []);
+        void stopRouteAudio();
+    }, [stopRouteAudio]);
 
     const fetchLiveZones = useCallback(async () => {
         try {
@@ -879,10 +888,25 @@ export default function VolunteerHome() {
         }
     }, []);
 
+    const fetchConfirmedSafePlaces = useCallback(async () => {
+        try {
+            const places = await getConfirmedSafePlaces();
+            if (!isMountedRef.current) return;
+            setConfirmedSafePlaces(places);
+        } catch (err) {
+            console.warn('[VolunteerHome] Failed to fetch safe places:', err);
+            if (isMountedRef.current) setConfirmedSafePlaces([]);
+        }
+    }, []);
+
     useEffect(() => {
         isMountedRef.current = true;
         fetchLiveZones();
-        const interval = setInterval(fetchLiveZones, 60_000);
+        fetchConfirmedSafePlaces();
+        const interval = setInterval(() => {
+            fetchLiveZones();
+            fetchConfirmedSafePlaces();
+        }, 60_000);
         return () => {
             isMountedRef.current = false;
             clearInterval(interval);
@@ -893,7 +917,7 @@ export default function VolunteerHome() {
             safePathRequestIdRef.current += 1;
             routeRequestIdRef.current += 1;
         };
-    }, [fetchLiveZones]);
+    }, [fetchConfirmedSafePlaces, fetchLiveZones]);
 
     const fetchNearbySosRequests = useCallback(async () => {
         const loc = userLocRef.current;
@@ -917,6 +941,7 @@ export default function VolunteerHome() {
         setPlaceSheetOpen(false);
         setPlaceSheetIsDangerZone(false);
         fetchLiveZones();
+        fetchConfirmedSafePlaces();
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
@@ -937,7 +962,7 @@ export default function VolunteerHome() {
             console.warn('[VolunteerHome] Unable to refresh map location:', err);
             if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
         }
-    }, [fetchLiveZones, fetchNearbySosRequests]);
+    }, [fetchConfirmedSafePlaces, fetchLiveZones, fetchNearbySosRequests]);
 
     useEffect(() => {
         if (!userLoc) return;
@@ -965,39 +990,54 @@ export default function VolunteerHome() {
         }, []),
     });
 
-    // Load profile picture and verif on screen focus
+    const refreshVolunteerAccess = useCallback(async () => {
+        const [nextProfile, nextVerification] = await Promise.all([getUserProfile(), loadVerificationRecord()]);
+        if (!isMountedRef.current) return;
+
+        setProfile(nextProfile);
+        setVerificationRecord(nextVerification || null);
+
+        const status = nextVerification?.status || 'not_applied';
+        if (status === 'verified') {
+            setVerificationGateVisible(false);
+            return;
+        }
+        if (status === 'pending') {
+            setVerificationGateVisible(true);
+            return;
+        }
+        if ((status === 'not_applied' || status === 'draft' || status === 'rejected') && !verificationNavRef.current) {
+            verificationNavRef.current = true;
+            navigateSafely('/(tabs)/users/volunteer/volunteer-verification', true);
+        }
+    }, [navigateSafely]);
+
+    // Load profile picture and verification status from backend on screen focus.
     useFocusEffect(
         useCallback(() => {
-            let isActive = true;
-
-            Promise.all([getUserProfile(), loadVerificationRecord()]).then(([nextProfile, nextVerification]) => {
-                if (!isActive) return;
-
-                setProfile(nextProfile);
-                setVerificationRecord(nextVerification || null);
-
-                // If user hasn't applied or has a draft, take them to the verification flow
-                const status = nextVerification?.status || 'not_applied';
-                if ((status === 'not_applied' || status === 'draft') && !verificationNavRef.current) {
-                    verificationNavRef.current = true;
-                    navigateSafely('/(tabs)/users/volunteer/volunteer-verification');
-                    return;
-                }
-
-                setVerificationGateVisible(false);
-            });
+            refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification refresh failed:', err));
             refreshAndRecenterMap();
 
-            return () => {
-                isActive = false;
-            };
-        }, [navigateSafely, refreshAndRecenterMap, verificationGateAcknowledged]),
+            return undefined;
+        }, [refreshVolunteerAccess, refreshAndRecenterMap]),
     );
 
-    const dismissVerificationGate = useCallback(() => {
-        setVerificationGateAcknowledged(true);
-        setVerificationGateVisible(false);
-    }, []);
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active') {
+                refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification resume refresh failed:', err));
+            }
+        });
+        return () => sub.remove();
+    }, [refreshVolunteerAccess]);
+
+    useEffect(() => {
+        if (verificationRecord?.status !== 'pending') return;
+        const interval = setInterval(() => {
+            refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification polling failed:', err));
+        }, 15000);
+        return () => clearInterval(interval);
+    }, [refreshVolunteerAccess, verificationRecord?.status]);
 
     const handleVerificationLogout = useCallback(async () => {
         setVerificationGateVisible(false);
@@ -1031,28 +1071,7 @@ export default function VolunteerHome() {
         { scale: pulseAnim2, op: pulseAnim2Op },
     ];
 
-    const triggerSOS = useCallback(async () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        setHoldPhase('idle');
-        setSosActive(true);
-        setActiveIncidentId(null);
-        setSosStage('requesting');
-        setIsEmergencyLive(false);
-        sosTransitionAnim.setValue(0);
-        setLocationStatus('sharing');
-        setCancelCountdown(CANCEL_DURATION_DEFAULT);
-        const createSeq = volunteerSosCreateSeqRef.current + 1;
-        volunteerSosCreateSeqRef.current = createSeq;
-
-        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
-        sosTransitionRef.current = setTimeout(() => {
-            setIsEmergencyLive(true);
-            setSosStage('responding');
-            RNAnimated.timing(sosTransitionAnim, {
-                toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-            }).start();
-        }, 5000);
-
+    const completeVolunteerSOSCountdown = useCallback(async (createSeq: number) => {
         try {
             let loc = userLocRef.current ?? userLoc;
             let safeLoc = loc ? sanitizeCoordinate(loc.latitude, loc.longitude) : null;
@@ -1088,6 +1107,11 @@ export default function VolunteerHome() {
             }
             if (!isMountedRef.current) return;
             setActiveIncidentId(String(incident.id));
+            setIsEmergencyLive(true);
+            setSosStage('responding');
+            RNAnimated.timing(sosTransitionAnim, {
+                toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+            }).start();
         } catch (error: any) {
             console.warn('[VolunteerHome] Unable to create volunteer SOS incident:', error);
             if (volunteerSosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
@@ -1106,6 +1130,21 @@ export default function VolunteerHome() {
             setLocationErrorVisible(true);
         }
     }, [address, sosTransitionAnim, userLoc]);
+
+    const triggerSOS = useCallback(async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        setHoldPhase('idle');
+        setSosActive(true);
+        setActiveIncidentId(null);
+        setSosStage('requesting');
+        setIsEmergencyLive(false);
+        sosTransitionAnim.setValue(0);
+        setLocationStatus('sharing');
+        setCancelCountdown(CANCEL_DURATION_DEFAULT);
+        volunteerSosCreateSeqRef.current += 1;
+
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
+    }, [sosTransitionAnim]);
 
     const resetLocalSOS = useCallback(() => {
         volunteerSosCreateSeqRef.current += 1;
@@ -1245,14 +1284,14 @@ export default function VolunteerHome() {
             setCancelCountdown(prev => {
                 if (prev <= 1) {
                     clearInterval(cancelTimerRef.current!);
-                    setIsEmergencyLive(true);
+                    completeVolunteerSOSCountdown(volunteerSosCreateSeqRef.current);
                     return 0;
                 }
                 return prev - 1;
             });
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
-    }, [sosActive, cancelCountdown === CANCEL_DURATION_DEFAULT]);
+    }, [sosActive, cancelCountdown === CANCEL_DURATION_DEFAULT, completeVolunteerSOSCountdown]);
 
     useEffect(() => {
         pulseAnims.forEach(({ scale, op }, i) => {
@@ -1826,6 +1865,7 @@ export default function VolunteerHome() {
                     }
                     setRouteUnsafe(true);
                     setScanState('TRANSIT_ERROR');
+                    void playRouteAudio('partial');
                     return;
                 }
 
@@ -1940,24 +1980,22 @@ export default function VolunteerHome() {
                 setRouteUnsafe(false);
                 setBlockedZoneName(null);
                 setScanState(bestRoute.safety.riskScore === 0 ? null : 'PARTIAL_SAFETY');
-                Speech.stop();
                 if (bestRoute.safety.riskScore === 0) {
-                    setTimeout(() => {
-                        Speech.speak('Safety update: Safest route selected, avoiding all high risk areas.', {
-                            language: 'en', pitch: 1.0, rate: Platform.OS === 'android' ? 0.9 : 0.95,
-                        });
-                    }, 80);
+                    void playRouteAudio('safe');
+                } else {
+                    void playRouteAudio('partial');
                 }
             } else {
                 setRouteUnsafe(true);
                 setBlockedZoneName(bestRoute.safety.redZoneName ?? blockedZoneName);
                 setScanState('PARTIAL_SAFETY');
+                void playRouteAudio('partial');
             }
         } catch {
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName, playRouteAudio]);
 
     useEffect(() => {
         if (!isLiveNav || !showSafePath || !routeUnsafe || scanState === 'SCANNING') return;
@@ -2348,6 +2386,21 @@ export default function VolunteerHome() {
         closePlaceSheet();
     }, [address, clearRouteState, closePlaceSheet, directionsProgress]);
 
+    const handleSafePlaceMarkerPress = useCallback((place: SafePlace) => {
+        const suggestion = safePlaceToSuggestion(place);
+        const now = Date.now();
+        const lastTap = safePlaceTapRef.current;
+        const isDoubleTap = lastTap?.id === suggestion.id && now - lastTap.at <= 450;
+        safePlaceTapRef.current = { id: suggestion.id, at: now };
+
+        if (isDoubleTap) {
+            enterDirectionsMode(suggestion);
+            return;
+        }
+
+        handleResolvedPlaceSelect(suggestion);
+    }, [enterDirectionsMode, handleResolvedPlaceSelect, safePlaceToSuggestion]);
+
     const exitDirectionsMode = useCallback(() => {
         clearRouteState();
         setSelectedPlace(null);
@@ -2496,6 +2549,21 @@ export default function VolunteerHome() {
                             </React.Fragment>
                         );
                     })}
+
+                    {confirmedSafePlaces.map((place) => (
+                        <Marker
+                            key={`confirmed-safe-place-${place.id}`}
+                            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
+                            anchor={{ x: 0.5, y: 1 }}
+                            calloutAnchor={{ x: 0.5, y: 0 }}
+                            tracksViewChanges={true}
+                            zIndex={700}
+                            title="Safe Place"
+                            description={place.description || place.address || place.name}
+                            pinColor={T.violet}
+                            onPress={() => handleSafePlaceMarkerPress(place)}
+                        />
+                    ))}
 
                     {selectedPlace && !directionsMode && (
                         <Marker
@@ -3142,11 +3210,11 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── Current location button (35% from top) ───────────────────── */}
-                {!directionsMode && !selectedPlace && !sosPanelOpen && !activeSosView && !searchActive && !startSearchActive && (
+                {!directionsMode && !selectedPlace && !sosPanelOpen && !searchActive && !startSearchActive && (
                     <View style={s.mapControls}>
                         <TouchableOpacity
                             style={[s.ctrlBtn, { borderColor: '#A78BFA' }]}
-                            onPress={() => !sosActive && setShowSOS(!showSOS)}
+                            onPress={() => setIsSosButtonVisible(visible => !visible)}
                             accessibilityLabel="Emergency SOS"
                             accessibilityRole="button"
                         >
@@ -3370,7 +3438,7 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── SOS Overlay — centered on screen ───────────────────── */}
-                {showSOS && !showSafePlace && !searchActive && !startSearchActive && !sosPanelOpen && (
+                {isSosButtonVisible && !showSafePlace && !searchActive && !startSearchActive && !sosPanelOpen && (
                     <View style={s.sosSection} pointerEvents="box-none">
                         <View style={s.sosWrap}>
                             {sosActive && cancelCountdown > 0 ? (
@@ -3431,7 +3499,7 @@ export default function VolunteerHome() {
                     transparent
                     animationType="fade"
                     statusBarTranslucent
-                    onRequestClose={dismissVerificationGate}
+                    onRequestClose={() => {}}
                 >
                     <View style={s.verificationGateOverlay}>
                         <BlurView intensity={34} tint="dark" style={StyleSheet.absoluteFill} />
@@ -3448,10 +3516,10 @@ export default function VolunteerHome() {
                             <View style={s.verificationGateActions}>
                                 <TouchableOpacity
                                     style={s.verificationGateOkBtn}
-                                    onPress={dismissVerificationGate}
+                                    onPress={() => navigateSafely('/(tabs)/users/volunteer/volunteer-verification', true)}
                                     activeOpacity={0.85}
                                 >
-                                    <Text style={s.verificationGateOkTxt}>OK</Text>
+                                    <Text style={s.verificationGateOkTxt}>View Status</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     style={s.verificationGateLogoutBtn}
@@ -3721,7 +3789,7 @@ export default function VolunteerHome() {
                                     <Text style={s.placeSheetActionBtnTextPrimary}>Directions</Text>
                                 </TouchableOpacity>
 
-                                {!placeSheetIsDangerZone && (
+                                {!placeSheetIsDangerZone && selectedPlace.source !== 'safe_place' && (
                                     <TouchableOpacity
                                         style={[s.placeSheetActionBtn, s.placeSheetActionBtnSecondary]}
                                         onPress={openAddSafePlace}
@@ -3739,7 +3807,25 @@ export default function VolunteerHome() {
                                 style={s.safePlaceKeyboardAvoiding}
                             >
                                 <View style={s.placeSheetSection}>
-                                    {placeSheetMode === 'incidents' || placeSheetIsDangerZone ? (
+                                    {selectedPlace.source === 'safe_place' ? (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Safe Place</Text>
+                                            <View style={s.safePlaceInfoCard}>
+                                                <View style={s.safePlaceInfoBadge}>
+                                                    <Ionicons name="shield-checkmark" size={13} color={T.onPrimary} />
+                                                    <Text style={s.safePlaceInfoBadgeText}>Safe Place</Text>
+                                                </View>
+                                                <Text style={s.safePlaceInfoTitle}>{selectedPlace.name}</Text>
+                                                {!!selectedPlace.description && (
+                                                    <Text style={s.safePlaceInfoText}>{selectedPlace.description}</Text>
+                                                )}
+                                                <View style={s.safePlaceInfoLocation}>
+                                                    <Ionicons name="location" size={14} color={T.ink4} />
+                                                    <Text style={s.safePlaceInfoText}>{selectedPlace.address}</Text>
+                                                </View>
+                                            </View>
+                                        </>
+                                    ) : placeSheetMode === 'incidents' || placeSheetIsDangerZone ? (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
                                             {placeIncidents.length === 0 ? (
@@ -4983,14 +5069,19 @@ const s = StyleSheet.create({
     },
     safePlaceMarkerWrap: { alignItems: 'center', justifyContent: 'center' },
     safePlaceMarkerIcon: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: T.surface,
+        backgroundColor: T.violet,
         borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.9)',
         overflow: 'hidden',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 7, shadowColor: '#8A38F6' },
+        }),
     },
     safePlaceMarkerStart: {
         backgroundColor: T.surface,
@@ -5214,6 +5305,28 @@ const s = StyleSheet.create({
         fontSize: 13,
         color: T.ink4,
     },
+    safePlaceInfoCard: {
+        gap: 8,
+        backgroundColor: 'rgba(138,56,246,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.22)',
+        borderRadius: 12,
+        padding: 12,
+    },
+    safePlaceInfoBadge: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: T.violet,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    safePlaceInfoBadgeText: { color: T.onPrimary, fontSize: 11, fontWeight: '800' },
+    safePlaceInfoTitle: { color: T.ink, fontSize: 16, fontWeight: '800' },
+    safePlaceInfoText: { color: T.ink3, fontSize: 13, lineHeight: 19 },
+    safePlaceInfoLocation: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
     placeIncidentRow: {
         flexDirection: 'row',
         alignItems: 'center',

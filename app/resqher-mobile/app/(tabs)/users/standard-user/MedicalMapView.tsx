@@ -17,7 +17,7 @@ import {
     Dimensions, Platform, ScrollView, ViewStyle, Image, Alert, Linking,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { Feather } from '@expo/vector-icons';
@@ -323,7 +323,7 @@ export default function MedicalMapView() {
         : 'specialists';
     const shift = (params.shift ?? 'now') as ShiftFilter;
 
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);

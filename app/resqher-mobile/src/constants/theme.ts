@@ -1,4 +1,4 @@
-// ─── ResQher Design System — Premium Tactical Dark Mode ─────────────────────
+// ─── SheSafe Design System — Premium Tactical Dark Mode ─────────────────────
 // Single source of truth. Import T, R, S, Ty, Sh from here everywhere.
 // Primary: Electric Violet (#8A38F6) — High-contrast dark system.
 

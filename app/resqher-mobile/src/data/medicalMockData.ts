@@ -1,4 +1,4 @@
-// ─── ResQher Medical Module — Seeded Mock Data ──────────────────────────────
+// ─── SheSafe Medical Module — Seeded Mock Data ──────────────────────────────
 // UIU / Bashundhara / Vatara demo context (Dhaka)
 // V3.0 — All providers have map coordinates, ratings, and affiliations
 

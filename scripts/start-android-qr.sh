@@ -10,7 +10,7 @@ MOBILE_DIR="$REPO_ROOT/app/resqher-mobile"
 BACKEND_DIR="$REPO_ROOT/backend"
 MOBILE_ENV_PATH="$MOBILE_DIR/.env"
 
-echo "=== ResQher Android QR Launcher ==="
+echo "=== SheSafe Android QR Launcher ==="
 echo "Repository: $REPO_ROOT"
 
 # Free ports

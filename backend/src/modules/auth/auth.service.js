@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { jwt: jwtConfig } = require('../../config/env');
+const { jwt: jwtConfig, admin: adminConfig } = require('../../config/env');
 const { httpError } = require('../../utils/httpError');
 const { normalizePhoneNumber, isValidBdPhone } = require('../../utils/phone');
 const { validatePasswordStrength } = require('../../middleware/validate');
@@ -17,6 +17,10 @@ const {
 const { query } = require('../../config/db');
 
 const ALLOWED_ROLES = new Set(['standard_user', 'volunteer', 'law_enforcement']);
+
+function isAdminUser(user) {
+  return String(user?.role_name || '').toLowerCase() === 'admin';
+}
 
 /**
  * Transforms a raw DB row into the public user shape for auth responses.
@@ -102,6 +106,9 @@ async function login(payload) {
   if (!user) {
     throw httpError(401, 'Invalid credentials. Sign up first.');
   }
+  if (isAdminUser(user)) {
+    throw httpError(403, 'Use the admin login portal.');
+  }
 
   const ok = await bcrypt.compare(password, user.password_hash);
   console.log('[AUTH] login bcrypt result:', ok);
@@ -116,9 +123,43 @@ async function login(payload) {
   };
 }
 
+async function adminLogin(payload) {
+  const configuredPhone = normalizePhoneNumber(adminConfig.phoneNumber);
+  const configuredPasswordHash = adminConfig.passwordHash;
+  const phoneNumber = normalizePhoneNumber(payload.phoneNumber);
+  const password = String(payload.password || '');
+
+  if (!configuredPhone || !configuredPasswordHash) {
+    throw httpError(503, 'Admin login is not configured.');
+  }
+  if (!phoneNumber || !password) {
+    throw httpError(400, 'Phone number and password are required.');
+  }
+  if (phoneNumber !== configuredPhone) {
+    throw httpError(401, 'Invalid admin credentials.');
+  }
+
+  const user = await findUserByPhone(phoneNumber);
+  if (!user || !isAdminUser(user)) {
+    throw httpError(401, 'Invalid admin credentials.');
+  }
+
+  const ok = await bcrypt.compare(password, configuredPasswordHash);
+  if (!ok) {
+    throw httpError(401, 'Invalid admin credentials.');
+  }
+
+  return {
+    accessToken: makeToken(user),
+    user: toPublicUser(user),
+  };
+}
+
 async function getRoles() {
   const roles = await listRoles();
-  return roles.map((r) => ({ id: r.id, role: r.role_name }));
+  return roles
+    .filter((r) => String(r.role_name || '').toLowerCase() !== 'admin')
+    .map((r) => ({ id: r.id, role: r.role_name }));
 }
 
 /**
@@ -135,6 +176,9 @@ async function requestOtp(payload) {
   const user = await findUserByPhone(phoneNumber);
   if (!user) {
     throw httpError(404, 'No account found with this phone number.');
+  }
+  if (isAdminUser(user)) {
+    throw httpError(403, 'Admin credentials are managed privately.');
   }
 
   const otpCode = String(crypto.randomInt(100000, 999999));
@@ -160,6 +204,14 @@ async function resetPassword(payload) {
   const pwError = validatePasswordStrength(newPassword);
   if (pwError) {
     throw httpError(400, pwError);
+  }
+
+  const user = await findUserByPhone(phoneNumber);
+  if (!user) {
+    throw httpError(404, 'No account found with this phone number.');
+  }
+  if (isAdminUser(user)) {
+    throw httpError(403, 'Admin credentials are managed privately.');
   }
 
   const rows = await query(
@@ -205,6 +257,9 @@ async function changePassword(payload) {
 
   const user = await findUserById(userId);
   if (!user) throw httpError(404, 'User not found.');
+  if (isAdminUser(user)) {
+    throw httpError(403, 'Admin credentials are managed privately.');
+  }
 
   const ok = await bcrypt.compare(currentPassword, user.password_hash);
   if (!ok) throw httpError(401, 'Current password is incorrect.');
@@ -218,6 +273,7 @@ async function changePassword(payload) {
 module.exports = {
   signup,
   login,
+  adminLogin,
   getRoles,
   requestOtp,
   resetPassword,

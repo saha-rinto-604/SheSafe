@@ -17,10 +17,11 @@ import {
     Alert,
     Image,
     Platform,
+    AppState,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
@@ -53,13 +54,14 @@ const INITIAL_RECORD: VerificationRecord = { status: 'not_applied' };
 /** Transform API response to local shape. */
 function apiToRecord(v: any): VerificationRecord {
     if (!v) return { ...INITIAL_RECORD };
+    const docs = v.documents || {};
     return {
         status: v.status || 'not_applied',
         submittedOn: v.submittedAt || v.submitted_at || undefined,
         documents: {
-            idCardUri: v.idCardUrl || v.id_card_url || undefined,
-            selfieUri: v.selfieUrl || v.selfie_url || undefined,
-            certificateUri: v.certificateUrl || v.certificate_url || undefined,
+            idCardUri: docs.idCardUrl || v.idCardUrl || v.id_card_url || undefined,
+            selfieUri: docs.selfieUrl || v.selfieUrl || v.selfie_url || undefined,
+            certificateUri: docs.certificateUrl || v.certificateUrl || v.certificate_url || undefined,
         },
         rejectionReason: v.rejectionReason || v.rejection_reason || undefined,
     };
@@ -82,12 +84,21 @@ function formatDate(iso: string): string {
     } catch { return iso; }
 }
 
+function getErrorMessage(err: any, fallback: string) {
+    return err?.response?.data?.message
+        || err?.response?.data?.error?.message
+        || err?.response?.data?.error
+        || err?.message
+        || fallback;
+}
+
 /** Upload a document image to the backend. */
 async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localUri: string): Promise<string | null> {
     const formData = new FormData();
     const filename = localUri.split('/').pop() || 'doc.jpg';
     const match = /\.(\w+)$/.exec(filename);
-    const mimeType = match ? `image/${match[1]}` : 'image/jpeg';
+    const ext = match?.[1]?.toLowerCase();
+    const mimeType = ext === 'jpg' ? 'image/jpeg' : ext ? `image/${ext}` : 'image/jpeg';
 
     formData.append('document', {
         uri: localUri,
@@ -98,7 +109,10 @@ async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localU
     const { data } = await api.post(`/api/verification/upload/${type}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
     });
-    return data?.url || data?.verification?.[`${type}_url`] || localUri;
+    const docs = data?.verification?.documents || {};
+    if (type === 'id_card') return docs.idCardUrl || data?.verification?.idCardUrl || data?.verification?.id_card_url || localUri;
+    if (type === 'selfie') return docs.selfieUrl || data?.verification?.selfieUrl || data?.verification?.selfie_url || localUri;
+    return docs.certificateUrl || data?.verification?.certificateUrl || data?.verification?.certificate_url || localUri;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -197,10 +211,6 @@ export default function VolunteerVerificationScreen() {
     const router = useRouter();
     const { signOut } = useAuth();
 
-    const handleGoToVolunteerHome = () => {
-        router.replace('/(tabs)/users/volunteer');
-    };
-
     const handleLogout = async () => {
         await signOut();
         router.replace('/(auth)/login');
@@ -237,6 +247,49 @@ export default function VolunteerVerificationScreen() {
         })();
     }, []);
 
+    const refreshVerificationStatus = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/verification');
+            const rec = apiToRecord(data?.verification);
+            if (rec.status === 'verified') {
+                router.replace('/(tabs)/users/volunteer' as any);
+                return;
+            }
+            setRecord(rec);
+            if (rec.status === 'not_applied') {
+                setViewState('initial');
+            } else if (rec.status === 'draft') {
+                setIdCardUri(rec.documents?.idCardUri);
+                setSelfieUri(rec.documents?.selfieUri);
+                setCertUri(rec.documents?.certificateUri);
+                setViewState('form');
+            } else {
+                setViewState('status');
+            }
+        } catch {
+            setViewState('initial');
+        }
+    }, [router]);
+
+    useFocusEffect(
+        useCallback(() => {
+            refreshVerificationStatus();
+        }, [refreshVerificationStatus])
+    );
+
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active') refreshVerificationStatus();
+        });
+        return () => sub.remove();
+    }, [refreshVerificationStatus]);
+
+    useEffect(() => {
+        if (record.status !== 'pending') return;
+        const interval = setInterval(refreshVerificationStatus, 15000);
+        return () => clearInterval(interval);
+    }, [record.status, refreshVerificationStatus]);
+
     // ── Actions ──────────────────────────────────────────────────────────
     const handleApply = async () => {
         try {
@@ -245,7 +298,7 @@ export default function VolunteerVerificationScreen() {
             setRecord(rec);
             setViewState('form');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not start application.';
+            const msg = getErrorMessage(err, 'Could not start application.');
             Alert.alert('Error', msg);
         }
     };
@@ -271,7 +324,7 @@ export default function VolunteerVerificationScreen() {
             setRecord(rec);
             setViewState('status');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not submit verification.';
+            const msg = getErrorMessage(err, 'Could not submit verification.');
             Alert.alert('Error', msg);
         } finally {
             setSubmitting(false);
@@ -288,7 +341,7 @@ export default function VolunteerVerificationScreen() {
             setCertUri(undefined);
             setViewState('form');
         } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.response?.data?.error || 'Could not reapply.';
+            const msg = getErrorMessage(err, 'Could not reapply.');
             Alert.alert('Error', msg);
         }
     };
@@ -551,15 +604,6 @@ export default function VolunteerVerificationScreen() {
                                     >
                                         <Feather name="edit-2" size={17} color={T.violet} />
                                         <Text style={[s.primaryBtnText, { color: T.violet }]}>Edit Documents</Text>
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity
-                                        style={s.primaryBtn}
-                                        onPress={handleGoToVolunteerHome}
-                                        activeOpacity={0.8}
-                                    >
-                                        <Feather name="home" size={17} color={T.onPrimary} />
-                                        <Text style={s.primaryBtnText}>OK</Text>
                                     </TouchableOpacity>
 
                                     <TouchableOpacity

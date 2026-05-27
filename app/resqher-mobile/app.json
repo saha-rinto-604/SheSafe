@@ -1,19 +1,17 @@
 {
   "expo": {
-    "name": "resqher-mobile",
+    "name": "SheSafe",
     "slug": "resqher-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/SheSafe_logo.png",
     "scheme": "resqhermobile",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/SheSafe_logo.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -42,22 +40,22 @@
         "googleMapsApiKey": "AIzaSyBSdciGcsJ3mnlvBjGwKtE3ypIj-4llEq8"
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "ResQher needs your location for emergency assistance.",
-        "NSLocationAlwaysUsageDescription": "ResQher needs your location for emergency assistance.",
-        "NSCameraUsageDescription": "ResQher needs camera access to capture verification photos.",
-        "NSPhotoLibraryUsageDescription": "ResQher needs photo access to upload verification documents."
+        "NSLocationWhenInUseUsageDescription": "SheSafe needs your location for emergency assistance.",
+        "NSLocationAlwaysUsageDescription": "SheSafe needs your location for emergency assistance.",
+        "NSCameraUsageDescription": "SheSafe needs camera access to capture verification photos.",
+        "NSPhotoLibraryUsageDescription": "SheSafe needs photo access to upload verification documents."
       }
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/SheSafe_logo.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/SheSafe_logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -69,8 +67,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "ResQher needs your location for emergency assistance.",
-          "locationAlwaysAndWhenInUsePermission": "ResQher needs your location for emergency assistance."
+          "locationWhenInUsePermission": "SheSafe needs your location for emergency assistance.",
+          "locationAlwaysAndWhenInUsePermission": "SheSafe needs your location for emergency assistance."
         }
       ],
       "@react-native-community/datetimepicker",

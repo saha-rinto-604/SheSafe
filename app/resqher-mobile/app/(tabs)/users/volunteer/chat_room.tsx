@@ -9,7 +9,7 @@ import {
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
     Modal, Pressable, Alert, Dimensions, ScrollView
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -369,7 +369,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
     );
 }
 
-function ArchivePill({ bottomInset }: { bottomInset: number }) {
+function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete: () => void }) {
     return (
         <View style={[st.archiveOuter, { paddingBottom: Math.max(bottomInset, S.s4) }]}>
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
@@ -378,6 +378,10 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
                     <Text style={st.archiveText}>Incident Archived â€” Case Read-Only</Text>
                 </View>
             </BlurView>
+            <TouchableOpacity style={st.archiveDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
+                <Feather name="trash-2" size={14} color="#FF453A" />
+                <Text style={st.archiveDeleteText}>Delete Chat</Text>
+            </TouchableOpacity>
         </View>
     );
 }
@@ -515,7 +519,7 @@ export default function ChatRoom() {
     const lastRerouteAtRef = useRef(0);
     const [isReviewMode, setIsReviewMode] = useState(false);
     const [selectedResponderId, setSelectedResponderId] = useState('');
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
 
     // Travel Mode
     const [travelMode, setTravelMode] = useState<TravelMode>('walking');
@@ -584,13 +588,32 @@ export default function ChatRoom() {
 
     // Leave Dispatch confirmation
     const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
-    const handleConfirmLeave = useCallback(() => {
+
+    const handleDeleteChat = useCallback(() => {
+        Alert.alert(
+            'Delete this chat from your inbox?',
+            'This will only remove the chat from your side. It will not delete incident history.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete Chat',
+                    style: 'destructive',
+                    onPress: async () => {
+                        await incidentService.deleteChatForMe(liveIncidentId);
+                        router.back();
+                    },
+                },
+            ],
+        );
+    }, [liveIncidentId, router]);
+
+    const handleConfirmLeave = useCallback(async () => {
         Haptics.selectionAsync();
         setHeaderMenuOpen(false);
         setLeaveConfirmOpen(false);
-        // navigate back to previous screen
+        await incidentService.leaveChat(liveIncidentId);
         router.back();
-    }, [router]);
+    }, [liveIncidentId, router]);
 
     useEffect(() => {
         getStoredIdentity().then(identity => setSelfId(identity?.userId));
@@ -616,7 +639,8 @@ export default function ChatRoom() {
             id: volunteer.id,
             name: volunteer.name,
             avatarUri: volunteer.photoUri ?? null,
-        }));
+            location: sanitizeCoordinate(Number(volunteer.latitude), Number(volunteer.longitude)) ?? undefined,
+        })).filter(volunteer => String(volunteer.id) !== String(response.sosUser?.id ?? ''));
         setResponderDirectory({
             sosUser: response.sosUser ? {
                 id: response.sosUser.id,
@@ -629,7 +653,7 @@ export default function ChatRoom() {
             maxResponders: response.maxVolunteerResponders ?? 3,
         });
         setRespondersList(volunteers);
-        setSelectedResponderId(prev => prev || volunteers[0]?.id || '');
+        setSelectedResponderId(prev => volunteers.some(volunteer => volunteer.id === prev) ? prev : volunteers[0]?.id || '');
     }, [liveIncidentId]);
 
     useEffect(() => {
@@ -661,6 +685,11 @@ export default function ChatRoom() {
 
     useEffect(() => {
         if (responderDirectory.volunteers.length > 0) return;
+        if (isMyEmergency) {
+            setRespondersList([]);
+            setSelectedResponderId('');
+            return;
+        }
         const nextResponders = participants
             .filter(participant => participant.role !== 'USER')
             .map(participant => ({
@@ -670,7 +699,7 @@ export default function ChatRoom() {
             }));
         setRespondersList(nextResponders);
         setSelectedResponderId(prev => prev || nextResponders[0]?.id || '');
-    }, [participants, responderDirectory.volunteers.length]);
+    }, [isMyEmergency, participants, responderDirectory.volunteers.length]);
 
     const selectedResponder = React.useMemo(
         () => respondersList.find(responder => responder.id === selectedResponderId) ?? respondersList[0] ?? null,
@@ -786,7 +815,13 @@ export default function ChatRoom() {
         if (responderId === selectedResponderId) return;
         Haptics.selectionAsync();
         setSelectedResponderId(responderId);
-    }, [selectedResponderId]);
+        const nextResponder = respondersList.find(responder => responder.id === responderId);
+        if (isMyEmergency && nextResponder?.location && userLoc) {
+            setVictimLocation(nextResponder.location);
+            setVictimName(nextResponder.name || 'Responder');
+            await loadRouteForIncident(userLoc, nextResponder.location, travelMode);
+        }
+    }, [isMyEmergency, loadRouteForIncident, respondersList, selectedResponderId, travelMode, userLoc]);
 
     const openMapOverlay = useCallback(async () => {
         Keyboard.dismiss();
@@ -809,8 +844,48 @@ export default function ChatRoom() {
                 incidentService.getIncidentRouteContext(liveIncidentId),
             ]);
             const origin = sanitizeCoordinate(position.coords.latitude, position.coords.longitude);
+            if (!origin) {
+                Alert.alert('Route unavailable', 'Could not find valid current location.');
+                return;
+            }
+            if (isMyEmergency) {
+                const acceptedResponders = (context.volunteers || [])
+                    .map(volunteer => ({
+                        id: String(volunteer.id),
+                        name: volunteer.name,
+                        avatarUri: volunteer.photoUri ?? null,
+                        location: sanitizeCoordinate(Number(volunteer.latitude), Number(volunteer.longitude)) ?? undefined,
+                    }))
+                    .filter(responder => responder.id !== String(context.victim.id) && responder.location);
+
+                setResponderDirectory(prev => ({
+                    ...prev,
+                    volunteers: acceptedResponders,
+                    responderCount: acceptedResponders.length,
+                }));
+                setRespondersList(acceptedResponders);
+                setUserLoc({ ...origin, heading: position.coords.heading ?? undefined });
+
+                const nextResponder = acceptedResponders.find(responder => responder.id === selectedResponderId) ?? acceptedResponders[0];
+                setSelectedResponderId(nextResponder?.id || '');
+                if (!nextResponder?.location) {
+                    setVictimLocation(null);
+                    setVictimName('Waiting for responder');
+                    setMapRouteCoords([]);
+                    setCompletedRouteCoords([]);
+                    setRemainingRouteCoords([]);
+                    setMapDistance('');
+                    setMapDuration('Waiting for a responder to accept');
+                    return;
+                }
+
+                setVictimLocation(nextResponder.location);
+                setVictimName(nextResponder.name || 'Responder');
+                await loadRouteForIncident(origin, nextResponder.location, travelMode);
+                return;
+            }
             const destination = sanitizeCoordinate(Number(context.victim.latitude), Number(context.victim.longitude));
-            if (!origin || !destination) {
+            if (!destination) {
                 Alert.alert('Route unavailable', 'Could not find valid volunteer or SOS location.');
                 return;
             }
@@ -821,7 +896,7 @@ export default function ChatRoom() {
         } catch (error: any) {
             Alert.alert('Route unavailable', error?.message || 'Unable to load this route.');
         }
-    }, [clearRouteOverview, liveIncidentId, loadRouteForIncident, travelMode]);
+    }, [clearRouteOverview, isMyEmergency, liveIncidentId, loadRouteForIncident, selectedResponderId, travelMode]);
 
     useEffect(() => {
         if (!isMapOverlayOpen || !userLoc || !victimLocation || isLiveNavMode) return;
@@ -843,7 +918,7 @@ export default function ChatRoom() {
     }, [travelMode, isMapOverlayOpen, isLiveNavMode, userLoc, victimLocation, loadRouteForIncident]);
 
     useEffect(() => {
-        if (!isMapOverlayOpen || !liveIncidentId) return;
+        if (!isMapOverlayOpen || !liveIncidentId || isMyEmergency) return;
         if (victimPollRef.current) clearInterval(victimPollRef.current);
         victimPollRef.current = setInterval(async () => {
             try {
@@ -872,12 +947,40 @@ export default function ChatRoom() {
                 victimPollRef.current = null;
             }
         };
-    }, [isMapOverlayOpen, isLiveNavMode, liveIncidentId, loadRouteForIncident, travelMode, userLoc]);
+    }, [isMapOverlayOpen, isLiveNavMode, isMyEmergency, liveIncidentId, loadRouteForIncident, travelMode, userLoc]);
 
     useEffect(() => {
         if (!isMapOverlayOpen || !liveLocation) return;
         const role = String(liveLocation.role || '').toUpperCase();
         const liveUserId = liveLocation.userId ? String(liveLocation.userId) : '';
+
+        if (isMyEmergency) {
+            const isResponderLocation = role === 'VOLUNTEER' && !!liveUserId && liveUserId !== String(selfId ?? '');
+            if (!isResponderLocation) return;
+            const nextResponderLocation = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
+            if (!nextResponderLocation) return;
+            setRespondersList(prev => prev.map(responder =>
+                responder.id === liveUserId ? { ...responder, location: nextResponderLocation } : responder
+            ));
+            setResponderDirectory(prev => ({
+                ...prev,
+                volunteers: prev.volunteers.map(responder =>
+                    responder.id === liveUserId ? { ...responder, location: nextResponderLocation } : responder
+                ),
+            }));
+            const isSelectedResponder = liveUserId === selectedResponderId || (!selectedResponderId && respondersList[0]?.id === liveUserId);
+            if (!isSelectedResponder) return;
+            const movedM = victimLocation ? haversineDistance(victimLocation, nextResponderLocation) : Infinity;
+            if (movedM < 1) return;
+            setVictimLocation({ ...nextResponderLocation });
+            setVictimName(respondersList.find(responder => responder.id === liveUserId)?.name || 'Responder');
+            if (movedM >= ENDPOINT_MOVE_THRESHOLD_M && userLoc && Date.now() - lastVictimRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
+                lastVictimRouteRefreshRef.current = Date.now();
+                loadRouteForIncident(userLoc, nextResponderLocation, travelMode, { fit: !isLiveNavMode, clearExisting: false });
+            }
+            return;
+        }
+
         const isVictimLocation = role === 'USER' || role === 'STANDARD_USER' || (!role && !!liveUserId && liveUserId !== String(selfId ?? ''));
         if (!isVictimLocation) return;
 
@@ -891,7 +994,7 @@ export default function ChatRoom() {
             lastVictimRouteRefreshRef.current = Date.now();
             loadRouteForIncident(userLoc, nextVictim, travelMode, { fit: !isLiveNavMode, clearExisting: false });
         }
-    }, [isLiveNavMode, isMapOverlayOpen, liveLocation, loadRouteForIncident, selfId, travelMode, userLoc, victimLocation]);
+    }, [isLiveNavMode, isMapOverlayOpen, isMyEmergency, liveLocation, loadRouteForIncident, respondersList, selectedResponderId, selfId, travelMode, userLoc, victimLocation]);
 
     useEffect(() => {
         if (!isMapOverlayOpen) {
@@ -1137,7 +1240,7 @@ export default function ChatRoom() {
                             sendMessage(uri, 'IMAGE');
                         }} />
                     ) : (
-                        <ArchivePill bottomInset={insets.bottom} />
+                        <ArchivePill bottomInset={insets.bottom} onDelete={handleDeleteChat} />
                     )}
                 </KeyboardAvoidingView>
 
@@ -1172,7 +1275,7 @@ export default function ChatRoom() {
                                 onPress={() => { Haptics.selectionAsync(); setLeaveConfirmOpen(true); setHeaderMenuOpen(false); }}
                             >
                                 <Feather name="x-circle" size={16} color="#FF453A" />
-                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Leave Dispatch</Text>
+                                <Text style={[st.headerMenuText, st.headerMenuTextDanger]}>Leave Chat / Dispatch</Text>
                             </TouchableOpacity>
                         </View>
                     </Pressable>
@@ -1349,15 +1452,15 @@ export default function ChatRoom() {
                                         coordinate={isLiveNavMode && userLoc ? { latitude: userLoc.latitude, longitude: userLoc.longitude } : mapRouteCoords[0]}
                                         pinColor={T.violet}
                                         title="You"
-                                        description="Volunteer location"
+                                        description={isMyEmergency ? 'Requester location' : 'Volunteer location'}
                                         zIndex={1000}
                                     />
                                     {/* Victim Marker (destination) */}
                                     <Marker
                                         coordinate={isLiveNavMode && victimLocation ? victimLocation : mapRouteCoords[mapRouteCoords.length - 1]}
                                         pinColor="#EF4444"
-                                        title={victimName || 'Victim'}
-                                        description={incident?.address || 'SOS location'}
+                                        title={isMyEmergency ? (selectedResponder?.name || victimName || 'Responder') : (victimName || 'Victim')}
+                                        description={isMyEmergency ? 'Responder location' : (incident?.address || 'SOS location')}
                                         zIndex={999}
                                     />
                                 </>
@@ -1425,7 +1528,7 @@ export default function ChatRoom() {
                             <View style={st.overlayCardTint} pointerEvents="none" />
 
                             {/* Responder avatars (for MY_EMERGENCY) */}
-                            {isMyEmergency && !isLiveNavMode && !isReviewMode && (
+                            {isMyEmergency && !isLiveNavMode && !isReviewMode && respondersList.length > 0 && (
                                 <View style={st.responderRow}>
                                     {respondersList.map(responder => {
                                         const isSelected = responder.id === selectedResponderId;
@@ -1512,6 +1615,16 @@ export default function ChatRoom() {
                                 </View>
 
                                 /* â”€â”€ ROUTE OVERVIEW (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+                            ) : isMyEmergency && respondersList.length === 0 ? (
+                                <View style={st.waitingResponderCard}>
+                                    <View style={st.waitingResponderIcon}>
+                                        <Feather name="clock" size={18} color={T.violet} />
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={st.waitingResponderTitle}>Waiting for responder</Text>
+                                        <Text style={st.waitingResponderText}>Accepted volunteers will appear here when they join this SOS.</Text>
+                                    </View>
+                                </View>
                             ) : (
                                 <View>
                                     {/* Travel Mode Selector */}
@@ -2107,6 +2220,23 @@ const st = StyleSheet.create({
         color: T.ink4,
         letterSpacing: 0.2,
     },
+    archiveDeleteBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: R.pill,
+        backgroundColor: 'rgba(255,69,58,0.10)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,69,58,0.28)',
+        marginTop: S.s2,
+    },
+    archiveDeleteText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#FF453A',
+    },
 
     emptyChat: {
         alignItems: 'center',
@@ -2230,6 +2360,36 @@ const st = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         marginTop: 2,
+    },
+    waitingResponderCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 14,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    waitingResponderIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(138,56,246,0.15)',
+    },
+    waitingResponderTitle: {
+        color: T.ink,
+        fontSize: 15,
+        fontWeight: '900',
+        marginBottom: 2,
+    },
+    waitingResponderText: {
+        color: T.ink3,
+        fontSize: 12,
+        fontWeight: '600',
+        lineHeight: 16,
     },
     startNavBtn: {
         flexDirection: 'row',

@@ -5,18 +5,19 @@
  * Segment switcher mirrors activity.tsx exactly.
  */
 
-import React, { useState, useCallback, useRef, useEffect, useMemo, memo } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
     Platform, StatusBar, RefreshControl, TextInput,
-    Animated, LayoutAnimation, UIManager, ActivityIndicator, Image,
+    Animated, LayoutAnimation, UIManager, ActivityIndicator, Modal,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import GroupChatAvatar, { type GroupChatAvatarParticipant } from '../../../../src/components/shared/GroupChatAvatar';
 import { T, R, S } from '../../../../src/constants/theme';
 import { type Incident, type IncidentCategory } from '../../../../src/types/chat';
 import { incidentService } from '../../../../src/services/incidentService';
@@ -43,6 +44,7 @@ type VolunteerIncident = Incident & {
     lastMessage?: { senderName: string; senderRole: string; text: string; createdAt: string } | null;
     sosUser?: { id: string; name: string; photoUri?: string | null };
     responders?: { id: string; name: string; photoUri?: string | null; acceptedAt?: string | null }[];
+    activeParticipants?: GroupChatAvatarParticipant[];
     responderCount?: number;
     maxResponders?: number;
 };
@@ -97,21 +99,30 @@ function compareIncidentsForMessages(a: VolunteerIncident, b: VolunteerIncident)
 
 function myIncidentToChatIncident(raw: any): VolunteerIncident {
     const status = normalizeStatus(String(raw.status));
-    const createdAt = String(raw.occurredAt ?? raw.created_at ?? new Date().toISOString());
+    const createdAt = String(raw.createdAt ?? raw.occurredAt ?? raw.created_at ?? new Date().toISOString());
+    const updatedAt = String(raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
     return {
+        ...raw,
         id: String(raw.id),
         category: 'MY_EMERGENCY',
-        type: 'SOS Alert',
+        type: raw.type ?? 'SOS Alert',
         status,
         location: {
-            latitude: Number(raw.latitude),
-            longitude: Number(raw.longitude),
-            updatedAt: createdAt,
+            latitude: Number(raw.latitude ?? raw.location?.latitude ?? 0),
+            longitude: Number(raw.longitude ?? raw.location?.longitude ?? 0),
+            updatedAt,
         },
-        address: raw.location ?? null,
-        latestMessage: null,
-        participantCount: 1,
+        address: raw.address ?? raw.location ?? null,
+        latestMessage: normalizeLatestMessage(raw.latestMessage, updatedAt),
+        participantCount: Number(raw.participantCount ?? (Number(raw.responderCount ?? 0) + 1)),
         createdAt,
+        updatedAt,
+        lastMessage: raw.lastMessage ?? null,
+        sosUser: raw.sosUser,
+        responders: raw.responders ?? [],
+        responderCount: Number(raw.responderCount ?? raw.responders?.length ?? 0),
+        maxResponders: Number(raw.maxResponders ?? 3),
+        incidentCode: raw.incidentCode ?? `Incident #${raw.id}`,
     };
 }
 
@@ -159,75 +170,6 @@ function timeAgo(iso: string): string {
     return `${Math.floor(hrs / 24)}d ago`;
 }
 
-const SEP = '#0A0A12';
-
-const MiniPhoto = memo(function MiniPhoto({ uri, style }: { uri?: string | null; style?: any }) {
-    return (
-        <View style={[av.mini, style]}>
-            {uri
-                ? <Image source={{ uri }} style={StyleSheet.absoluteFill} />
-                : <View style={[StyleSheet.absoluteFill, av.miniFallback]} />}
-        </View>
-    );
-});
-
-const GroupChatAvatar = memo(function GroupChatAvatar({
-    uris, isLive,
-}: {
-    uris: (string | null | undefined)[];
-    isLive: boolean;
-}) {
-    const slots = uris.slice(0, 3);
-    const n = slots.length;
-    return (
-        <View style={av.wrap}>
-            <View style={[av.collage, isLive ? av.collageLive : av.collageResolved]}>
-                {n <= 1 ? (
-                    slots[0]
-                        ? <Image source={{ uri: slots[0] }} style={av.single} />
-                        : <Feather name="users" size={18} color={isLive ? T.violet : D.subtitle} />
-                ) : n === 2 ? (
-                    <>
-                        <MiniPhoto uri={slots[0]} style={av.twoA} />
-                        <MiniPhoto uri={slots[1]} style={av.twoB} />
-                    </>
-                ) : (
-                    <>
-                        <MiniPhoto uri={slots[0]} style={av.threeA} />
-                        <MiniPhoto uri={slots[1]} style={av.threeB} />
-                        <MiniPhoto uri={slots[2]} style={av.threeC} />
-                    </>
-                )}
-            </View>
-            {isLive && <View style={av.dot} />}
-        </View>
-    );
-});
-
-const av = StyleSheet.create({
-    wrap: { width: D.avatarSize, height: D.avatarSize, flexShrink: 0 },
-    collage: {
-        width: D.avatarSize, height: D.avatarSize,
-        borderRadius: 12, borderWidth: 1,
-        overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
-    },
-    collageLive: { backgroundColor: T.violetDim, borderColor: T.violet },
-    collageResolved: { backgroundColor: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)' },
-    single: { width: '100%', height: '100%' },
-    mini: { position: 'absolute', overflow: 'hidden', borderWidth: 1.5, borderColor: SEP },
-    miniFallback: { backgroundColor: 'rgba(138,56,246,0.18)' },
-    twoA: { top: 0, left: 0, width: 29, height: 29, borderRadius: 9 },
-    twoB: { bottom: 0, right: 0, width: 27, height: 27, borderRadius: 8 },
-    threeA: { top: 0, left: 0, width: 25, height: 25, borderRadius: 7 },
-    threeB: { top: 0, right: 0, width: 25, height: 25, borderRadius: 7 },
-    threeC: { bottom: 0, left: 9, width: 25, height: 25, borderRadius: 7 },
-    dot: {
-        position: 'absolute', bottom: -1, right: -1,
-        width: 10, height: 10, borderRadius: 5,
-        backgroundColor: T.danger, borderWidth: 1.5, borderColor: '#120B22', zIndex: 10,
-    },
-});
-
 // ─── Status pill — exact same colors as standard-user chat_home ────────────
 function StatusPill({ status }: { status: Incident['status'] }) {
     const isLive = isActiveStatus(status);
@@ -249,16 +191,21 @@ function StatusPill({ status }: { status: Incident['status'] }) {
 
 // ─── IncidentCard — styled exactly like standard-user chat_home cards ───────
 function IncidentCard({
-    incident, onPress, isMyEmergency,
+    incident, onPress, isMyEmergency, selected, selectionMode,
 }: {
     incident: VolunteerIncident;
     onPress: () => void;
     isMyEmergency: boolean;
+    selected: boolean;
+    selectionMode: boolean;
 }) {
     const isLive = isActiveStatus(incident.status);
     const latestMessage = normalizeLatestMessage(incident.latestMessage, incident.createdAt);
     const lastMessage = incident.lastMessage?.text ?? latestMessage?.content ?? 'No messages yet';
-    const lastSender = incident.lastMessage?.senderName ?? latestMessage?.sender.name ?? (incident.reporter || 'System');
+    const latestSenderRole = String(incident.lastMessage?.senderRole ?? latestMessage?.sender.role ?? '');
+    const lastSender = latestSenderRole === 'system' || latestMessage?.type === 'SYSTEM'
+        ? ''
+        : incident.lastMessage?.senderName ?? latestMessage?.sender.name ?? incident.reporter ?? '';
     const activeBorderColor = T.violet;
     const activityAt = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
     const responderCount = incident.responderCount ?? Math.max((incident.participantCount ?? 1) - 1, 0);
@@ -269,29 +216,34 @@ function IncidentCard({
             style={[
                 st.card,
                 isLive && { borderLeftWidth: 4, borderLeftColor: activeBorderColor },
+                selected && st.cardSelected,
             ]}
             onPress={onPress}
             activeOpacity={0.7}
         >
             {/* LEFT — avatar */}
-            <View style={{ alignSelf: 'center' }}>
-                <GroupChatAvatar
-                    isLive={isLive}
-                    uris={[
-                        incident.sosUser?.photoUri ?? (incident as any).reporterPhotoUrl,
-                        ...(incident.responders ?? []).slice(0, 2).map(r => r.photoUri),
-                    ]}
-                />
-            </View>
+            <GroupChatAvatar
+                isLive={isLive}
+                size={D.avatarSize}
+                participants={incident.activeParticipants ?? [
+                    ...(incident.sosUser ? [incident.sosUser] : []),
+                    ...(incident.responders ?? []),
+                ]}
+            />
+            {selectionMode && (
+                <View style={[st.selectionDot, selected && st.selectionDotActive]}>
+                    {selected && <Feather name="check" size={12} color="#FFFFFF" />}
+                </View>
+            )}
 
             {/* CENTER — title + last message preview */}
             <View style={[st.cardCenter, { alignSelf: 'center' }]}>
                 <Text style={st.cardTitle} numberOfLines={1}>
-                    {isMyEmergency ? 'My Emergency ' : ''}{incident.incidentCode ?? `Incident ${caseId(incident.id)}`}
+                    {incident.incidentCode ?? `Incident ${caseId(incident.id)}`}
                 </Text>
                 <Text style={st.cardMeta} numberOfLines={1}>
-                    <Text style={st.cardMetaName}>{lastSender}</Text>
-                    {': '}
+                    {!!lastSender && <Text style={st.cardMetaName}>{lastSender}</Text>}
+                    {!!lastSender && ': '}
                     {lastMessage}
                 </Text>
                 {!isMyEmergency && (
@@ -343,6 +295,10 @@ export default function VolunteerMessages() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const indicator = useRef(new Animated.Value(0)).current;
     const navigationGuardRef = useRef(false);
 
@@ -387,6 +343,9 @@ export default function VolunteerMessages() {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setSegment(next);
         setSearchQuery('');
+        setSelectionMode(false);
+        setSelectedIds(new Set());
+        setConfirmDeleteVisible(false);
     };
 
     useEffect(() => {
@@ -398,7 +357,7 @@ export default function VolunteerMessages() {
         setError(null);
         const [assisted, mine] = await Promise.all([
             incidentService.getVolunteerAssistedIncidents(segment === 'Assisted' ? debouncedSearch : undefined),
-            incidentService.getMyIncidents(),
+            incidentService.getUserIncidentChats(segment === 'My Emergencies' ? debouncedSearch : undefined),
         ]);
         setIncidents([
             ...assisted.map(assistedIncidentToChatIncident),
@@ -448,9 +407,48 @@ export default function VolunteerMessages() {
         });
     }, [categoryKey, incidents, searchQuery]);
 
-    const openChat = (incidentId: string) => {
+    const toggleSelected = useCallback((incidentId: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(incidentId)) next.delete(incidentId);
+            else next.add(incidentId);
+            return next;
+        });
+    }, []);
+
+    const openChat = useCallback((incidentId: string) => {
+        if (selectionMode) {
+            toggleSelected(String(incidentId));
+            return;
+        }
+        Haptics.selectionAsync();
         router.push(`/(tabs)/users/volunteer/chat_room?incidentId=${incidentId}&category=${categoryKey}` as any);
-    };
+    }, [categoryKey, router, selectionMode, toggleSelected]);
+
+    const enterSelectionMode = useCallback(() => {
+        Haptics.selectionAsync();
+        setSelectionMode(true);
+    }, []);
+
+    const exitSelectionMode = useCallback(() => {
+        Haptics.selectionAsync();
+        setSelectionMode(false);
+        setSelectedIds(new Set());
+        setConfirmDeleteVisible(false);
+    }, []);
+
+    const confirmSelectedDelete = useCallback(async () => {
+        const ids = Array.from(selectedIds);
+        if (!ids.length || deleting) return;
+        setDeleting(true);
+        try {
+            await Promise.all(ids.map(id => incidentService.deleteChatForMe(id)));
+            setIncidents(prev => prev.filter(item => !selectedIds.has(String(item.id))));
+            exitSelectionMode();
+        } finally {
+            setDeleting(false);
+        }
+    }, [deleting, exitSelectionMode, selectedIds]);
 
     return (
         <AtmosphericShell>
@@ -460,29 +458,43 @@ export default function VolunteerMessages() {
                 {/* ── Header — identical to standard-user chat_home ── */}
                 <View style={st.header}>
                     <TouchableOpacity
-                        onPress={() => { Haptics.selectionAsync(); router.back(); }}
+                        onPress={() => selectionMode ? exitSelectionMode() : (Haptics.selectionAsync(), router.back())}
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         style={st.headerBtn}
                         activeOpacity={0.7}
                     >
-                        <Feather name="chevron-left" size={22} color={D.title} />
+                        <Feather name={selectionMode ? 'x' : 'chevron-left'} size={22} color={D.title} />
                     </TouchableOpacity>
 
                     <View style={st.headerTitleArea}>
-                        <Text style={st.headerTitle}>Chat Room</Text>
+                        <Text style={st.headerTitle}>{selectionMode ? `${selectedIds.size} selected` : 'Chat Room'}</Text>
                     </View>
 
-                    <TouchableOpacity
-                        style={st.headerBtn}
-                        activeOpacity={0.7}
-                        onPress={() => { Haptics.selectionAsync(); navigateSafely('/(tabs)/users/volunteer/notifications'); }}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Open volunteer notifications"
-                        accessibilityRole="button"
-                    >
-                        <Ionicons name="notifications-outline" size={20} color={T.ink2} />
-                        {hasUnreadNotif && <View style={st.notifDot} />}
-                    </TouchableOpacity>
+                    <View style={st.headerActions}>
+                        {!selectionMode && (
+                            <TouchableOpacity
+                                style={st.headerBtn}
+                                activeOpacity={0.7}
+                                onPress={() => { Haptics.selectionAsync(); navigateSafely('/(tabs)/users/volunteer/notifications'); }}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityLabel="Open volunteer notifications"
+                                accessibilityRole="button"
+                            >
+                                <Ionicons name="notifications-outline" size={20} color={T.ink2} />
+                                {hasUnreadNotif && <View style={st.notifDot} />}
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                            style={[st.headerBtn, selectionMode && !selectedIds.size && st.headerBtnDisabled]}
+                            activeOpacity={0.7}
+                            onPress={() => selectionMode ? selectedIds.size > 0 && setConfirmDeleteVisible(true) : enterSelectionMode()}
+                            disabled={selectionMode && selectedIds.size === 0}
+                            accessibilityLabel={selectionMode ? 'Delete selected chats' : 'Select chats to delete'}
+                            accessibilityRole="button"
+                        >
+                            <Feather name="trash-2" size={18} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
 
                 {/* 12px breathing space — same as standard user */}
@@ -546,6 +558,8 @@ export default function VolunteerMessages() {
                             incident={item}
                             isMyEmergency={isMyEmergency}
                             onPress={() => openChat(item.id)}
+                            selectionMode={selectionMode}
+                            selected={selectedIds.has(String(item.id))}
                         />
                     )}
                     keyExtractor={item => item.id}
@@ -571,6 +585,23 @@ export default function VolunteerMessages() {
                     }
                     ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
                 />
+
+                <Modal transparent visible={confirmDeleteVisible} animationType="fade">
+                    <View style={st.confirmBackdrop}>
+                        <View style={st.confirmCard}>
+                            <Text style={st.confirmTitle}>Delete selected chat(s) from your inbox?</Text>
+                            <Text style={st.confirmMessage}>This will only remove the chat from your side. It will not delete incident history.</Text>
+                            <View style={st.confirmActions}>
+                                <TouchableOpacity style={st.confirmCancel} onPress={() => setConfirmDeleteVisible(false)} disabled={deleting}>
+                                    <Text style={st.confirmCancelText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[st.confirmDelete, deleting && { opacity: 0.65 }]} onPress={confirmSelectedDelete} disabled={deleting}>
+                                    <Text style={st.confirmDeleteText}>{deleting ? 'Deleting...' : 'Delete'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
             </View>
         </AtmosphericShell>
     );
@@ -602,6 +633,8 @@ const st = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    headerBtnDisabled: { opacity: 0.4 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     notifDot: {
         position: 'absolute',
         top: 7,
@@ -700,6 +733,28 @@ const st = StyleSheet.create({
         backgroundColor: T.surfaceBulky,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
+    },
+    cardSelected: {
+        borderColor: `${T.violet}99`,
+        backgroundColor: 'rgba(138,56,246,0.16)',
+    },
+    selectionDot: {
+        position: 'absolute',
+        left: 48,
+        top: 12,
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.45)',
+        backgroundColor: T.surfaceBulky,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 3,
+    },
+    selectionDotActive: {
+        backgroundColor: T.violet,
+        borderColor: T.violet,
     },
 
     // ── Center column ────────────────────────────────────────────────────
@@ -836,4 +891,27 @@ const st = StyleSheet.create({
         fontSize: 13,
         fontWeight: '600',
     },
+    confirmBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    confirmCard: {
+        width: '100%',
+        maxWidth: 420,
+        backgroundColor: '#1E153A',
+        borderRadius: 16,
+        padding: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    confirmTitle: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginBottom: 8 },
+    confirmMessage: { color: 'rgba(255,255,255,0.72)', fontSize: 14, marginBottom: 16 },
+    confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+    confirmCancel: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: 'transparent' },
+    confirmCancelText: { color: 'rgba(255,255,255,0.8)', fontWeight: '700' },
+    confirmDelete: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: T.danger },
+    confirmDeleteText: { color: T.onPrimary, fontWeight: '900' },
 });

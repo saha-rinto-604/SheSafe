@@ -41,7 +41,7 @@ const PremiumBar = memo(function PremiumBar({
     return (
         <View style={[pb.bar, style]}>
             <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={pb.tint} pointerEvents="none" />
+            <View style={[pb.tint, { pointerEvents: 'none' }]} />
             <View style={[pb.content, contentStyle]}>{children}</View>
         </View>
     );
@@ -138,7 +138,7 @@ export default function VolunteerNavbar({ activeTab, onActiveTabPress }: { activ
     }, [activeTab, onActiveTabPress, router]);
 
     return (
-        <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
+        <View style={[s.navWrap, { bottom: navBottom, pointerEvents: 'box-none' }]}>
             <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                 {NAV_TABS.map(tab => (
                     <NavTab

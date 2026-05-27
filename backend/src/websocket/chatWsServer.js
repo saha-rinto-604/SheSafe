@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const chatService = require('../modules/chat/chat.service');
 const locationService = require('../modules/locations/location.service');
+const { query } = require('../config/db');
 const { jwt: jwtConfig } = env;
 
 // ── Room Management ─────────────────────────────────────────────────────────
@@ -12,6 +13,32 @@ const rooms = new Map();
 
 // dispatchClients: Set<{ ws, userId, userInfo }> — all online volunteers
 const dispatchClients = new Set();
+let hasAccountStatusColumn;
+
+async function usersHaveAccountStatus() {
+  if (hasAccountStatusColumn !== undefined) return hasAccountStatusColumn;
+  const rows = await query(
+    `SELECT COUNT(*) AS count
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'account_status'`
+  );
+  hasAccountStatusColumn = Number(rows[0]?.count || 0) > 0;
+  return hasAccountStatusColumn;
+}
+
+async function isBlockedUser(userId) {
+  if (!(await usersHaveAccountStatus())) return false;
+  const rows = await query(
+    `SELECT account_status
+     FROM users
+     WHERE id = ?
+     LIMIT 1`,
+    [userId]
+  );
+  return String(rows[0]?.account_status || '').toUpperCase() === 'BLOCKED';
+}
 
 function getRoomId(pathname) {
   // /ws/chat/:incidentId/
@@ -240,6 +267,11 @@ function attach(server) {
       phoneNumber: userPayload.phoneNumber,
     };
 
+    if (await isBlockedUser(userId)) {
+      ws.close(1008, 'Account blocked');
+      return;
+    }
+
     // ── Dispatch channel (volunteer presence) ──
     if (isDispatch) {
       const client = { ws, userId, userInfo };
@@ -247,7 +279,6 @@ function attach(server) {
 
       // Mark user online in DB (fire-and-forget)
       try {
-        const { query } = require('../config/db');
         await query(`UPDATE users SET is_online = TRUE, last_seen_at = NOW() WHERE id = ?`, [userId]);
       } catch (err) {
         console.error('[WS Dispatch] Failed to mark user online:', err.message);
@@ -259,7 +290,6 @@ function attach(server) {
         dispatchClients.delete(client);
         // Mark user offline
         try {
-          const { query } = require('../config/db');
           await query(`UPDATE users SET is_online = FALSE, last_seen_at = NOW() WHERE id = ?`, [userId]);
         } catch (err) {
           console.error('[WS Dispatch] Failed to mark user offline:', err.message);
@@ -297,6 +327,9 @@ function attach(server) {
 
       if (data.type === 'chat.message.send') {
         try {
+          if (await isBlockedUser(userId)) {
+            throw new Error('This account is blocked and cannot send messages.');
+          }
           const msg = await chatService.sendMessage(userId, incidentId, data.payload || {});
           broadcastAll(incidentId, { type: 'chat.message.new', payload: msg });
         } catch (err) {

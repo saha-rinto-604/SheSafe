@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { T } from '../../constants/theme';
+import { API_BASE_URL } from '../../services/api';
 
 type UserAvatarProps = {
     uri?: string | null;
@@ -19,24 +20,33 @@ export default function UserAvatar({
     backgroundColor = T.violetDim
 }: UserAvatarProps) {
     const [failed, setFailed] = React.useState(false);
+    const resolvedUri = React.useMemo(() => {
+        const trimmed = uri?.trim();
+        if (!trimmed) return null;
+        if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('file:') || trimmed.startsWith('data:')) {
+            return trimmed;
+        }
+        const path = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+        return `${API_BASE_URL}${path}`;
+    }, [uri]);
 
     React.useEffect(() => {
         setFailed(false);
-    }, [uri]);
+    }, [resolvedUri]);
 
     return (
         <View
             style={[
                 styles.avatarContainer,
+                { width: size, height: size, borderRadius: size / 2, backgroundColor },
                 style,
-                { width: size, height: size, borderRadius: size / 2, backgroundColor }
             ]}
         >
-            {failed || !uri || uri.trim() === '' || uri.includes('pravatar') ? (
+            {failed || !resolvedUri || resolvedUri.includes('pravatar') ? (
                 <Ionicons name="person" size={size * 0.58} color={iconColor} />
             ) : (
                 <Image
-                    source={{ uri }}
+                    source={{ uri: resolvedUri }}
                     style={styles.avatarImage}
                     resizeMode="cover"
                     onError={() => setFailed(true)}

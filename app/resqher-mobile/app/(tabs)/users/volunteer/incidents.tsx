@@ -4,7 +4,7 @@
  * Uses the same animated sliding-indicator segment pattern as activity.tsx.
  */
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
     View,
     Text,
@@ -16,6 +16,7 @@ import {
     LayoutAnimation,
     Platform,
     UIManager,
+    ActivityIndicator,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,6 +24,7 @@ import { useRouter } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { type IncidentCategory } from '../../../../src/types/chat';
+import { incidentService } from '../../../../src/services/incidentService';
 
 const MED = {
     muted: '#A09CB2',
@@ -232,11 +234,60 @@ function EmptyState({ isMyEmergency }: { isMyEmergency: boolean }) {
 }
 
 // ── Main screen ────────────────────────────────────────────────────────────────
+function normalizeHistoryStatus(status: any): IncidentStatus {
+    const upper = String(status || '').toUpperCase();
+    if (upper === 'ACTIVE' || upper === 'IN_PROGRESS' || upper === 'LIVE') return 'Active';
+    if (upper === 'CANCELLED' || upper === 'CANCELED') return 'Cancelled';
+    return 'Resolved';
+}
+
+function formatHistoryDate(value?: string | null): string {
+    if (!value) return 'Recently';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return 'Recently';
+    return date.toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+    });
+}
+
+function toAssistedHistoryIncident(raw: any): VolunteerIncident {
+    const id = String(raw.id);
+    return {
+        id,
+        category: 'ASSISTED',
+        incidentNumber: Number(id.replace(/\D/g, '')) || Number(raw.id) || 0,
+        personName: raw.sosUser?.name ?? raw.reporter ?? 'SOS creator',
+        location: raw.address ?? raw.locationLabel ?? 'Emergency location',
+        occurredAtLabel: formatHistoryDate(raw.acceptedAt ?? raw.createdAt ?? raw.created_at),
+        status: normalizeHistoryStatus(raw.status),
+    };
+}
+
+function toMyEmergencyHistoryIncident(raw: any): VolunteerIncident {
+    const id = String(raw.id);
+    return {
+        id,
+        category: 'MY_EMERGENCY',
+        incidentNumber: Number(raw.incidentNumber ?? id.replace(/\D/g, '')) || Number(raw.id) || 0,
+        personName: raw.responders?.[0]?.name ?? 'Responders',
+        location: raw.location ?? raw.address ?? 'Emergency location',
+        occurredAtLabel: raw.occurredAtLabel ?? formatHistoryDate(raw.occurredAt ?? raw.createdAt ?? raw.created_at),
+        status: normalizeHistoryStatus(raw.status),
+    };
+}
+
 export default function VolunteerIncidents() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const [segment, setSegment] = useState<Segment>('Assisted');
     const [segmentWidth, setSegmentWidth] = useState(0);
+    const [allIncidents, setAllIncidents] = useState<VolunteerIncident[]>([]);
+    const [loading, setLoading] = useState(true);
     const indicator = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
@@ -269,9 +320,29 @@ export default function VolunteerIncidents() {
 
     const isMyEmergency = segment === 'My Emergencies';
     const categoryKey: IncidentCategory = isMyEmergency ? 'MY_EMERGENCY' : 'ASSISTED';
+    const loadIncidents = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [assisted, mine] = await Promise.all([
+                incidentService.getVolunteerAssistedIncidents(),
+                incidentService.getMyIncidents(),
+            ]);
+            setAllIncidents([
+                ...(assisted ?? []).map(toAssistedHistoryIncident),
+                ...(mine ?? []).map(toMyEmergencyHistoryIncident),
+            ]);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadIncidents().catch(() => setLoading(false));
+    }, [loadIncidents]);
+
     const incidents = useMemo(
-        () => ALL_INCIDENTS.filter(i => i.category === categoryKey),
-        [categoryKey],
+        () => allIncidents.filter(i => i.category === categoryKey),
+        [allIncidents, categoryKey],
     );
 
     return (
@@ -325,7 +396,11 @@ export default function VolunteerIncidents() {
                         {isMyEmergency ? ' · My Emergencies' : ' · Assisted'}
                     </Text>
 
-                    {incidents.length === 0 ? (
+                    {loading ? (
+                        <View style={s.emptyWrap}>
+                            <ActivityIndicator color={T.violet} />
+                        </View>
+                    ) : incidents.length === 0 ? (
                         <EmptyState isMyEmergency={isMyEmergency} />
                     ) : (
                         incidents.map(incident => (

@@ -12,7 +12,7 @@ import {
     Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
     Modal, Pressable, Alert
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, type MapViewRef } from './MapViewCompat';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -254,7 +254,7 @@ export function SharedChatRoom({
     const [mapDistance, setMapDistance] = useState('');
     const [mapDuration, setMapDuration] = useState('');
     const [isLiveNavMode, setIsLiveNavMode] = useState(false);
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
 
     const openMapOverlay = useCallback(async () => {
         if (!enableMapOverlay) return;

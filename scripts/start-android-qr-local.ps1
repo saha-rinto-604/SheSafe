@@ -106,7 +106,7 @@ function Wait-ForBackend {
 # ===========================================================================
 
 Write-Host ""
-Write-Host "=== ResQher Android QR Launcher ===" -ForegroundColor Cyan
+Write-Host "=== SheSafe Android QR Launcher ===" -ForegroundColor Cyan
 Write-Host "Repo: $repoRoot"
 Write-Host ""
 
@@ -152,7 +152,7 @@ if ($SkipMigrations) {
 # 5. Start backend in a new terminal
 Write-Host ""
 Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
-$backendCmd = "Write-Host 'ResQher Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+$backendCmd = "Write-Host 'SheSafe Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
 Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
 
 # 6. Wait for backend health

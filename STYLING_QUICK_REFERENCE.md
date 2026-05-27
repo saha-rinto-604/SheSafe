@@ -1,4 +1,4 @@
-# ResQher Styling Quick Reference Guide
+# SheSafe Styling Quick Reference Guide
 
 ## 🎨 Color Quick Reference
 
@@ -380,4 +380,4 @@ When styling new screens:
 
 ---
 
-Generated: March 7, 2026 | ResQher Mobile App v1.0
+Generated: March 7, 2026 | SheSafe Mobile App v1.0

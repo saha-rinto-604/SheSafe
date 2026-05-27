@@ -11,7 +11,7 @@ import {
     TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
 } from 'react-native';
 import { Animated as RNAnimated, Easing } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,8 +23,11 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import SheSafeLogo from '../../../../src/components/SheSafeLogo';
+import SheSafeMark from '../../../../src/components/SheSafeMark';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone } from '../../../../src/services/incidentService';
+import { getConfirmedSafePlaces, mapSafePlaceToDestination, type SafePlace } from '../../../../src/services/safePlaceService';
 import api from '../../../../src/services/api';
 import type { PlaceIncident } from '../../../../src/data/dhakaIncidents';
 import { evaluateRouteSafety, haversineDistance, type LatLng } from '../../../../src/utils/routeSafety';
@@ -34,6 +37,7 @@ import {
     REROUTE_DELAY_MS,
     REROUTE_THROTTLE_MS,
 } from '../../../../src/utils/routeRealtime';
+import { useRouteAudio } from '../../../../src/hooks/useRouteAudio';
 
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const { width, height } = Dimensions.get('window');
@@ -238,6 +242,9 @@ type PlaceSuggestion = {
     longitude: number;
     placeId?: string;
     zoneSeverity?: 'red' | 'yellow';
+    source?: 'search' | 'zone' | 'safe_place';
+    description?: string | null;
+    status?: string;
 };
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 260;
@@ -501,8 +508,8 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
             <TouchableOpacity style={dr.overlay} activeOpacity={1} onPress={onClose} />
             <RNAnimated.View style={[dr.drawer, { transform: [{ translateX: slideX }] }]}>
                 <LinearGradient colors={G.navActive.colors} start={G.navActive.start} end={G.navActive.end} style={dr.hd}>
-                    <View style={dr.avatarRing}><Feather name="shield" size={26} color={T.onPrimary} /></View>
-                    <Text style={dr.appName}>ResQher</Text>
+                    <View style={dr.avatarRing}><SheSafeMark size={50} /></View>
+                    <SheSafeLogo size={26} center />
                     <Text style={dr.sub}>Emergency Assistance Platform</Text>
                 </LinearGradient>
                 <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="always">
@@ -587,9 +594,10 @@ const NavTab = memo(function NavTab({
 export default function ExploreScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const mapRef = useRef<MapView>(null);
+    const mapRef = useRef<MapViewRef>(null);
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
+    const { playRouteAudio, stopRouteAudio } = useRouteAudio('ExploreScreen');
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
@@ -678,7 +686,7 @@ export default function ExploreScreen() {
         if (navigationGuardRef.current) return;
         navigationGuardRef.current = true;
         Keyboard.dismiss();
-        Speech.stop();
+        void stopRouteAudio();
         routeRequestIdRef.current += 1;
         safePathRequestIdRef.current += 1;
         locationSubRef.current?.remove();
@@ -701,11 +709,13 @@ export default function ExploreScreen() {
             router.push(path as any);
         }
         setTimeout(() => { navigationGuardRef.current = false; }, 800);
-    }, [router]);
+    }, [router, stopRouteAudio]);
 
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
     const [zonesLoading, setZonesLoading] = useState(true);
     const [zonesError, setZonesError] = useState<string | null>(null);
+    const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
+    const safePlaceTapRef = useRef<{ id: string; at: number } | null>(null);
 
     const normalizedIncidentZones = useMemo(() => {
         return (incidentZones || [])
@@ -723,6 +733,19 @@ export default function ExploreScreen() {
         : selectedPlaceZoneSeverity === 'red'
             ? '#EF4444'
             : T.violet;
+
+    const safePlaceToSuggestion = useCallback((place: SafePlace): PlaceSuggestion => mapSafePlaceToDestination(place), []);
+
+    const fetchConfirmedSafePlaces = useCallback(async () => {
+        try {
+            const places = await getConfirmedSafePlaces();
+            if (!isMountedRef.current) return;
+            setConfirmedSafePlaces(places);
+        } catch (err) {
+            console.warn('[ExploreScreen] Failed to fetch safe places:', err);
+            if (isMountedRef.current) setConfirmedSafePlaces([]);
+        }
+    }, []);
 
     const clearRouteState = useCallback(() => {
         routeRequestIdRef.current += 1;
@@ -753,8 +776,8 @@ export default function ExploreScreen() {
             offRouteTimerRef.current = null;
         }
         lastRerouteAtRef.current = 0;
-        Speech.stop();
-    }, []);
+        void stopRouteAudio();
+    }, [stopRouteAudio]);
 
     const fetchLiveZones = useCallback(async () => {
         try {
@@ -778,6 +801,7 @@ export default function ExploreScreen() {
 
     const refreshAndRecenterMap = useCallback(async () => {
         fetchLiveZones();
+        fetchConfirmedSafePlaces();
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
@@ -794,12 +818,16 @@ export default function ExploreScreen() {
             console.warn('[ExploreScreen] Unable to refresh map location:', err);
             if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
         }
-    }, [fetchLiveZones]);
+    }, [fetchConfirmedSafePlaces, fetchLiveZones]);
 
     useEffect(() => {
         isMountedRef.current = true;
         fetchLiveZones();
-        const interval = setInterval(fetchLiveZones, 60_000);
+        fetchConfirmedSafePlaces();
+        const interval = setInterval(() => {
+            fetchLiveZones();
+            fetchConfirmedSafePlaces();
+        }, 60_000);
         return () => {
             isMountedRef.current = false;
             clearInterval(interval);
@@ -810,7 +838,7 @@ export default function ExploreScreen() {
             safePathRequestIdRef.current += 1;
             routeRequestIdRef.current += 1;
         };
-    }, [fetchLiveZones]);
+    }, [fetchConfirmedSafePlaces, fetchLiveZones]);
 
     useFocusEffect(
         useCallback(() => {
@@ -1311,6 +1339,7 @@ export default function ExploreScreen() {
                     }
                     setRouteUnsafe(true);
                     setScanState('TRANSIT_ERROR');
+                    void playRouteAudio('partial');
                     return;
                 }
 
@@ -1430,25 +1459,23 @@ export default function ExploreScreen() {
                 setRouteUnsafe(false);
                 setBlockedZoneName(null);
                 setScanState(bestRoute.safety.riskScore === 0 ? null : 'PARTIAL_SAFETY');
-                Speech.stop();
                 if (bestRoute.safety.riskScore === 0) {
-                    setTimeout(() => {
-                        Speech.speak('Safety update: Safest route selected, avoiding all high risk areas.', {
-                            language: 'en', pitch: 1.0, rate: Platform.OS === 'android' ? 0.9 : 0.95,
-                        });
-                    }, 80);
+                    void playRouteAudio('safe');
+                } else {
+                    void playRouteAudio('partial');
                 }
             } else {
                 // Partial detour — keep crimson ghost visible, show partial safety modal
                 setRouteUnsafe(true);
                 setBlockedZoneName(bestRoute.safety.redZoneName ?? blockedZoneName);
                 setScanState('PARTIAL_SAFETY');
+                void playRouteAudio('partial');
             }
         } catch {
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName, playRouteAudio]);
 
     useEffect(() => {
         if (!isLiveNav || !showSafePath || !routeUnsafe || scanState === 'SCANNING') return;
@@ -1674,6 +1701,21 @@ export default function ExploreScreen() {
         closePlaceSheet();
     }, [address, clearRouteState, closePlaceSheet, directionsProgress, userLoc]);
 
+    const handleSafePlaceMarkerPress = useCallback((place: SafePlace) => {
+        const suggestion = safePlaceToSuggestion(place);
+        const now = Date.now();
+        const lastTap = safePlaceTapRef.current;
+        const isDoubleTap = lastTap?.id === suggestion.id && now - lastTap.at <= 450;
+        safePlaceTapRef.current = { id: suggestion.id, at: now };
+
+        if (isDoubleTap) {
+            enterDirectionsMode(suggestion);
+            return;
+        }
+
+        handleResolvedPlaceSelect(suggestion);
+    }, [enterDirectionsMode, handleResolvedPlaceSelect, safePlaceToSuggestion]);
+
     const exitDirectionsMode = useCallback(() => {
         clearRouteState();
         RNAnimated.timing(directionsProgress, {
@@ -1827,6 +1869,21 @@ export default function ExploreScreen() {
                             </React.Fragment>
                         );
                     })}
+
+                    {confirmedSafePlaces.map((place) => (
+                        <Marker
+                            key={`confirmed-safe-place-${place.id}`}
+                            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
+                            anchor={{ x: 0.5, y: 1 }}
+                            calloutAnchor={{ x: 0.5, y: 0 }}
+                            tracksViewChanges={true}
+                            zIndex={700}
+                            title="Safe Place"
+                            description={place.description || place.address || place.name}
+                            pinColor={T.violet}
+                            onPress={() => handleSafePlaceMarkerPress(place)}
+                        />
+                    ))}
 
                     {selectedPlace && !directionsMode && (
                         <Marker
@@ -2488,7 +2545,7 @@ export default function ExploreScreen() {
                                     <Text style={s.placeSheetActionBtnTextPrimary}>Directions</Text>
                                 </TouchableOpacity>
 
-                                {!placeSheetIsDangerZone && (
+                                {!placeSheetIsDangerZone && selectedPlace.source !== 'safe_place' && (
                                     <TouchableOpacity
                                         style={[s.placeSheetActionBtn, s.placeSheetActionBtnSecondary]}
                                         onPress={openAddSafePlace}
@@ -2506,7 +2563,25 @@ export default function ExploreScreen() {
                                 style={s.safePlaceKeyboardAvoiding}
                             >
                                 <View style={s.placeSheetSection}>
-                                    {placeSheetMode === 'incidents' || placeSheetIsDangerZone ? (
+                                    {selectedPlace.source === 'safe_place' ? (
+                                        <>
+                                            <Text style={s.placeSheetSectionTitle}>Safe Place</Text>
+                                            <View style={s.safePlaceInfoCard}>
+                                                <View style={s.safePlaceInfoBadge}>
+                                                    <Ionicons name="shield-checkmark" size={13} color={T.onPrimary} />
+                                                    <Text style={s.safePlaceInfoBadgeText}>Safe Place</Text>
+                                                </View>
+                                                <Text style={s.safePlaceInfoTitle}>{selectedPlace.name}</Text>
+                                                {!!selectedPlace.description && (
+                                                    <Text style={s.safePlaceInfoText}>{selectedPlace.description}</Text>
+                                                )}
+                                                <View style={s.safePlaceInfoLocation}>
+                                                    <Ionicons name="location" size={14} color={T.ink4} />
+                                                    <Text style={s.safePlaceInfoText}>{selectedPlace.address}</Text>
+                                                </View>
+                                            </View>
+                                        </>
+                                    ) : placeSheetMode === 'incidents' || placeSheetIsDangerZone ? (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Incidents at this location</Text>
                                             {placeIncidents.length === 0 ? (
@@ -2841,6 +2916,21 @@ const s = StyleSheet.create({
         }),
     },
     placeMarkerStem: { width: 0, height: 0 },
+    safePlaceMarkerWrap: { alignItems: 'center', justifyContent: 'center' },
+    safePlaceMarkerIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: T.violet,
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.9)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
+            android: { elevation: 7, shadowColor: '#8A38F6' },
+        }),
+    },
     placeSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,3,8,0.35)', zIndex: 230 },
     placeSheet: {
         position: 'absolute', left: 0, right: 0, height: height * 0.5, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', zIndex: 240, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
@@ -2881,6 +2971,28 @@ const s = StyleSheet.create({
     placeSheetSection: { paddingHorizontal: 18, paddingTop: 6, gap: 10 },
     placeSheetSectionTitle: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 1.0, textTransform: 'uppercase' },
     placeSheetEmpty: { fontSize: 13, color: T.ink4 },
+    safePlaceInfoCard: {
+        gap: 8,
+        backgroundColor: 'rgba(138,56,246,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(138,56,246,0.22)',
+        borderRadius: 12,
+        padding: 12,
+    },
+    safePlaceInfoBadge: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: T.violet,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    safePlaceInfoBadgeText: { color: T.onPrimary, fontSize: 11, fontWeight: '800' },
+    safePlaceInfoTitle: { color: T.ink, fontSize: 16, fontWeight: '800' },
+    safePlaceInfoText: { color: T.ink3, fontSize: 13, lineHeight: 19 },
+    safePlaceInfoLocation: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
     placeIncidentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
     placeIncidentInfo: { flex: 1 },
     placeIncidentName: { fontSize: 13, fontWeight: '700', color: T.ink },

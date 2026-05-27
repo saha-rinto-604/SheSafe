@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticate } = require('../auth/auth.middleware');
+const { requireActiveAccount } = require('../../middleware/accountStatus');
 const controller = require('./safe-places.controller');
 
 const router = express.Router();
@@ -10,7 +11,7 @@ router.use(authenticate);
 router.get('/', controller.getZones);
 
 // POST /api/safe-places — submit a new safe place (status starts as PENDING)
-router.post('/', controller.report);
+router.post('/', requireActiveAccount, controller.report);
 
 // DELETE /api/safe-places/my — delete all safe place reports submitted by current user
 router.delete('/my', controller.deleteMyData);

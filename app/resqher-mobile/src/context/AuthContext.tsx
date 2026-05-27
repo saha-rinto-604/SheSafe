@@ -17,6 +17,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   signIn: (username: string, password: string) => Promise<{ role: Role }>;
+  signInAdmin: (phone: string, password: string) => Promise<{ role: Role }>;
   signUp: (phone: string, password: string, firstName: string, lastName: string, role?: Role) => Promise<{ role: Role }>;
   /** Attempts sign out. If isSosLive is true, calls onSosBlocked() instead and returns false. */
   signOut: (onSosBlocked?: () => void) => Promise<boolean>;
@@ -96,6 +97,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUserId(identity?.userId ?? null);
           setNotifUser(identity?.userId ?? 'anon');
           await hydrateIdentity(resolvedRole);
+          return { role: resolvedRole };
+        } finally {
+          setIsLoading(false);
+        }
+      },
+      signInAdmin: async (phone: string, password: string): Promise<{ role: Role }> => {
+        setIsLoading(true);
+        try {
+          const token = await authService.adminLogin(phone, password);
+          setAccessToken(token);
+          const identity = await getStoredIdentity();
+          const resolvedRole: Role = (identity?.role as Role) ?? 'USER';
+          setRole(resolvedRole);
+          setUserId(identity?.userId ?? null);
+          setNotifUser(identity?.userId ?? 'anon');
+          if (resolvedRole === 'ADMIN') {
+            await hydrateIdentity(resolvedRole);
+          }
           return { role: resolvedRole };
         } finally {
           setIsLoading(false);

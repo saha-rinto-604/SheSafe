@@ -12,7 +12,7 @@
  */
 
 import React, { memo } from 'react';
-import { Polyline } from 'react-native-maps';
+import { Polyline } from './shared/MapViewCompat';
 
 interface Coordinate {
     latitude: number;

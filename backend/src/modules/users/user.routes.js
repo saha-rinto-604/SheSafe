@@ -7,6 +7,7 @@
 
 const router = require('express').Router();
 const { authenticate } = require('../../middleware/authenticate');
+const { requireActiveAccount } = require('../../middleware/accountStatus');
 const upload = require('../../middleware/upload');
 const userController = require('./user.controller');
 
@@ -24,19 +25,19 @@ router.get('/me', userController.getProfile);
  * Body: { firstName?, lastName?, dobISO?, gender?, bloodGroup?, medicalInfo?, homeAddress? }
  * Returns: { user: <full updated profile> }
  */
-router.patch('/me', userController.updateProfile);
+router.patch('/me', requireActiveAccount, userController.updateProfile);
 
 /**
  * POST /api/users/me/photo — Upload profile photo (multipart/form-data)
  * Field: 'photo' — single image file (JPEG, PNG, WebP, HEIC; max 5MB)
  * Returns: { user: <full updated profile with new photoUrl> }
  */
-router.post('/me/photo', upload.single('photo'), userController.uploadPhoto);
+router.post('/me/photo', requireActiveAccount, upload.single('photo'), userController.uploadPhoto);
 
 /**
  * DELETE /api/users/me/photo — Remove profile photo
  * Returns: { user: <profile with photoUrl: ''> }
  */
-router.delete('/me/photo', userController.removePhoto);
+router.delete('/me/photo', requireActiveAccount, userController.removePhoto);
 
 module.exports = router;

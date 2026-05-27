@@ -7,18 +7,17 @@ import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
 import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
-import { getStoredIdentity } from '../../src/services/api';
-import { ROLE_DEFAULT_ROUTE, VOLUNTEER } from '../../src/constants/routes';
+import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
+import SheSafeLogo from '../../src/components/SheSafeLogo';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 type FormData = { phone: string; password: string };
 
@@ -91,8 +90,9 @@ export default function Login() {
         <View style={st.card}>
           {/* ── Header ── */}
           <View style={st.header}>
+            <SheSafeLogo size={34} center style={st.logo} />
             <Text style={st.title}>Welcome back</Text>
-            <Text style={st.subtitle}>Sign in to your ResQher account</Text>
+            <Text style={st.subtitle}>Sign in to your SheSafe account</Text>
           </View>
 
           {/* ── Fields ── */}
@@ -206,7 +206,7 @@ export default function Login() {
             activeOpacity={0.7}
           >
             <Text style={st.linkTxt}>
-              Don't have an account?{'  '}
+              Don&apos;t have an account?{'  '}
               <Text style={st.linkAccent}>Sign up</Text>
             </Text>
           </TouchableOpacity>
@@ -232,6 +232,7 @@ const st = StyleSheet.create({
   },
 
   header: { alignItems: 'center', marginBottom: S.s4 },
+  logo: { marginBottom: S.s3 },
   title: { ...Ty.h2, marginBottom: 2 },
   subtitle: { ...Ty.bodySm, color: T.ink4, textAlign: 'center' },
 
