@@ -2,7 +2,7 @@ import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, LayoutAnimation,
-  UIManager, Animated, Easing, ScrollView,
+  Animated, Easing, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
@@ -17,15 +17,13 @@ import type { UserRole } from '../../src/services/api';
 import { useToast } from '../../src/components/Toast';
 import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+import { routeForPoliceStatus } from '../../src/constants/routes';
 
 type Role = UserRole;
 type FormData = {
   firstName: string; lastName: string;
   phone: string; password: string; confirmPassword: string;
+  policeStationOrUnit: string; badgeNumber: string;
 };
 
 const ROLE_OPTIONS = [
@@ -33,6 +31,7 @@ const ROLE_OPTIONS = [
   { value: 'volunteer' as Role, label: 'Volunteer', description: 'Respond to community SOS alerts.', icon: 'heart' as const },
   { value: 'law_enforcement' as Role, label: 'Law Enforcement', description: 'Access authorized incident tools.', icon: 'shield' as const },
 ];
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 // ─── Minimalist Role Tile ─────────────────────────────────────────────────────
 // 1px border, border-only glow on selection — no background fill change
@@ -44,15 +43,15 @@ const RoleTile = React.memo(function RoleTile({
   useEffect(() => {
     Animated.spring(scale, {
       toValue: isActive ? 1.02 : 1.0,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
       tension: 260, friction: 16,
     }).start();
   }, [isActive]);
 
   const handlePress = useCallback(() => {
     Animated.sequence([
-      Animated.timing(scale, { toValue: 0.975, duration: 70, useNativeDriver: true }),
-      Animated.spring(scale, { toValue: isActive ? 1.0 : 1.02, useNativeDriver: true, tension: 260, friction: 14 }),
+      Animated.timing(scale, { toValue: 0.975, duration: 70, useNativeDriver: USE_NATIVE_DRIVER }),
+      Animated.spring(scale, { toValue: isActive ? 1.0 : 1.02, useNativeDriver: USE_NATIVE_DRIVER, tension: 260, friction: 14 }),
     ]).start();
     onPress();
   }, [isActive, onPress]);
@@ -182,7 +181,10 @@ export default function Signup() {
   const [focused, setFocused] = useState<string | null>(null);
 
   const { control, handleSubmit, watch, formState: { errors }, trigger } = useForm<FormData>({
-    defaultValues: { firstName: '', lastName: '', phone: '', password: '', confirmPassword: '' },
+    defaultValues: {
+      firstName: '', lastName: '', phone: '', password: '', confirmPassword: '',
+      policeStationOrUnit: '', badgeNumber: '',
+    },
   });
   const pw = watch('password');
   const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
@@ -197,7 +199,9 @@ export default function Signup() {
       if (!role) { showToast({ type: 'warning', title: 'Role Required', message: 'Please select an account type to continue.' }); return; }
       goStep(2);
     } else if (step === 2) {
-      const valid = await trigger(['firstName', 'lastName', 'phone']);
+      const fields: (keyof FormData)[] = ['firstName', 'lastName', 'phone'];
+      if (role === 'law_enforcement') fields.push('policeStationOrUnit', 'badgeNumber');
+      const valid = await trigger(fields);
       if (valid) goStep(3);
     }
   };
@@ -242,7 +246,11 @@ export default function Signup() {
         data.password,
         data.firstName,
         data.lastName,
-        ROLE_TO_AUTH[role] ?? 'USER'
+        ROLE_TO_AUTH[role] ?? 'USER',
+        role === 'law_enforcement' ? {
+          policeStationOrUnit: data.policeStationOrUnit.trim(),
+          badgeNumber: data.badgeNumber.trim(),
+        } : undefined
       );
 
       showToast({ type: 'success', title: 'Welcome to SheSafe!', message: 'Your account has been created successfully.' });
@@ -250,7 +258,7 @@ export default function Signup() {
       const rolePaths: Record<string, string> = {
         USER: '/(tabs)/users/standard-user/sos_screen',
         VOLUNTEER: '/(tabs)/users/volunteer',
-        POLICE: '/(tabs)/users/police/dashboard',
+        POLICE: routeForPoliceStatus(result.verificationStatus, result.user?.policeProfile),
       };
       router.replace(rolePaths[result.role] as any);
     } catch (e: any) {
@@ -402,6 +410,38 @@ export default function Signup() {
 
               <FormField name="phone" placeholder="Phone number" icon="phone" keyboard="phone-pad" rules={phoneRules} control={control} errors={errors} focused={focused} setFocused={setFocused} />
 
+              {role === 'law_enforcement' && (
+                <View style={st.policeFields}>
+                  <FormField
+                    name="policeStationOrUnit"
+                    placeholder="Police station / unit"
+                    icon="home"
+                    rules={{ required: 'Police station or unit is required' }}
+                    control={control}
+                    errors={errors}
+                    focused={focused}
+                    setFocused={setFocused}
+                  />
+                  <FormField
+                    name="badgeNumber"
+                    placeholder="Badge or job ID number"
+                    icon="shield"
+                    rules={{ required: 'Badge or job ID number is required' }}
+                    control={control}
+                    errors={errors}
+                    focused={focused}
+                    setFocused={setFocused}
+                  />
+                  <View style={st.uploadBox}>
+                    <Feather name="shield" size={18} color={T.violet} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={st.uploadTitle}>Police Job Certificate / Job ID Card</Text>
+                      <Text style={st.uploadSub}>You will upload this required document after account creation.</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+
               <TouchableOpacity
                 style={st.btn}
                 onPress={goNext}
@@ -535,6 +575,22 @@ const st = StyleSheet.create({
     borderRadius: R.sm, borderWidth: 1, borderColor: T.lineMid, marginBottom: S.s3,
   },
   roleBadgeTxt: { fontSize: 13, fontWeight: '700', color: T.ink2 },
+  policeFields: { gap: S.s2, marginTop: S.s1 },
+  uploadBox: {
+    minHeight: 58,
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: T.lineBold,
+    backgroundColor: T.surfaceBulkyGlass,
+    paddingHorizontal: S.s4,
+    paddingVertical: S.s3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: S.s3,
+    marginBottom: S.s2,
+  },
+  uploadTitle: { fontSize: 13, fontWeight: '800', color: T.ink },
+  uploadSub: { fontSize: 11, fontWeight: '600', color: T.ink4, marginTop: 2 },
 
   row: { flexDirection: 'row', gap: S.s2, marginBottom: S.s1 },
 

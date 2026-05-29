@@ -2,15 +2,15 @@
  * Admin Dashboard — Emergency Coordination Center
  * Responsive layout: Desktop sidebar (>768px) / Mobile drawer (≤768px)
  */
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   Dimensions, Platform, TextInput, StatusBar, Modal, Animated, Easing, Image
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { T, S, Ty } from '../../../../src/constants/theme';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { T, Ty } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import { useToast } from '../../../../src/components/Toast';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
@@ -24,11 +24,70 @@ import { UsersWorkspace } from '../../../../src/features/admin/_components/Users
 import { VerificationsWorkspace } from '../../../../src/features/admin/_components/VerificationsWorkspace';
 import { SafePlacesWorkspace } from '../../../../src/features/admin/_components/SafePlacesWorkspace';
 import { ReportsWorkspace } from '../../../../src/features/admin/_components/ReportsWorkspace';
+import { PoliceWorkspace } from '../../../../src/features/admin/_components/PoliceWorkspace';
 import { AdminNotificationsDrawer } from '../../../../src/features/admin/_components/AdminNotificationsDrawer';
-import adminService, { type AdminOverview } from '../../../../src/services/adminService';
+import { adminService, type AdminOverview } from '../../../../src/services/adminService';
 import { ROLE_DEFAULT_ROUTE } from '../../../../src/constants/routes';
-
+import { SIDEBAR_ITEMS } from '../../../../src/features/admin/_data/adminMockData';
+import { useDispatchSocket } from '../../../../src/hooks/useDispatchSocket';
 const DESKTOP_BREAKPOINT = 768;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+const ADMIN_SECTION_KEYS = new Set(SIDEBAR_ITEMS.map(item => item.key));
+const ACTIVE_LAW_REQUEST_STATUSES = new Set(['PENDING_ADMIN_REVIEW', 'ASSIGNED_TO_POLICE', 'ACCEPTED_BY_POLICE', 'REJECTED_BY_POLICE']);
+const INACTIVE_LAW_STATUSES = new Set(['RESOLVED', 'CANCELLED']);
+
+function normalizeAdminSection(value?: string | string[]) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const key = String(raw || 'overview').toLowerCase();
+  return ADMIN_SECTION_KEYS.has(key) ? key : 'overview';
+}
+
+function statusLabel(value?: string | null) {
+  return String(value || '').replace(/_/g, ' ');
+}
+
+function shortTime(value?: string | null) {
+  if (!value) return 'Time unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function needsAdminAttention(item: any) {
+  const incidentStatus = String(item?.incidentStatus || '').toUpperCase();
+  const requestStatus = String(item?.status || '').toUpperCase();
+  return !INACTIVE_LAW_STATUSES.has(incidentStatus) && ACTIVE_LAW_REQUEST_STATUSES.has(requestStatus);
+}
+
+function LawRequestPreviewCard({ item, onPress }: { item: any; onPress: () => void }) {
+  const incidentStatus = String(item?.incidentStatus || '').toUpperCase();
+  const requestStatus = String(item?.status || '').toUpperCase();
+  const inactiveStatus = INACTIVE_LAW_STATUSES.has(incidentStatus) ? incidentStatus : INACTIVE_LAW_STATUSES.has(requestStatus) ? requestStatus : null;
+  const assigned = !inactiveStatus && ['ASSIGNED_TO_POLICE', 'ACCEPTED_BY_POLICE'].includes(requestStatus);
+  const badgeText = inactiveStatus ? statusLabel(inactiveStatus) : assigned ? 'Assigned' : statusLabel(requestStatus || 'Pending');
+
+  return (
+    <TouchableOpacity style={ds.lawQuickItem} activeOpacity={0.82} onPress={onPress}>
+      <View style={ds.lawQuickTop}>
+        <Text style={ds.quickTitle}>{item.incidentDisplayCode || `#${item.incidentId || item.id}`}</Text>
+        <Text style={[
+          ds.lawBadge,
+          assigned && ds.lawBadgeAssigned,
+          inactiveStatus === 'RESOLVED' && ds.lawBadgeResolved,
+          inactiveStatus === 'CANCELLED' && ds.lawBadgeCancelled,
+        ]}>
+          {badgeText}
+        </Text>
+      </View>
+      <Text style={ds.quickSub} numberOfLines={1}>{item.victimName || item.requesterName || 'SOS requester'}</Text>
+      <Text style={ds.quickSub} numberOfLines={2}>{item.address || 'Location unavailable'}</Text>
+      <View style={ds.lawQuickFooter}>
+        <Text style={ds.quickSub}>{shortTime(item.createdAt)}</Text>
+        <Text style={ds.quickSub}>{item.assignedToAll ? 'All approved police' : item.assignedPoliceName || item.assignedPolice?.name || 'Unassigned'}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(Dimensions.get('window').width > DESKTOP_BREAKPOINT);
@@ -152,10 +211,12 @@ const th = StyleSheet.create({
 /* ── Main Dashboard Screen ── */
 export default function AdminDashboard() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ section?: string | string[] }>();
+  const routeSection = normalizeAdminSection(params.section);
   const { signOut, isLoading: authLoading, isSignedIn, role } = useAuth();
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
-  const [activeMenu, setActiveMenu] = useState('overview');
+  const [activeMenu, setActiveMenu] = useState(routeSection);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [notifDrawerOpen, setNotifDrawerOpen] = useState(false);
@@ -166,9 +227,11 @@ export default function AdminDashboard() {
   const [ovVerifs, setOvVerifs] = useState<any[]>([]);
   const [ovSafePlaces, setOvSafePlaces] = useState<any[]>([]);
   const [ovReports, setOvReports] = useState<any[]>([]);
+  const [ovLawRequests, setOvLawRequests] = useState<any[]>([]);
   const [globalActionedReports, setGlobalActionedReports] = useState<Record<string, 'DISMISSED' | 'WARNED' | 'BLOCKED'>>({});
   
   const recentReports = ovReports.filter(r => !globalActionedReports[r.id]);
+  const attentionLawRequests = ovLawRequests.filter(needsAdminAttention);
 
   const [selectedVerif, setSelectedVerif] = useState<any>(null);
   const [selectedReport, setSelectedReport] = useState<any>(null);
@@ -209,16 +272,18 @@ export default function AdminDashboard() {
     setOverviewLoading(true);
     setOverviewError('');
     try {
-      const [nextOverview, verifs, safePlaces, reports] = await Promise.all([
+      const [nextOverview, verifs, safePlaces, reports, lawRequests] = await Promise.all([
         adminService.getOverview(),
         adminService.getVerifications('pending'),
         adminService.getSafePlaces('PENDING'),
         adminService.getReports('PENDING'),
+        adminService.getLawEnforcementRequests(),
       ]);
       setOverview(nextOverview);
       setOvVerifs(verifs);
       setOvSafePlaces(safePlaces);
       setOvReports(reports);
+      setOvLawRequests(lawRequests);
     } catch (err: any) {
       setOverviewError(err?.message || 'Could not load admin overview.');
     } finally {
@@ -227,23 +292,52 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-    if (role === 'ADMIN') loadOverview();
+    if (role !== 'ADMIN') return undefined;
+    const timer = setTimeout(() => {
+      loadOverview();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [role, loadOverview]);
 
-  const workspaceOpacity = useRef(new Animated.Value(1)).current;
-  const workspaceTranslateX = useRef(new Animated.Value(0)).current;
-  const bellScale = useRef(new Animated.Value(1)).current;
+  const refreshLawRequestsFromSocket = useCallback(() => {
+    if (role === 'ADMIN') {
+      loadOverview();
+    }
+  }, [loadOverview, role]);
+
+  useDispatchSocket({
+    enabled: role === 'ADMIN' && isSignedIn,
+    onLawEnforcementRequest: refreshLawRequestsFromSocket,
+    onIncidentStatusUpdated: refreshLawRequestsFromSocket,
+  });
+
+  const workspaceOpacity = useMemo(() => new Animated.Value(1), []);
+  const workspaceTranslateX = useMemo(() => new Animated.Value(0), []);
+  const bellScale = useMemo(() => new Animated.Value(1), []);
 
   useEffect(() => {
-    Animated.loop(
+    if (activeMenu === routeSection) return;
+    const timer = setTimeout(() => {
+      workspaceOpacity.setValue(1);
+      workspaceTranslateX.setValue(0);
+      setActiveMenu(routeSection);
+      setDrawerOpen(false);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeMenu, routeSection, workspaceOpacity, workspaceTranslateX]);
+
+  useEffect(() => {
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.delay(2000),
-        Animated.timing(bellScale, { toValue: 1.15, duration: 150, easing: Easing.out(Easing.ease), useNativeDriver: true }),
-        Animated.timing(bellScale, { toValue: 1, duration: 150, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+        Animated.timing(bellScale, { toValue: 1.15, duration: 150, easing: Easing.out(Easing.ease), useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(bellScale, { toValue: 1, duration: 150, easing: Easing.in(Easing.ease), useNativeDriver: USE_NATIVE_DRIVER }),
         Animated.delay(3000),
       ])
-    ).start();
-  }, []);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [bellScale]);
 
   const handleLogoutClick = useCallback(() => {
     setShowLogoutModal(true);
@@ -258,21 +352,25 @@ export default function AdminDashboard() {
   }, [signOut, router]);
 
   const handleMenuSelect = useCallback((key: string) => {
-    if (activeMenu === key) return;
-    
+    const nextKey = ADMIN_SECTION_KEYS.has(key) ? key : 'overview';
+    setDrawerOpen(false);
+    if (routeSection !== nextKey) {
+      router.push({ pathname: '/(tabs)/users/admin/dashboard', params: { section: nextKey } } as any);
+    }
+    if (activeMenu === nextKey) return;
+
     Animated.parallel([
-      Animated.timing(workspaceOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
-      Animated.timing(workspaceTranslateX, { toValue: 20, duration: 150, useNativeDriver: true })
+      Animated.timing(workspaceOpacity, { toValue: 0, duration: 150, useNativeDriver: USE_NATIVE_DRIVER }),
+      Animated.timing(workspaceTranslateX, { toValue: 20, duration: 150, useNativeDriver: USE_NATIVE_DRIVER })
     ]).start(() => {
-      setActiveMenu(key);
-      setDrawerOpen(false);
+      setActiveMenu(nextKey);
       workspaceTranslateX.setValue(-20);
       Animated.parallel([
-        Animated.timing(workspaceOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.timing(workspaceTranslateX, { toValue: 0, duration: 200, useNativeDriver: true })
+        Animated.timing(workspaceOpacity, { toValue: 1, duration: 200, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(workspaceTranslateX, { toValue: 0, duration: 200, useNativeDriver: USE_NATIVE_DRIVER })
       ]).start();
     });
-  }, [activeMenu, workspaceOpacity, workspaceTranslateX]);
+  }, [activeMenu, routeSection, router, workspaceOpacity, workspaceTranslateX]);
 
   const screenWidth = Dimensions.get('window').width;
   const cardMinW = isDesktop ? 155 : 150;
@@ -377,6 +475,14 @@ export default function AdminDashboard() {
                     {recentReports.length === 0 && <Text style={ds.emptyQuickText}>No pending reports.</Text>}
                   </View>
                 </View>
+
+                <View style={[ds.bigCard, { marginTop: 20 }]}>
+                  <SectionHeader title="Law Enforcement Requests" icon="shield" onViewAll={() => handleMenuSelect('law-enforcement-requests')} />
+                  {attentionLawRequests.slice(0, 4).map(item => (
+                    <LawRequestPreviewCard key={item.id} item={item} onPress={() => handleMenuSelect('law-enforcement-requests')} />
+                  ))}
+                  {attentionLawRequests.length === 0 && <Text style={ds.emptyQuickText}>No active law enforcement requests need admin attention.</Text>}
+                </View>
               </ScrollView>
             ) : activeMenu === 'incidents' ? (
               <View style={{ flex: 1, padding: 20 }}>
@@ -389,6 +495,14 @@ export default function AdminDashboard() {
             ) : activeMenu === 'verifications' ? (
               <View style={{ flex: 1, padding: 20 }}>
                 <VerificationsWorkspace insetsBottom={insets.bottom} />
+              </View>
+            ) : activeMenu === 'police' ? (
+              <View style={{ flex: 1, padding: 20 }}>
+                <PoliceWorkspace insetsBottom={insets.bottom} />
+              </View>
+            ) : activeMenu === 'law-enforcement-requests' ? (
+              <View style={{ flex: 1, padding: 20 }}>
+                <PoliceWorkspace insetsBottom={insets.bottom} requestsOnly />
               </View>
             ) : activeMenu === 'safeplaces' ? (
               <View style={{ flex: 1, padding: 20 }}>
@@ -631,6 +745,20 @@ const ds = StyleSheet.create({
   },
   quickTitle: { fontSize: 13, fontWeight: '800', color: T.ink, marginBottom: 4 },
   quickSub: { fontSize: 11, color: T.ink4, marginTop: 2 },
+  lawQuickItem: {
+    backgroundColor: T.surfaceCard,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: T.lineMid,
+    padding: 14,
+    marginBottom: 10,
+  },
+  lawQuickTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 2 },
+  lawQuickFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8 },
+  lawBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, overflow: 'hidden', backgroundColor: T.violetDim, color: T.violet, fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+  lawBadgeAssigned: { backgroundColor: T.safeLight, color: T.success },
+  lawBadgeResolved: { backgroundColor: T.safeLight, color: T.success },
+  lawBadgeCancelled: { backgroundColor: T.dangerLight, color: T.dangerText },
   emptyQuickText: { fontSize: 13, color: T.ink4, paddingVertical: 18, textAlign: 'center' },
 
   /* Column layouts */

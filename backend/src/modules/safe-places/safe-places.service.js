@@ -9,6 +9,7 @@ const {
 } = require('./safe-places.repository');
 
 function formatZone(row) {
+  const status = String(row.status || '').toUpperCase();
   return {
     id: String(row.id),
     name: row.name || 'Safe Place',
@@ -16,7 +17,7 @@ function formatZone(row) {
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     description: row.description,
-    status: row.status,
+    status: status === 'APPROVED' ? 'CONFIRMED' : row.status,
     radius: 150,
     createdAt: row.created_at instanceof Date
       ? row.created_at.toISOString()

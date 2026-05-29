@@ -4,14 +4,12 @@ import {
     Animated,
     FlatList,
     Modal,
-    Platform,
     RefreshControl,
     StatusBar,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    UIManager,
     View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -221,12 +219,6 @@ export default function ChatHome() {
     const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const searchPulse = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-            UIManager.setLayoutAnimationEnabledExperimental(true);
-        }
-    }, []);
 
     useEffect(() => {
         const handle = setTimeout(() => setDebouncedSearch(searchQuery), 320);

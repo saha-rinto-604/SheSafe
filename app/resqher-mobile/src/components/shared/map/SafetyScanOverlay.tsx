@@ -6,8 +6,7 @@
  */
 
 import React, { memo } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
-import { Animated as RNAnimated } from 'react-native';
+import { Animated as RNAnimated, Dimensions, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { T } from '../../../constants/theme';
 
@@ -55,7 +54,7 @@ export const SafetyScanOverlay = memo(function SafetyScanOverlay({
 
 const scanStyles = StyleSheet.create({
     overlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(8,6,14,0.65)',

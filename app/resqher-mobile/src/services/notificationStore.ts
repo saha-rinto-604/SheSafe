@@ -48,6 +48,7 @@ export type NotifType =
 export interface AppNotification {
     n: number;
     id: string;
+    sourceId?: string;
     type: NotifType;
     title: string;
     body: string;
@@ -77,6 +78,10 @@ const MAX_NOTIFS = 50;
 
 export const notificationStore = {
     async add(payload: Omit<AppNotification, 'n' | 'id' | 'read' | 'createdAt'> & { createdAt?: string }): Promise<void> {
+        if (payload.sourceId) {
+            const existing = await this.getAll();
+            if (existing.some(notif => notif.sourceId === payload.sourceId)) return;
+        }
         const n = await nextSeq();
         const notif: AppNotification = {
             n,

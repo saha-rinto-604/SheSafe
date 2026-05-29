@@ -23,6 +23,7 @@ const MIGRATIONS = [
   '003_multi_volunteer_incidents.sql',
   '004_user_case_details.sql',
   '006_admin_module.sql',
+  '007_law_enforcement_requests.sql',
   'seed_medical.sql',        // idempotent — INSERT IGNORE
   'seed_incidents_demo.sql', // idempotent — WHERE NOT EXISTS
 ]; // add new migration files here in order

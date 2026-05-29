@@ -1,11 +1,13 @@
 const { httpError } = require('../../utils/httpError');
 const repo = require('./admin.repository');
+const lawService = require('../law-enforcement/law.service');
 
-const VALID_USER_ROLES = new Set(['standard_user', 'volunteer']);
+const VALID_USER_ROLES = new Set(['standard_user', 'volunteer', 'law_enforcement']);
 const VALID_INCIDENT_FILTERS = new Set(['LIVE', 'RESOLVED', 'CANCELLED', 'ALL']);
 const VALID_VERIFICATION_FILTERS = new Set(['pending', 'verified', 'rejected', 'all']);
 const VALID_SAFE_PLACE_FILTERS = new Set(['PENDING', 'CONFIRMED', 'REJECTED', 'ALL']);
 const VALID_REPORT_FILTERS = new Set(['PENDING', 'ACTIONED', 'ALL']);
+const VALID_POLICE_VERIFICATION_FILTERS = new Set(['PENDING', 'APPROVED', 'REJECTED', 'ALL']);
 
 async function ensureReady() {
   await repo.ensureAdminSchema();
@@ -116,6 +118,35 @@ async function listVerifications(status = 'pending') {
   const normalized = String(status || 'pending').trim().toLowerCase();
   if (!VALID_VERIFICATION_FILTERS.has(normalized)) throw httpError(400, 'Invalid verification status.');
   return repo.listVerifications(normalized);
+}
+
+async function listPoliceVerifications(status = 'PENDING') {
+  await ensureReady();
+  const filter = enumValue(status, VALID_POLICE_VERIFICATION_FILTERS, 'PENDING');
+  return repo.listPoliceVerifications(filter);
+}
+
+async function approvePoliceVerification(adminId, userId) {
+  await ensureReady();
+  const result = await repo.updatePoliceVerification({
+    adminId: positiveId(adminId, 'admin id'),
+    userId: positiveId(userId, 'police user id'),
+    status: 'APPROVED',
+  });
+  handleMutationStatus(result);
+  return repo.getPoliceVerificationByUserId(userId);
+}
+
+async function rejectPoliceVerification(adminId, userId, body) {
+  await ensureReady();
+  const result = await repo.updatePoliceVerification({
+    adminId: positiveId(adminId, 'admin id'),
+    userId: positiveId(userId, 'police user id'),
+    status: 'REJECTED',
+    reason: boundedText(body?.reason || body?.note, { required: true, label: 'Rejection reason' }),
+  });
+  handleMutationStatus(result);
+  return repo.getPoliceVerificationByUserId(userId);
 }
 
 async function getVerificationById(id) {
@@ -280,6 +311,26 @@ async function listAuditLogs(limit) {
   return repo.listAuditLogs(safeLimit);
 }
 
+async function listLawEnforcementRequests() {
+  await ensureReady();
+  return lawService.listAdminRequests();
+}
+
+async function listApprovedPolice() {
+  await ensureReady();
+  return lawService.listApprovedPolice();
+}
+
+async function assignLawEnforcementRequest(adminId, requestId, body) {
+  await ensureReady();
+  return lawService.assignRequest(positiveId(adminId, 'admin id'), requestId, body);
+}
+
+async function cancelLawEnforcementRequest(adminId, requestId, body) {
+  await ensureReady();
+  return lawService.cancelRequest(positiveId(adminId, 'admin id'), requestId, body);
+}
+
 module.exports = {
   getOverview,
   listIncidents,
@@ -293,6 +344,9 @@ module.exports = {
   getVerificationById,
   approveVerification,
   rejectVerification,
+  listPoliceVerifications,
+  approvePoliceVerification,
+  rejectPoliceVerification,
   listSafePlaces,
   getSafePlaceById,
   approveSafePlace,
@@ -304,4 +358,8 @@ module.exports = {
   blockFromReport,
   getNotifications,
   listAuditLogs,
+  listLawEnforcementRequests,
+  listApprovedPolice,
+  assignLawEnforcementRequest,
+  cancelLawEnforcementRequest,
 };

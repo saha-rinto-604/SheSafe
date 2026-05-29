@@ -504,14 +504,14 @@ const s = StyleSheet.create({
         borderColor: `${T.danger}22`,
     },
     logoutConfirmOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 22,
         backgroundColor: 'rgba(4,6,12,0.45)',
     },
     logoutConfirmScrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(10,8,18,0.52)',
     },
     logoutConfirmCard: {

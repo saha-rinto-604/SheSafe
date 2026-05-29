@@ -19,8 +19,25 @@ export type SafePlaceDestination = {
   raw: SafePlace;
 };
 
+function isConfirmedSafePlaceStatus(status?: string | null) {
+  const normalized = String(status || '').trim().toUpperCase();
+  return normalized === 'CONFIRMED' || normalized === 'APPROVED';
+}
+
+function normalizeSafePlaceStatus(status?: string | null) {
+  return isConfirmedSafePlaceStatus(status) ? 'CONFIRMED' : String(status || '');
+}
+
 export function mapConfirmedSafePlaces(places: SafePlace[]): SafePlace[] {
-  return places.filter((place) => String(place.status || '').toUpperCase() === 'CONFIRMED');
+  return places
+    .filter((place) => isConfirmedSafePlaceStatus(place.status))
+    .map((place) => ({
+      ...place,
+      latitude: Number(place.latitude),
+      longitude: Number(place.longitude),
+      status: normalizeSafePlaceStatus(place.status),
+    }))
+    .filter((place) => Number.isFinite(place.latitude) && Number.isFinite(place.longitude));
 }
 
 export function mapSafePlaceToDestination(place: SafePlace): SafePlaceDestination {
@@ -35,7 +52,7 @@ export function mapSafePlaceToDestination(place: SafePlace): SafePlaceDestinatio
     type: 'safe_place',
     category: 'safe_place',
     description: place.description || null,
-    status: String(place.status || 'CONFIRMED'),
+    status: normalizeSafePlaceStatus(place.status) || 'CONFIRMED',
     isSafePlace: true,
     markerColor: 'purple',
     raw: place,

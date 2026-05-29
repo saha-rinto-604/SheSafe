@@ -34,6 +34,9 @@ const safePlacesRoutes      = require('./modules/safe-places/safe-places.routes'
 const volunteerRoutes       = require('./modules/volunteers/volunteer.routes');
 const userChatRoutes        = require('./modules/users/user-chat.routes');
 const adminRoutes           = require('./modules/admin/admin.routes');
+const lawRoutes             = require('./modules/law-enforcement/law.routes');
+const policeRoutes          = require('./modules/law-enforcement/police.routes');
+const policeVerificationRoutes = require('./modules/police-verification/police-verification.routes');
 
 const app = express();
 
@@ -89,6 +92,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/safe-places', safePlacesRoutes);
 app.use('/api/volunteer', volunteerRoutes);
 app.use('/api/user', userChatRoutes);
+app.use('/api/law-enforcement', lawRoutes);
+app.use('/api/police', policeRoutes);
+app.use('/api/police-verification', policeVerificationRoutes);
 app.use('/api/admin', adminRoutes);
 
 // ── 404 handler ──────────────────────────────────────────────────────────────

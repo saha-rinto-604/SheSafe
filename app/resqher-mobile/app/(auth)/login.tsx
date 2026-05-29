@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Platform, UIManager, ScrollView,
+  ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
@@ -11,13 +11,9 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
-import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
+import { ROLE_DEFAULT_ROUTE, routeForPoliceStatus } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 type FormData = { phone: string; password: string };
 
@@ -54,8 +50,10 @@ export default function Login() {
         return;
       }
 
-      const { role } = await signIn(phone, password);
-      let route = ROLE_DEFAULT_ROUTE[role] || ROLE_DEFAULT_ROUTE.USER;
+      const { role, verificationStatus, user } = await signIn(phone, password);
+      let route = role === 'POLICE'
+        ? routeForPoliceStatus(verificationStatus, user?.policeProfile)
+        : (ROLE_DEFAULT_ROUTE[role] || ROLE_DEFAULT_ROUTE.USER);
       router.replace(route as any);
     } catch (e: any) {
       const msg = e?.message ?? '';
@@ -70,7 +68,7 @@ export default function Login() {
         showToast({
           type: 'error',
           title: 'Authentication Failed',
-          message: 'Please check your phone number and password, then try again.',
+          message: msg || 'Please check your phone number and password, then try again.',
         });
       }
     } finally {

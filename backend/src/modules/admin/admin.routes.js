@@ -24,6 +24,15 @@ router.get('/verifications/:id', adminReadLimiter, controller.verification);
 router.patch('/verifications/:id/approve', adminWriteLimiter, controller.approveVerification);
 router.patch('/verifications/:id/reject', adminWriteLimiter, controller.rejectVerification);
 
+router.get('/police/verifications', adminReadLimiter, controller.policeVerifications);
+router.patch('/police/verifications/:userId/approve', adminWriteLimiter, controller.approvePoliceVerification);
+router.patch('/police/verifications/:userId/reject', adminWriteLimiter, controller.rejectPoliceVerification);
+router.get('/police/approved', adminReadLimiter, controller.approvedPolice);
+
+router.get('/law-enforcement/requests', adminReadLimiter, controller.lawEnforcementRequests);
+router.post('/law-enforcement/requests/:requestId/assign', adminWriteLimiter, controller.assignLawEnforcementRequest);
+router.post('/law-enforcement/requests/:requestId/cancel', adminWriteLimiter, controller.cancelLawEnforcementRequest);
+
 router.get('/safe-places', adminReadLimiter, controller.safePlaces);
 router.get('/safe-places/:id', adminReadLimiter, controller.safePlace);
 router.patch('/safe-places/:id/approve', adminWriteLimiter, controller.approveSafePlace);

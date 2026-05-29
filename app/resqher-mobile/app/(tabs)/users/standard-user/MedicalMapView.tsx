@@ -160,7 +160,7 @@ const PremiumBar = memo(function PremiumBar({
 });
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -1074,7 +1074,7 @@ export default function MedicalMapView() {
                 {/* ── Full-screen Map ── */}
                 <MapView
                     ref={mapRef}
-                    style={StyleSheet.absoluteFillObject}
+                    style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
                     showsUserLocation={false}
@@ -1705,7 +1705,7 @@ const st = StyleSheet.create({
         bottom: 0,
         zIndex: 220,
     },
-    calloutTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    calloutTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.85)' },
     calloutGrabberWrap: { alignItems: 'center', paddingTop: 10 },
     calloutGrabber: {
         width: 42, height: 4, borderRadius: 2,
@@ -1866,7 +1866,7 @@ const st = StyleSheet.create({
         }),
     },
     routeOverlayTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: T.surfaceOverlay,
     },
     routeOverlayInner: {
@@ -1994,7 +1994,7 @@ const ns = StyleSheet.create({
             android: { elevation: 10 },
         }),
     },
-    cardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.88)' },
+    cardTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.88)' },
     cardBody: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2, gap: S.s3 },
     iconWrap: { width: 44, height: 44, borderRadius: R.sm, backgroundColor: T.violetDim, borderWidth: 1, borderColor: `${T.violet}35`, alignItems: 'center', justifyContent: 'center' },
     textWrap: { flex: 1 },
@@ -2012,7 +2012,7 @@ const ns = StyleSheet.create({
 // ── Top Live Banner Styles (lb) ──
 const lb = StyleSheet.create({
     bannerWrap: { position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 360 },
-    bannerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    bannerTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.85)' },
     bannerBody: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: S.s4, gap: S.s4 },
     textWrap: { flex: 1 },
     distText: { fontSize: 16, fontWeight: '800', color: T.violet, marginBottom: 4, letterSpacing: -0.2 },

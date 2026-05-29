@@ -1,4 +1,5 @@
 const { pool, query } = require('../../config/db');
+const { ensurePoliceProfilesSchema } = require('../users/user.repository');
 
 let schemaReadyPromise = null;
 
@@ -24,6 +25,7 @@ async function ensureAdminSchema() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
       await query(`INSERT IGNORE INTO roles (role_name) VALUES ('admin')`);
+      await ensurePoliceProfilesSchema();
 
       await addColumnIfMissing(
         'users',
@@ -277,6 +279,19 @@ async function getOverview() {
      FROM volunteer_verifications vv`
   );
 
+  const [policeCounts] = await query(
+    `SELECT
+       SUM(CASE
+         WHEN pp.verification_status = 'PENDING'
+          AND pp.nid_card_url IS NOT NULL
+          AND pp.selfie_url IS NOT NULL
+          AND pp.job_id_card_url IS NOT NULL
+          AND pp.submitted_at IS NOT NULL
+         THEN 1 ELSE 0 END) AS pending_police_verifications,
+       SUM(CASE WHEN pp.verification_status = 'APPROVED' THEN 1 ELSE 0 END) AS approved_police
+     FROM police_profiles pp`
+  );
+
   const [incidentCounts] = await query(
     `SELECT
        SUM(CASE WHEN status IN ('ACTIVE','IN_PROGRESS') THEN 1 ELSE 0 END) AS active_sos,
@@ -307,7 +322,8 @@ async function getOverview() {
   );
 
   const activeSos = Number(incidentCounts?.active_sos || 0);
-  const pendingVerifications = Number(volunteerCounts?.pending_verifications || 0);
+  const pendingVerifications = Number(volunteerCounts?.pending_verifications || 0)
+    + Number(policeCounts?.pending_police_verifications || 0);
   const pendingSafePlaces = Number(safePlaceCounts?.pending_safe_places || 0);
   const pendingReports = Number(reportCounts?.pending_reports || 0);
 
@@ -354,6 +370,15 @@ function formatUser(row) {
     joinedAt: toIso(row.entry_time),
     isOnline: Boolean(row.is_online),
     verificationStatus: row.verification_status || null,
+    policeStationOrUnit: row.police_station_or_unit || null,
+    badgeNumber: row.badge_number || null,
+    nidCardUrl: row.nid_card_url || null,
+    selfieUrl: row.selfie_url || null,
+    jobIdCardUrl: row.job_id_card_url || null,
+    policeSubmittedAt: toIso(row.police_submitted_at),
+    policeReviewedAt: toIso(row.police_reviewed_at),
+    policeRejectionReason: row.police_rejection_reason || null,
+    activePoliceRequests: Number(row.active_police_requests || 0),
     assistedIncidents: Number(row.assisted_incidents || 0),
     points: Number(row.resolved_assisted || 0) * 100,
     rank: row.rank ? Number(row.rank) : null,
@@ -366,7 +391,13 @@ async function listUsers(role) {
             u.account_status, u.warning_count, u.blocked_at, u.blocked_reason,
             COALESCE(u.is_online, 0) AS is_online,
             r.role_name,
-            vv.status AS verification_status,
+            CASE WHEN r.role_name = 'law_enforcement' THEN pp.verification_status ELSE vv.status END AS verification_status,
+            pp.police_station_or_unit, pp.badge_number, pp.nid_card_url, pp.selfie_url, pp.job_id_card_url,
+            pp.submitted_at AS police_submitted_at, pp.reviewed_at AS police_reviewed_at,
+            pp.rejection_reason AS police_rejection_reason,
+            (SELECT COUNT(*) FROM law_enforcement_requests ler
+             WHERE ler.assigned_police_id = u.id
+               AND ler.status IN ('ASSIGNED_TO_POLICE','ACCEPTED_BY_POLICE')) AS active_police_requests,
             (SELECT COUNT(*) FROM incidents i WHERE i.user_id = u.id) AS sos_count,
             (SELECT COUNT(*) FROM user_reports ur WHERE ur.reported_user_id = u.id) AS report_count,
             (SELECT COUNT(*) FROM incident_volunteers iv WHERE iv.volunteer_id = u.id AND iv.status = 'ACCEPTED') AS assisted_incidents,
@@ -382,6 +413,7 @@ async function listUsers(role) {
                    WHERE vv2.user_id = u.id
                    ORDER BY vv2.created_at DESC, vv2.id DESC
                    LIMIT 1)
+     LEFT JOIN police_profiles pp ON pp.user_id = u.id
      WHERE r.role_name = ?
      ORDER BY u.entry_time DESC
      LIMIT 300`,
@@ -440,7 +472,13 @@ async function getUserById(userId) {
             u.account_status, u.warning_count, u.blocked_at, u.blocked_reason,
             COALESCE(u.is_online, 0) AS is_online,
             r.role_name,
-            vv.status AS verification_status,
+            CASE WHEN r.role_name = 'law_enforcement' THEN pp.verification_status ELSE vv.status END AS verification_status,
+            pp.police_station_or_unit, pp.badge_number, pp.nid_card_url, pp.selfie_url, pp.job_id_card_url,
+            pp.submitted_at AS police_submitted_at, pp.reviewed_at AS police_reviewed_at,
+            pp.rejection_reason AS police_rejection_reason,
+            (SELECT COUNT(*) FROM law_enforcement_requests ler
+             WHERE ler.assigned_police_id = u.id
+               AND ler.status IN ('ASSIGNED_TO_POLICE','ACCEPTED_BY_POLICE')) AS active_police_requests,
             (SELECT COUNT(*) FROM incidents i WHERE i.user_id = u.id) AS sos_count,
             (SELECT COUNT(*) FROM user_reports ur WHERE ur.reported_user_id = u.id) AS report_count,
             (SELECT COUNT(*) FROM incident_volunteers iv WHERE iv.volunteer_id = u.id AND iv.status = 'ACCEPTED') AS assisted_incidents,
@@ -456,6 +494,7 @@ async function getUserById(userId) {
                    WHERE vv2.user_id = u.id
                    ORDER BY vv2.created_at DESC, vv2.id DESC
                    LIMIT 1)
+     LEFT JOIN police_profiles pp ON pp.user_id = u.id
      WHERE u.id = ?
      LIMIT 1`,
     [userId]
@@ -695,6 +734,7 @@ async function updateVerification({ adminId, id, status, reason = null }) {
 }
 
 function formatSafePlace(row) {
+  const normalizedStatus = String(row.status || '').toUpperCase();
   return {
     id: String(row.id),
     name: row.name,
@@ -703,7 +743,7 @@ function formatSafePlace(row) {
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
     description: row.description || '',
-    status: row.status,
+    status: normalizedStatus === 'APPROVED' ? 'CONFIRMED' : row.status,
     submittedAt: toIso(row.created_at),
     reviewedAt: toIso(row.reviewed_at),
     rejectionReason: row.rejection_reason || null,
@@ -726,6 +766,9 @@ function formatSafePlace(row) {
 
 function safePlaceStatusWhere(status) {
   const normalized = safeStatus(status || 'PENDING');
+  if (normalized === 'CONFIRMED') {
+    return { clause: `WHERE UPPER(sp.status) IN ('CONFIRMED', 'APPROVED')`, params: [] };
+  }
   if (['PENDING', 'CONFIRMED', 'REJECTED'].includes(normalized)) {
     return { clause: 'WHERE sp.status = ?', params: [normalized] };
   }
@@ -1004,6 +1047,122 @@ async function listAuditLogs(limit = 100) {
   }));
 }
 
+async function listPoliceVerifications(status = 'PENDING') {
+  const normalized = String(status || 'PENDING').toUpperCase();
+  const whereParts = [];
+  const params = [];
+  if (normalized !== 'ALL') {
+    whereParts.push('pp.verification_status = ?');
+    params.push(normalized);
+  }
+  if (normalized === 'PENDING') {
+    whereParts.push('pp.nid_card_url IS NOT NULL');
+    whereParts.push('pp.selfie_url IS NOT NULL');
+    whereParts.push('pp.job_id_card_url IS NOT NULL');
+    whereParts.push('pp.submitted_at IS NOT NULL');
+  }
+  const statusSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+  const rows = await query(
+    `SELECT
+       pp.user_id AS id,
+       pp.police_station_or_unit,
+       pp.badge_number,
+       pp.nid_card_url,
+       pp.selfie_url,
+       pp.job_id_card_url,
+       pp.verification_status,
+       pp.rejection_reason,
+       pp.submitted_at,
+       pp.reviewed_at,
+       pp.created_at,
+       pp.updated_at,
+       u.first_name,
+       u.last_name,
+       u.phone_number
+     FROM police_profiles pp
+     JOIN users u ON u.id = pp.user_id
+     ${statusSql}
+     ORDER BY pp.created_at DESC`,
+    params
+  );
+  return rows.map((row) => ({
+    id: String(row.id),
+    userId: String(row.id),
+    type: 'police',
+    typeLabel: 'Police/Law Enforcement Verification',
+    name: fullName(row),
+    user: {
+      id: String(row.id),
+      name: fullName(row),
+      phone: row.phone_number || null,
+      role: 'law_enforcement',
+      photoUrl: null,
+    },
+    phoneNumber: row.phone_number,
+    phone: row.phone_number || null,
+    policeStationOrUnit: row.police_station_or_unit,
+    badgeNumber: row.badge_number,
+    nidCardUrl: row.nid_card_url,
+    selfieUrl: row.selfie_url,
+    jobIdCardUrl: row.job_id_card_url,
+    idCardUrl: row.nid_card_url,
+    certificateUrl: row.job_id_card_url,
+    documents: {
+      idCardUrl: row.nid_card_url || null,
+      selfieUrl: row.selfie_url || null,
+      certificateUrl: row.job_id_card_url || null,
+      jobIdCardUrl: row.job_id_card_url || null,
+    },
+    verificationStatus: row.verification_status,
+    status: row.verification_status,
+    rejectionReason: row.rejection_reason || null,
+    submittedAt: toIso(row.submitted_at),
+    reviewedAt: toIso(row.reviewed_at),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  }));
+}
+
+async function getPoliceVerificationByUserId(userId) {
+  const items = await listPoliceVerifications('ALL');
+  return items.find((item) => item.userId === String(userId)) || null;
+}
+
+async function updatePoliceVerification({ adminId, userId, status, reason }) {
+  const rows = await query(
+    `SELECT pp.user_id, pp.verification_status, pp.nid_card_url, pp.selfie_url, pp.job_id_card_url, pp.submitted_at
+     FROM police_profiles pp
+     WHERE pp.user_id = ?
+     LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) return { status: 'NOT_FOUND' };
+  if (status === 'APPROVED' && (!rows[0].nid_card_url || !rows[0].selfie_url || !rows[0].job_id_card_url || !rows[0].submitted_at)) {
+    return { status: 'INVALID_STATE', currentStatus: 'not submitted' };
+  }
+
+  await query(
+    `UPDATE police_profiles
+     SET verification_status = ?,
+         rejection_reason = ?,
+         reviewed_by = ?,
+         reviewed_at = NOW()
+     WHERE user_id = ?`,
+    [status, reason || null, adminId, userId]
+  );
+
+  await insertAdminAction(pool, {
+    adminId,
+    actionType: status === 'APPROVED' ? 'POLICE_APPROVED' : 'POLICE_REJECTED',
+    targetType: 'police',
+    targetId: userId,
+    reason: reason || null,
+    metadata: { status },
+  }).catch(() => undefined);
+
+  return { status: 'OK' };
+}
+
 module.exports = {
   ensureAdminSchema,
   getOverview,
@@ -1024,4 +1183,7 @@ module.exports = {
   getReportById,
   actionReport,
   listAuditLogs,
+  listPoliceVerifications,
+  getPoliceVerificationByUserId,
+  updatePoliceVerification,
 };

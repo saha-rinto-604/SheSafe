@@ -261,7 +261,7 @@ const PremiumBar = memo(function PremiumBar({
 });
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -440,7 +440,7 @@ const SafetyScanOverlay = memo(function SafetyScanOverlay({
 
 const scanStyles = StyleSheet.create({
     backdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3, 2, 6, 0.45)',
         justifyContent: 'center',
         alignItems: 'center',
@@ -461,7 +461,7 @@ const scanStyles = StyleSheet.create({
         }),
     },
     cardTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(15, 11, 28, 0.88)',
         zIndex: -1,
     },
@@ -610,7 +610,7 @@ const HoldSosButton = memo(function HoldSosButton({
 
     return (
         <RNAnimated.View style={{ transform: [{ scale }] }}>
-            <RNAnimated.View style={[StyleSheet.absoluteFillObject, {
+            <RNAnimated.View style={[StyleSheet.absoluteFill, {
                 width: ARC_SIZE, height: ARC_SIZE,
                 left: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
                 top: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
@@ -769,6 +769,7 @@ export default function VolunteerHome() {
     const routeRequestIdRef = useRef(0);
     const safePathRequestIdRef = useRef(0);
     const navigationGuardRef = useRef(false);
+    const volunteerSosNavigatedRef = useRef(false);
     const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRerouteAtRef = useRef(0);
     const volunteerSosCreateSeqRef = useRef(0);
@@ -1142,12 +1143,14 @@ export default function VolunteerHome() {
         setLocationStatus('sharing');
         setCancelCountdown(CANCEL_DURATION_DEFAULT);
         volunteerSosCreateSeqRef.current += 1;
+        volunteerSosNavigatedRef.current = false;
 
         if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
     }, [sosTransitionAnim]);
 
     const resetLocalSOS = useCallback(() => {
         volunteerSosCreateSeqRef.current += 1;
+        volunteerSosNavigatedRef.current = false;
         setSosActive(false);
         setActiveIncidentId(null);
         setCancelCountdown(0);
@@ -1292,6 +1295,26 @@ export default function VolunteerHome() {
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
     }, [sosActive, cancelCountdown === CANCEL_DURATION_DEFAULT, completeVolunteerSOSCountdown]);
+
+    useEffect(() => {
+        if (!isEmergencyLive || volunteerSosNavigatedRef.current) return;
+        if (!activeIncidentId) return;
+
+        volunteerSosNavigatedRef.current = true;
+        const lat = userLocRef.current?.latitude ?? userLoc?.latitude;
+        const lng = userLocRef.current?.longitude ?? userLoc?.longitude;
+
+        router.push({
+            pathname: '/(tabs)/users/volunteer/chat_room',
+            params: {
+                incidentId: activeIncidentId,
+                category: 'MY_EMERGENCY',
+                autoMessage: 'true',
+                ...(lat && lng ? { userLat: String(lat), userLng: String(lng) } : {}),
+                userAddress: address || '',
+            },
+        } as any);
+    }, [activeIncidentId, address, isEmergencyLive, router, userLoc?.latitude, userLoc?.longitude]);
 
     useEffect(() => {
         pulseAnims.forEach(({ scale, op }, i) => {
@@ -2515,7 +2538,7 @@ export default function VolunteerHome() {
                 {/* ── Map ─────────────────────────────────────────────────────── */}
                 <MapView
                     ref={mapRef}
-                    style={StyleSheet.absoluteFillObject}
+                    style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
                     showsUserLocation={!isLiveNav && !activeSosView}
@@ -4079,7 +4102,7 @@ const s = StyleSheet.create({
     root: { flex: 1 },
 
     responderSheetOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'flex-end',
         backgroundColor: 'rgba(4,3,8,0.45)',
         zIndex: 999,
@@ -4094,7 +4117,7 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.08)',
     },
     responderSheetTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(0,0,0,0.5)',
     },
     responderSheetGrabberWrap: {
@@ -4324,7 +4347,7 @@ const s = StyleSheet.create({
         zIndex: 240,
     },
     searchOverlayBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
     },
     searchOverlayContent: {
         paddingHorizontal: 16,
@@ -4490,7 +4513,7 @@ const s = StyleSheet.create({
         }),
     },
     sosBtnDangerFill: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         borderRadius: SOS_BTN_SIZE / 2,
         backgroundColor: '#D92D20',
         overflow: 'hidden',
@@ -4597,14 +4620,14 @@ const s = StyleSheet.create({
     },
 
     verificationGateOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 22,
         backgroundColor: 'rgba(4,6,12,0.45)',
     },
     verificationGateScrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(10,8,18,0.52)',
     },
     verificationGateCard: {
@@ -4695,14 +4718,14 @@ const s = StyleSheet.create({
     },
 
     stopConfirmOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 22,
         backgroundColor: 'rgba(4,6,12,0.45)',
     },
     stopConfirmScrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(10,8,18,0.52)',
     },
     stopConfirmCard: {
@@ -4786,14 +4809,14 @@ const s = StyleSheet.create({
     },
 
     reviewOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 18,
         backgroundColor: 'rgba(4,6,12,0.45)',
     },
     reviewScrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(8,8,16,0.58)',
     },
     reviewCard: {
@@ -4906,7 +4929,7 @@ const s = StyleSheet.create({
     },
 
     sosPanelBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3,3,8,0.35)',
         zIndex: 235,
     },
@@ -4926,7 +4949,7 @@ const s = StyleSheet.create({
         }),
     },
     sosPanelTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(12,9,22,0.9)',
     },
     sosPanelHeader: {
@@ -5091,7 +5114,7 @@ const s = StyleSheet.create({
     },
 
     placeSheetBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3,3,8,0.35)',
         zIndex: 230,
     },
@@ -5112,7 +5135,7 @@ const s = StyleSheet.create({
         }),
     },
     placeSheetTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(12,9,22,0.92)',
     },
     placeSheetHandleWrap: {
@@ -5380,7 +5403,7 @@ const s = StyleSheet.create({
     },
 
     locationBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3,3,8,0.26)',
         zIndex: 220,
     },
@@ -5405,7 +5428,7 @@ const s = StyleSheet.create({
         backgroundColor: T.lineBold,
         opacity: 0.75,
     },
-    locationCardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.80)' },
+    locationCardTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.80)' },
     locationCardContent: {
         flexDirection: 'row', alignItems: 'center',
         paddingHorizontal: S.s4, paddingTop: 10, paddingBottom: 14,
@@ -5648,7 +5671,7 @@ const ns = StyleSheet.create({
             android: { elevation: 10 },
         }),
     },
-    cardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.88)' },
+    cardTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.88)' },
     warningBadge: {
         flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(226, 91, 58, 0.15)',
         paddingHorizontal: S.s4, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(226, 91, 58, 0.25)',
@@ -5673,7 +5696,7 @@ const ns = StyleSheet.create({
 // ── Top Live Banner Styles (lb) ──
 const lb = StyleSheet.create({
     bannerWrap: { position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 360 },
-    bannerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    bannerTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.85)' },
     bannerBody: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: S.s4, gap: S.s4 },
     textWrap: { flex: 1 },
     distText: { fontSize: 16, fontWeight: '800', color: T.violet, marginBottom: 4, letterSpacing: -0.2 },

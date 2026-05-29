@@ -70,12 +70,18 @@ export const MOCK_ESCALATIONS: MockEscalation[] = [
 
 export type MockVerification = {
   id: string;
+  kind?: 'volunteer' | 'police';
+  userId?: string;
+  typeLabel?: string;
   name: string;
   phone: string;
   submitted: string;
   idCardUrl: string;
   selfieUrl: string;
   certificateUrl?: string;
+  jobIdCardUrl?: string;
+  policeStationOrUnit?: string | null;
+  badgeNumber?: string | null;
   status?: string;
 };
 
@@ -172,6 +178,21 @@ export type MockVolunteer = {
   joinedAt?: string | null;
   isOnline?: boolean;
   verificationStatus?: string | null;
+};
+
+export type MockPoliceUser = {
+  id: string;
+  name: string;
+  phone: string;
+  accountStatus?: 'ACTIVE' | 'WARNED' | 'BLOCKED';
+  warningCount?: number;
+  reportCount?: number;
+  joinedAt?: string | null;
+  verificationStatus?: string | null;
+  policeStationOrUnit?: string | null;
+  badgeNumber?: string | null;
+  jobIdCardUrl?: string | null;
+  activePoliceRequests?: number;
 };
 
 export const MOCK_STANDARD_USERS: MockStandardUser[] = [
@@ -278,6 +299,8 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { key: 'incidents', label: 'Incident Center', icon: 'radio' },
   { key: 'users', label: 'Users', icon: 'users' },
   { key: 'verifications', label: 'Verifications', icon: 'check-circle' },
+  { key: 'police', label: 'Police', icon: 'shield' },
+  { key: 'law-enforcement-requests', label: 'Law Requests', icon: 'radio' },
   { key: 'safeplaces', label: 'Safe Places', icon: 'map-pin' },
   { key: 'reports', label: 'Reports', icon: 'file-text' },
 ];

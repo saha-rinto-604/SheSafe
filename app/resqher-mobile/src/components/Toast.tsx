@@ -19,6 +19,8 @@ import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { T, R, S } from '../../src/constants/theme';
 
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -128,12 +130,12 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
       Animated.timing(translateY, {
         toValue: -120,
         duration: 280,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(opacity, {
         toValue: 0,
         duration: 280,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start(() => onDismiss());
   }, []);
@@ -145,12 +147,12 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
         toValue: 0,
         tension: 65,
         friction: 11,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(opacity, {
         toValue: 1,
         duration: 250,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start();
 
@@ -172,13 +174,13 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
 
   return (
     <Animated.View
+      pointerEvents="box-none"
       style={[
         st.container,
         {
           top: insets.top + 8,
           transform: [{ translateY }],
           opacity,
-          pointerEvents: 'box-none',
         },
       ]}
     >

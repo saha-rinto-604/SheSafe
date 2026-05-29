@@ -72,7 +72,7 @@ const pb = StyleSheet.create({
         overflow: 'hidden',
     },
     tint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: T.surfaceOverlay,  // Violet tint overlay for glass depth
     },
     content: {
@@ -195,7 +195,7 @@ const EmergencyOverlay = memo(function EmergencyOverlay() {
     return (
         <Animated.View
             pointerEvents="none"
-            style={[StyleSheet.absoluteFillObject, {
+            style={[StyleSheet.absoluteFill, {
                 borderWidth: 2.5, borderColor: T.dangerBorder, zIndex: 999,
             }, animStyle]}
         />
@@ -240,12 +240,12 @@ const HeartbeatAura = memo(function HeartbeatAura() {
     });
 
     return (
-        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { zIndex: 1 }, animStyle]}>
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { zIndex: 1 }, animStyle]}>
             <LinearGradient
                 colors={G.sosAuraPulse.colors}
                 start={G.sosAuraPulse.start}
                 end={G.sosAuraPulse.end}
-                style={StyleSheet.absoluteFillObject}
+                style={StyleSheet.absoluteFill}
             />
         </Animated.View>
     );
@@ -356,7 +356,7 @@ const HoldSosButton = memo(function HoldSosButton({
     return (
         <RNAnimated.View style={{ transform: [{ scale }] }}>
             {/* Arc progress ring */}
-            <RNAnimated.View style={[StyleSheet.absoluteFillObject, {
+            <RNAnimated.View style={[StyleSheet.absoluteFill, {
                 width: ARC_SIZE, height: ARC_SIZE,
                 left: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
                 top: -(ARC_SIZE - SOS_BTN_SIZE) / 2,
@@ -1068,8 +1068,14 @@ export default function SOSScreen() {
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
-    // SOS overlay placement: dead-center vertically and horizontally in the screen viewport
-    const sosTop = (height - SOS_WRAP_SIZE) / 2;
+    // Restored from the pre-regression layout: center the full-width SOS wrapper
+    // in the usable map area, clamped between the header and bottom nav.
+    const targetCenterY = height * 0.62;
+    const headerSafeTop = insets.top + 120;
+    const bottomSafe = navBottom + NAV_HEIGHT + 18;
+    const extraBelowWrap = 76;
+    const maxTop = Math.max(headerSafeTop, height - bottomSafe - (SOS_WRAP_SIZE + extraBelowWrap));
+    const sosTop = Math.min(Math.max(targetCenterY - SOS_WRAP_SIZE / 2, headerSafeTop), maxTop);
 
     return (
         <AtmosphericShell>
@@ -1134,7 +1140,7 @@ export default function SOSScreen() {
                 <Modal visible={endSosModalVisible} transparent animationType="fade" onRequestClose={() => setEndSosModalVisible(false)}>
                     <View style={s.modalOverlay}>
                         <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-                        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
+                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
                         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setEndSosModalVisible(false)} />
 
                         <View style={s.modalCard}>
@@ -1183,7 +1189,7 @@ export default function SOSScreen() {
                 <Modal visible={logoutBlockModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutBlockModalVisible(false)}>
                     <View style={s.modalOverlay}>
                         <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-                        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
+                        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,8,18,0.52)' }]} pointerEvents="none" />
                         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setLogoutBlockModalVisible(false)} />
 
                         <View style={s.modalCard}>
@@ -1310,7 +1316,7 @@ export default function SOSScreen() {
                 {/* Map â€” Encrypted Professional Dark Tactical Style */}
                 <MapView
                     ref={mapRef}
-                    style={StyleSheet.absoluteFillObject}
+                    style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
                     showsUserLocation
@@ -1597,7 +1603,7 @@ const s = StyleSheet.create({
         }),
     },
     sosBtnDangerFill: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         borderRadius: SOS_BTN_SIZE / 2,
         backgroundColor: '#D92D20',
         overflow: 'hidden',
@@ -1685,7 +1691,7 @@ const s = StyleSheet.create({
         borderColor: `${T.violet}40`,
     },
 
-    drawerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
+    drawerOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.65)' },
     drawer: {
         position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76,
         backgroundColor: T.surface,
@@ -1715,7 +1721,7 @@ const s = StyleSheet.create({
 
     // â”€â”€ Themed Confirmation Modals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     modalOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 22,
@@ -1804,7 +1810,7 @@ const s = StyleSheet.create({
 
     // ── Themed Slide-up Reason Sheets ──
     responderSheetOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'flex-end',
         backgroundColor: 'rgba(4,3,8,0.45)',
         zIndex: 999,
@@ -1819,7 +1825,7 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.08)',
     },
     responderSheetTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(0,0,0,0.5)',
     },
     responderSheetGrabberWrap: {
@@ -1885,14 +1891,14 @@ const s = StyleSheet.create({
     },
 
     reviewOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 18,
         backgroundColor: 'rgba(4,6,12,0.45)',
     },
     reviewScrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(8,8,16,0.58)',
     },
     reviewCard: {

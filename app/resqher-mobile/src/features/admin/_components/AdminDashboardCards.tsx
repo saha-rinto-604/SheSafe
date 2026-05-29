@@ -67,7 +67,7 @@ export function HeroCard({ onOpenIncidentCenter, overview }: { onOpenIncidentCen
         style={hc.gradient}
       >
         {/* Pulse border effect */}
-        <Animated.View style={[hc.pulseBorder, { opacity: glowOpacity, pointerEvents: 'none' }]} />
+        <Animated.View style={[hc.pulseBorder, { opacity: glowOpacity }]} pointerEvents="none" />
 
         <View style={hc.header}>
           <View style={hc.headerIcon}>
@@ -115,7 +115,7 @@ const hc = StyleSheet.create({
   },
   gradient: { padding: 20, position: 'relative' },
   pulseBorder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 20,
     borderWidth: 1.5,
     borderColor: T.violet,

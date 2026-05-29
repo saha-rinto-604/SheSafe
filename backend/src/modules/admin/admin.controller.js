@@ -1,4 +1,5 @@
 const service = require('./admin.service');
+const chatWsServer = require('../../websocket/chatWsServer');
 
 function send(res, key, value) {
   res.status(200).json({ [key]: value });
@@ -100,6 +101,30 @@ async function rejectVerification(req, res, next) {
   }
 }
 
+async function policeVerifications(req, res, next) {
+  try {
+    send(res, 'policeVerifications', await service.listPoliceVerifications(req.query.status));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function approvePoliceVerification(req, res, next) {
+  try {
+    send(res, 'policeVerification', await service.approvePoliceVerification(req.user.id, req.params.userId));
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function rejectPoliceVerification(req, res, next) {
+  try {
+    send(res, 'policeVerification', await service.rejectPoliceVerification(req.user.id, req.params.userId, req.body));
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function safePlaces(req, res, next) {
   try {
     send(res, 'safePlaces', await service.listSafePlaces(req.query.status));
@@ -188,6 +213,57 @@ async function auditLogs(req, res, next) {
   }
 }
 
+async function lawEnforcementRequests(req, res, next) {
+  try {
+    send(res, 'requests', await service.listLawEnforcementRequests());
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function approvedPolice(req, res, next) {
+  try {
+    send(res, 'police', await service.listApprovedPolice());
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function assignLawEnforcementRequest(req, res, next) {
+  try {
+    const request = await service.assignLawEnforcementRequest(req.user.id, req.params.requestId, req.body);
+    if (request?.incidentId) {
+      await chatWsServer.notifyPoliceAssignment({
+        incidentId: request.incidentId,
+        requestId: request.id,
+        message: 'A law enforcement request has been assigned to you.',
+      });
+      chatWsServer.notifyLawEnforcementRequestUpdated(request, 'assigned');
+    }
+    send(res, 'request', request);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function cancelLawEnforcementRequest(req, res, next) {
+  try {
+    const request = await service.cancelLawEnforcementRequest(req.user.id, req.params.requestId, req.body);
+    if (request?.incidentId) {
+      await chatWsServer.notifyPoliceIncidentStatus({
+        incidentId: request.incidentId,
+        requestId: request.id,
+        status: 'CANCELLED',
+        message: 'This law enforcement request has been cancelled.',
+      });
+      chatWsServer.notifyLawEnforcementRequestUpdated(request, 'cancelled');
+    }
+    send(res, 'request', request);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   overview,
   incidents,
@@ -201,6 +277,9 @@ module.exports = {
   verification,
   approveVerification,
   rejectVerification,
+  policeVerifications,
+  approvePoliceVerification,
+  rejectPoliceVerification,
   safePlaces,
   safePlace,
   approveSafePlace,
@@ -212,4 +291,8 @@ module.exports = {
   blockFromReport,
   notifications,
   auditLogs,
+  lawEnforcementRequests,
+  approvedPolice,
+  assignLawEnforcementRequest,
+  cancelLawEnforcementRequest,
 };

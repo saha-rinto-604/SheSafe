@@ -28,6 +28,15 @@ export type Identity = {
   photoUri: string | null;
   /** Authenticated role for this session */
   role: Role;
+  verificationStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | string | null;
+  policeProfile?: {
+    policeStationOrUnit?: string;
+    badgeNumber?: string;
+    nidCardUrl?: string;
+    selfieUrl?: string;
+    jobIdCardUrl?: string;
+    rejectionReason?: string;
+  } | null;
 };
 
 // ── Permission ───────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 const incidentService = require('./incident.service');
 const chatWsServer = require('../../websocket/chatWsServer');
+const lawService = require('../law-enforcement/law.service');
 
 async function report(req, res, next) {
   try {
@@ -34,7 +35,8 @@ async function getOne(req, res, next) {
 async function cancel(req, res, next) {
   try {
     const incident = await incidentService.cancelIncident(req.user.id, req.params.id);
-    chatWsServer.notifyClosed(req.params.id);
+    await lawService.closeRequestsForIncident(req.params.id, 'CANCELLED', 'Incident cancelled.').catch(() => undefined);
+    await chatWsServer.notifyClosed(req.params.id, 'CANCELLED', 'This incident has been cancelled.');
     res.status(200).json({ incident });
   } catch (error) {
     next(error);
@@ -44,7 +46,8 @@ async function cancel(req, res, next) {
 async function resolve(req, res, next) {
   try {
     const incident = await incidentService.resolveIncident(req.user.id, req.params.id);
-    chatWsServer.notifyClosed(req.params.id);
+    await lawService.closeRequestsForIncident(req.params.id, 'RESOLVED').catch(() => undefined);
+    await chatWsServer.notifyClosed(req.params.id, 'RESOLVED', 'This incident has been resolved.');
     res.status(200).json({ incident });
   } catch (error) {
     next(error);

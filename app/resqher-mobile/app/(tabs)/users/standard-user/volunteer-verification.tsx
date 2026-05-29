@@ -25,6 +25,7 @@ import * as ImagePicker from 'expo-image-picker';
 import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import SheSafeMark from '../../../../src/components/SheSafeMark';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export type VerificationStatus =
@@ -305,7 +306,7 @@ export default function VolunteerVerificationScreen() {
             return;
         }
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             quality: 0.8,
             allowsEditing: false,
         });
@@ -378,7 +379,7 @@ export default function VolunteerVerificationScreen() {
                             {/* Hero */}
                             <View style={s.heroWrap}>
                                 <View style={s.heroIconRing}>
-                                    <Feather name="shield" size={36} color={T.violet} />
+                                    <SheSafeMark size={58} />
                                 </View>
                                 <Text style={s.heroTitle}>Become a Verified Volunteer</Text>
                                 <Text style={s.heroSubtitle}>

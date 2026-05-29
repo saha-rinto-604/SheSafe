@@ -14,8 +14,6 @@ import {
     StatusBar,
     Animated,
     LayoutAnimation,
-    Platform,
-    UIManager,
     ActivityIndicator,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -289,12 +287,6 @@ export default function VolunteerIncidents() {
     const [allIncidents, setAllIncidents] = useState<VolunteerIncident[]>([]);
     const [loading, setLoading] = useState(true);
     const indicator = useRef(new Animated.Value(0)).current;
-
-    useEffect(() => {
-        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-            UIManager.setLayoutAnimationEnabledExperimental(true);
-        }
-    }, []);
 
     // Animate sliding indicator
     useEffect(() => {

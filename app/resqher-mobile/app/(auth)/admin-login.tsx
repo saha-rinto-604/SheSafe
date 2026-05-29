@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Platform, UIManager, ScrollView,
+  ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { useRouter } from 'expo-router';
@@ -14,10 +14,6 @@ import { useAuth } from '../../src/context/AuthContext';
 import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 type FormData = { phone: string; password: string };
 

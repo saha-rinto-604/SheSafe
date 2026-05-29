@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useRef } from 'react';
+import React, { memo, useCallback, useRef, useState } from 'react';
 import { Animated, Dimensions, Keyboard, Platform, StyleSheet, TouchableOpacity, View, ViewStyle } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,7 +41,7 @@ const PremiumBar = memo(function PremiumBar({
     return (
         <View style={[pb.bar, style]}>
             <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={[pb.tint, { pointerEvents: 'none' }]} />
+            <View style={pb.tint} pointerEvents="none" />
             <View style={[pb.content, contentStyle]}>{children}</View>
         </View>
     );
@@ -49,7 +49,7 @@ const PremiumBar = memo(function PremiumBar({
 
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -80,7 +80,7 @@ const LeaderboardIcon = ({ color }: { color: string }) => (
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: NavTabConfig; isActive: boolean; onPress: () => void }) {
-    const scale = useRef(new Animated.Value(1)).current;
+    const [scale] = useState(() => new Animated.Value(1));
 
     const handlePress = useCallback(() => {
         Animated.sequence([
@@ -138,7 +138,7 @@ export default function VolunteerNavbar({ activeTab, onActiveTabPress }: { activ
     }, [activeTab, onActiveTabPress, router]);
 
     return (
-        <View style={[s.navWrap, { bottom: navBottom, pointerEvents: 'box-none' }]}>
+        <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
             <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                 {NAV_TABS.map(tab => (
                     <NavTab

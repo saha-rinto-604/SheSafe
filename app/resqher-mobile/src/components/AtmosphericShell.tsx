@@ -39,10 +39,10 @@ export default function AtmosphericShell({ children }: Props) {
                  pointerEvents: 'none' — never blocks taps
                  zIndex: -1 — always behind content */}
             <View
+                pointerEvents="none"
                 style={[
                     st.lightLeak,
                     {
-                        pointerEvents: 'none',
                         top: -(height * 0.05),
                         left: -(width * 0.10),
                         width: orbSize,

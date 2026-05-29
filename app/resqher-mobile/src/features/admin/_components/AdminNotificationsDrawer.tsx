@@ -9,6 +9,7 @@ import { T, R, Ty } from '../../../constants/theme';
 import adminService, { type AdminNotification } from '../../../services/adminService';
 
 const DRAWER_WIDTH = 340;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 type Notification = {
   id: string;
@@ -73,13 +74,13 @@ export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
     if (isOpen) {
       loadNotifications();
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
-        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     } else {
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: DRAWER_WIDTH, duration: 240, useNativeDriver: true }),
-        Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: DRAWER_WIDTH, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     }
   }, [isOpen, loadNotifications]);
@@ -93,7 +94,7 @@ export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
       animationType="none"
       onRequestClose={onClose}
     >
-      <View style={[StyleSheet.absoluteFill, { zIndex: 999, pointerEvents: 'box-none' }]}>
+      <View style={[StyleSheet.absoluteFill, { zIndex: 999 }]} pointerEvents="box-none">
         <Animated.View style={[st.overlay, { opacity: fadeAnim }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         </Animated.View>
@@ -164,7 +165,7 @@ export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
 
 const st = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   drawer: {

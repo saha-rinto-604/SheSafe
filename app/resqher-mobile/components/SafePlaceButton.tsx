@@ -5,7 +5,7 @@ import { T } from '../src/constants/theme';
 
 export default function SafePlaceButton({ onPress, isActive, distance }: { onPress: () => void; isActive: boolean; distance?: number | null }) {
     return (
-        <View style={styles.wrap} pointerEvents="box-none">
+        <View style={[styles.wrap, { pointerEvents: 'box-none' }]}>
             <TouchableOpacity style={[styles.btn, isActive ? styles.active : null]} onPress={onPress} accessibilityRole="button" accessibilityLabel="Show nearest safe place">
                 <SafePlacePinIcon size={20} color={T.violet} />
             </TouchableOpacity>

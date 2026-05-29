@@ -1,9 +1,10 @@
 
 import React from 'react';
 import {
-  SafeAreaView, View, StyleSheet,
+  View, StyleSheet,
   KeyboardAvoidingView, Platform, TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { T } from '../../src/constants/theme';

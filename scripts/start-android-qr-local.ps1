@@ -152,7 +152,7 @@ if ($SkipMigrations) {
 # 5. Start backend in a new terminal
 Write-Host ""
 Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
-$backendCmd = "Write-Host 'SheSafe Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+$backendCmd = "Write-Host 'SheSafe Backend - http://localhost:$BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm.cmd run dev"
 Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
 
 # 6. Wait for backend health
@@ -168,10 +168,10 @@ if (Wait-ForBackend -Url $healthUrl -Timeout 30) {
 Write-Host ""
 Write-Host "[6/7] Fixing Expo package versions..." -ForegroundColor Yellow
 Set-Location $mobileDir
-npx expo install --fix
+npx.cmd expo install --fix
 
 Write-Host ""
 Write-Host "[7/7] Starting Expo - scan the QR code on your Android device." -ForegroundColor Cyan
 Write-Host "  Backend API : $apiUrl" -ForegroundColor DarkGray
 Write-Host ""
-npx expo start --clear
+npx.cmd expo start --clear

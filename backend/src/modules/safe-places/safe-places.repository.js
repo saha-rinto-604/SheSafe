@@ -35,7 +35,7 @@ async function findExactDuplicate({ latitude, longitude, name }) {
      WHERE LOWER(name) = LOWER(?)
        AND latitude = ?
        AND longitude = ?
-       AND status IN ('PENDING','CONFIRMED')
+       AND UPPER(status) IN ('PENDING','CONFIRMED','APPROVED')
      LIMIT 1`,
     [name, latitude, longitude]
   );
@@ -51,7 +51,7 @@ async function findNearbyDuplicate({ latitude, longitude, radiusMeters = 100 }) 
               SIN(RADIANS(?)) * SIN(RADIANS(latitude))
             ))) AS distance_m
      FROM safe_places
-     WHERE status IN ('PENDING','CONFIRMED')
+     WHERE UPPER(status) IN ('PENDING','CONFIRMED','APPROVED')
      HAVING distance_m <= ?
      ORDER BY distance_m ASC
      LIMIT 1`,

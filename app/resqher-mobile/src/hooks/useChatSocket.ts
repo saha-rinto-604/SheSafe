@@ -18,7 +18,7 @@ type WSEvent =
     | { type: 'incident.participant.joined'; payload: Participant }
     | { type: 'incident.participants.list'; payload: Participant[] }
     | { type: 'incident:responders_updated'; payload: { incidentId: string } }
-    | { type: 'incident:status_updated'; payload: { incidentId: string } }
+    | { type: 'incident:status_updated'; payload: { incidentId: string; status?: string; message?: string; requestId?: string | null } }
     | { type: 'incident.location.updated'; payload: IncidentLocation };
 
 function normalizeSocketMessage(raw: any): Message {
@@ -74,6 +74,7 @@ export function useChatSocket(
     const wsRef = useRef<WebSocket | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const mountedRef = useRef(true);
+    const connectWSRef = useRef<(() => Promise<void>) | null>(null);
     const selfIdRef = useRef(selfId);
     const selfRoleRef = useRef(selfRole);
     useEffect(() => { selfIdRef.current = selfId; }, [selfId]);
@@ -201,7 +202,7 @@ export function useChatSocket(
                     startPolling(); // Fallback
                     // Reconnect after 3s
                     setTimeout(() => {
-                        if (mountedRef.current) connectWS();
+                        if (mountedRef.current) void connectWSRef.current?.();
                     }, 3000);
                 }
             };
@@ -214,7 +215,11 @@ export function useChatSocket(
                 startPolling();
             }
         }
-    }, [incidentId, startPolling, stopPolling]);
+    }, [incidentId, refreshMessages, startPolling, stopPolling]);
+
+    useEffect(() => {
+        connectWSRef.current = connectWS;
+    }, [connectWS]);
 
     // ── Send message ──
     const sendMessage = useCallback(async (
@@ -291,8 +296,10 @@ export function useChatSocket(
             if (mountedRef.current && cached.length > 0) setMessages(cached);
         });
 
-        refreshMessages(); // Refresh from backend (overwrites cache on success)
-        connectWS();       // Try WebSocket
+        const bootstrapTimer = setTimeout(() => {
+            refreshMessages(); // Refresh from backend (overwrites cache on success)
+            connectWS();       // Try WebSocket
+        }, 0);
 
         // Handle app state (reconnect on foreground)
         const sub = AppState.addEventListener('change', (state) => {
@@ -306,12 +313,13 @@ export function useChatSocket(
 
         return () => {
             mountedRef.current = false;
+            clearTimeout(bootstrapTimer);
             wsRef.current?.close();
             wsRef.current = null;
             stopPolling();
             sub.remove();
         };
-    }, [incidentId]);
+    }, [connectWS, incidentId, refreshMessages, stopPolling]);
 
     return { messages, participants, victimLocation, liveLocation, isConnected, sendMessage, sendLocationUpdate, refreshMessages };
 }

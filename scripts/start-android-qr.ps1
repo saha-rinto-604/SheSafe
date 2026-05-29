@@ -1,7 +1,8 @@
 param(
   [int]$BackendPort = 4000,
   [int]$MetroPort   = 8081,
-  [switch]$SkipMigrations
+  [switch]$SkipMigrations,
+  [switch]$ExpoTunnel
 )
 
 $ErrorActionPreference = 'Stop'
@@ -161,6 +162,9 @@ Write-Host "  API Mode: $apiMode"
 Write-Host "  API URL : $apiUrl"
 $expoMode = if ($UseExpoTunnel) { "TUNNEL" } else { "LAN" }
 Write-Host "  Expo Mode: $expoMode"
+if ($UseNgrok -and -not $UseExpoTunnel) {
+  Write-Host "  Note    : backend uses ngrok; Expo uses LAN to avoid a second ngrok agent."
+}
 Update-ExpoApiEnv -EnvPath $mobileEnvPath -ApiUrl $apiUrl
 
 # 4. Run database migrations
@@ -188,7 +192,7 @@ if ($SkipMigrations) {
 Write-Host ""
 if ($StartBackend) {
   Write-Host "[5/7] Starting backend in a new terminal..." -ForegroundColor Yellow
-  $backendCmd = "Write-Host 'SheSafe Backend - port $BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm run dev"
+  $backendCmd = "Write-Host 'SheSafe Backend - port $BackendPort' -ForegroundColor Cyan; Set-Location '" + $backendDir + "'; npm.cmd run dev"
   Start-Process powershell -ArgumentList "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd
 } else {
   Write-Host "[5/7] Using already-running backend on port $BackendPort." -ForegroundColor Yellow
@@ -207,7 +211,7 @@ if (Wait-ForBackend -Url $healthUrl -Timeout 30) {
 Write-Host ""
 Write-Host "[6/7] Fixing Expo package versions..." -ForegroundColor Yellow
 Set-Location $mobileDir
-npx expo install --fix
+npx.cmd expo install --fix
 
 Write-Host ""
 Write-Host "[7/7] Starting Expo - scan the QR code on your Android device." -ForegroundColor Cyan
@@ -215,7 +219,11 @@ Write-Host "  Backend API : $apiUrl" -ForegroundColor DarkGray
 Write-Host "  Expo Mode   : $expoMode" -ForegroundColor DarkGray
 Write-Host ""
 if ($UseExpoTunnel) {
-  npx expo start --tunnel --clear
+  npx.cmd expo start --tunnel --clear
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Expo tunnel failed. Falling back to LAN mode because ngrok refused or timed out."
+    npx.cmd expo start --lan --clear
+  }
 } else {
-  npx expo start --clear
+  npx.cmd expo start --lan --clear
 }

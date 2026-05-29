@@ -4,6 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { T } from '../../../constants/theme';
 import UserAvatar from '../../../components/shared/UserAvatar';
 import { 
+  type MockPoliceUser,
   type MockStandardUser, 
   type MockVolunteer,
   type MockIncident
@@ -13,13 +14,15 @@ import { AnimatedListItem } from './AnimatedListItem';
 import { useToast } from '../../../components/Toast';
 import adminService from '../../../services/adminService';
 
-type UserTab = 'Standard Users' | 'Volunteers';
+type UserTab = 'Standard Users' | 'Volunteers' | 'Police/Law Enforcement';
+type AdminUser = MockStandardUser | MockVolunteer | MockPoliceUser;
 
 export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
   const [activeTab, setActiveTab] = useState<UserTab>('Standard Users');
   const [standardUsers, setStandardUsers] = useState<MockStandardUser[]>([]);
   const [volunteers, setVolunteers] = useState<MockVolunteer[]>([]);
-  const [selectedUser, setSelectedUser] = useState<MockStandardUser | MockVolunteer | null>(null);
+  const [policeUsers, setPoliceUsers] = useState<MockPoliceUser[]>([]);
+  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<MockIncident | null>(null);
   const [moderationAction, setModerationAction] = useState<'warn' | 'block' | 'unblock' | null>(null);
   const [moderationReason, setModerationReason] = useState('');
@@ -29,6 +32,11 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
   const { showToast } = useToast();
 
   const isStandard = (user: any): user is MockStandardUser => 'sosRequests' in user && !('rank' in user);
+  const isPolice = (user: any): user is MockPoliceUser => 'policeStationOrUnit' in user || 'badgeNumber' in user || 'activePoliceRequests' in user;
+  const roleForUser = (user: AdminUser): 'standard_user' | 'volunteer' | 'law_enforcement' => {
+    if (isPolice(user)) return 'law_enforcement';
+    return isStandard(user) ? 'standard_user' : 'volunteer';
+  };
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const cardWidthStyle = isMobile ? { width: '100%' as const } : { width: 280 };
@@ -37,12 +45,14 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
     setLoading(true);
     setError('');
     try {
-      const [std, vol] = await Promise.all([
+      const [std, vol, police] = await Promise.all([
         adminService.getUsers('standard_user'),
         adminService.getUsers('volunteer'),
+        adminService.getUsers('law_enforcement'),
       ]);
       setStandardUsers(std as MockStandardUser[]);
       setVolunteers(vol as MockVolunteer[]);
+      setPoliceUsers(police as MockPoliceUser[]);
     } catch (err: any) {
       setError(err?.message || 'Could not load users.');
     } finally {
@@ -54,11 +64,11 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
     loadUsers();
   }, [loadUsers]);
 
-  const handleUserPress = async (user: MockStandardUser | MockVolunteer) => {
+  const handleUserPress = async (user: AdminUser) => {
     setSelectedUser(user);
     try {
-      const detailed = await adminService.getUserById(user.id, isStandard(user) ? 'standard_user' : 'volunteer');
-      setSelectedUser(detailed as MockStandardUser | MockVolunteer);
+      const detailed = await adminService.getUserById(user.id, roleForUser(user));
+      setSelectedUser(detailed as AdminUser);
     } catch {
       // Keep the list row visible if the detail request fails.
     }
@@ -67,8 +77,8 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
   const refreshSelectedUser = async () => {
     if (!selectedUser) return;
     try {
-      const detailed = await adminService.getUserById(selectedUser.id, isStandard(selectedUser) ? 'standard_user' : 'volunteer');
-      setSelectedUser(detailed as MockStandardUser | MockVolunteer);
+      const detailed = await adminService.getUserById(selectedUser.id, roleForUser(selectedUser));
+      setSelectedUser(detailed as AdminUser);
     } catch {
       await loadUsers();
     }
@@ -117,14 +127,14 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={st.title}>User Management</Text>
-          <Text style={st.subtitle}>Manage Standard Users and Verified Volunteers</Text>
+          <Text style={st.subtitle}>Manage standard users, volunteers, and police/law enforcement users</Text>
         </View>
       </View>
 
       {/* Filter Tabs */}
       <View style={st.tabsWrap}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.tabsScroll}>
-          {(['Standard Users', 'Volunteers'] as UserTab[]).map((tab) => {
+          {(['Standard Users', 'Volunteers', 'Police/Law Enforcement'] as UserTab[]).map((tab) => {
             const isActive = activeTab === tab;
             return (
               <TouchableOpacity
@@ -165,6 +175,10 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
         ) : activeTab === 'Volunteers' && volunteers.length === 0 ? (
           <View style={st.emptyState}>
             <Text style={st.emptyText}>No volunteers found.</Text>
+          </View>
+        ) : activeTab === 'Police/Law Enforcement' && policeUsers.length === 0 ? (
+          <View style={st.emptyState}>
+            <Text style={st.emptyText}>No police/law enforcement users found.</Text>
           </View>
         ) : null}
 
@@ -217,6 +231,32 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
             </TouchableOpacity>
           </AnimatedListItem>
         ))}
+
+        {!loading && !error && activeTab === 'Police/Law Enforcement' && policeUsers.map((police, index) => (
+          <AnimatedListItem key={`${police.id}-police`} index={index} style={cardWidthStyle}>
+            <TouchableOpacity
+              style={uc.card}
+              activeOpacity={0.7}
+              onPress={() => handleUserPress(police)}
+            >
+              <View style={uc.topRow}>
+                <UserAvatar size={42} />
+                <View style={uc.infoWrap}>
+                  <Text style={uc.name}>{police.name}</Text>
+                  <View style={uc.badgePolice}>
+                    <Feather name="shield" size={10} color={T.violet} />
+                    <Text style={uc.badgeTxtPolice}>Police/Law Enforcement</Text>
+                  </View>
+                  <View style={uc.statsRow}>
+                    <Text style={uc.statsTxt}>{police.verificationStatus || 'PENDING'} Verification</Text>
+                    <Text style={uc.statsTxt}>{police.policeStationOrUnit || 'Unit not provided'}</Text>
+                    <Text style={uc.statsTxt}>{police.accountStatus || 'ACTIVE'}</Text>
+                  </View>
+                </View>
+              </View>
+            </TouchableOpacity>
+          </AnimatedListItem>
+        ))}
       </Animated.ScrollView>
 
       {/* User Detail Modal */}
@@ -237,7 +277,18 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
                     <UserAvatar size={64} />
                     <View style={md.profileInfo}>
                       <Text style={md.profileName}>{selectedUser.name}</Text>
-                      {isStandard(selectedUser) ? (
+                      {isPolice(selectedUser) ? (
+                        <>
+                          <View style={uc.badgePolice}>
+                            <Feather name="shield" size={10} color={T.violet} />
+                            <Text style={uc.badgeTxtPolice}>Police/Law Enforcement</Text>
+                          </View>
+                          <Text style={md.phoneTxt}>{selectedUser.phone}</Text>
+                          <Text style={md.statsTxt}>Verification: {selectedUser.verificationStatus || 'PENDING'}</Text>
+                          <Text style={md.statsTxt}>Unit: {selectedUser.policeStationOrUnit || 'Not provided'}</Text>
+                          <Text style={md.statsTxt}>Badge / Job ID: {selectedUser.badgeNumber || 'Not provided'}</Text>
+                        </>
+                      ) : isStandard(selectedUser) ? (
                         <>
                           <View style={uc.badgeStd}><Text style={uc.badgeTxtStd}>Standard User</Text></View>
                           <Text style={md.phoneTxt}>{selectedUser.phone}</Text>
@@ -273,7 +324,19 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
                   </View>
 
                   {/* Incidents List */}
-                  {isStandard(selectedUser) ? (
+                  {isPolice(selectedUser) ? (
+                    <View style={md.section}>
+                      <Text style={md.sectionTitle}>Police/Law Enforcement Details</Text>
+                      <View style={md.detailRow}>
+                        <Text style={md.detailLbl}>Active Assigned Requests</Text>
+                        <Text style={md.detailVal}>{selectedUser.activePoliceRequests || 0}</Text>
+                      </View>
+                      <View style={md.detailRow}>
+                        <Text style={md.detailLbl}>Job Certificate / ID</Text>
+                        <Text style={md.detailVal}>{selectedUser.jobIdCardUrl ? 'Uploaded' : 'Not uploaded'}</Text>
+                      </View>
+                    </View>
+                  ) : isStandard(selectedUser) ? (
                     <View style={md.section}>
                       <Text style={md.sectionTitle}>SOS Incident History</Text>
                       {selectedUser.incidents.map(inc => (
@@ -454,6 +517,8 @@ const uc = StyleSheet.create({
   badgeTxtStd: { fontSize: 10, fontWeight: '600', color: T.ink3 },
   badgeVol: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: T.safeLight, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
   badgeTxtVol: { fontSize: 10, fontWeight: '700', color: T.success },
+  badgePolice: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: T.violetDim, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
+  badgeTxtPolice: { fontSize: 10, fontWeight: '700', color: T.violet },
   statsRow: { marginTop: 12, gap: 4 },
   statsTxt: { fontSize: 12, color: T.ink3 },
   statsVal: { fontWeight: '700', color: T.ink },

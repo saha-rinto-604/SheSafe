@@ -8,8 +8,6 @@ import {
     TouchableOpacity,
     Animated,
     LayoutAnimation,
-    Platform,
-    UIManager,
     RefreshControl,
     ActivityIndicator,
 } from 'react-native';
@@ -96,9 +94,6 @@ export default function VolunteerActivity() {
     }, []);
 
     useEffect(() => {
-        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-            UIManager.setLayoutAnimationEnabledExperimental(true);
-        }
         loadData();
     }, [loadData]);
 

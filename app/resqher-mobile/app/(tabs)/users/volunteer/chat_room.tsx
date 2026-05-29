@@ -6,18 +6,16 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
-    Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
-    Modal, Pressable, Alert, Dimensions, ScrollView
+    Platform, StatusBar, KeyboardAvoidingView, Keyboard,
+    Modal, Pressable, Alert, ScrollView
 } from 'react-native';
 import MapView, { Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { type IncidentCategory } from '../../../../src/types/chat';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
@@ -27,7 +25,7 @@ import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import RespondersList from '../../../../src/components/RespondersList';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
-import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from '../../../../src/types/chat';
+import { DEFAULT_GROUP_CHAT_NAME, type Incident, type IncidentCategory, type Message, type Role } from '../../../../src/types/chat';
 import { incidentService } from '../../../../src/services/incidentService';
 import { getStoredIdentity } from '../../../../src/services/api';
 import { useChatSocket } from '../../../../src/hooks/useChatSocket';
@@ -40,7 +38,6 @@ import {
 } from '../../../../src/utils/routeRealtime';
 
 // â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const MAP_STRIP_HEIGHT = 180;
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 type Responder = {
@@ -122,12 +119,6 @@ function formatTime(iso: string): string {
     const m = d.getMinutes().toString().padStart(2, '0');
     const ampm = h >= 12 ? 'PM' : 'AM';
     return `${h % 12 || 12}:${m} ${ampm}`;
-}
-
-function caseLabel(id: string, createdAt: string): string {
-    const year = new Date(createdAt).getFullYear();
-    const num = id.replace(/\D/g, '').padStart(3, '0');
-    return `CASE #${year}-${num}`;
 }
 
 // â”€â”€â”€ RoleBadge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -272,8 +263,6 @@ const TACTICAL_MAP_STYLE = [
     { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
-const { width, height } = Dimensions.get('window');
-
 function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: string) => void; bottomInset: number; onImagePicked: (uri: string) => void }) {
     const [text, setText] = useState('');
     const [isAttachMenuVisible, setAttachMenuVisible] = useState(false);
@@ -306,7 +295,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                                             return;
                                         }
 
-                                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, allowsEditing: true });
+                                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsEditing: true });
                                         if (!res.canceled && res.assets && res.assets.length > 0) {
                                             const uri = res.assets[0].uri;
                                             onImagePicked(uri);
@@ -386,19 +375,6 @@ function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete:
     );
 }
 
-const decodePolyline = (t: string, e?: number) => {
-    let n = 0, o = 0, r = 0, l = 0, i = 0, a = null;
-    const d: { latitude: number; longitude: number }[] = [];
-    for (e = e || 5; n < t.length;) {
-        a = null, r = 0, l = 0;
-        do a = t.charCodeAt(n++) - 63, l |= (31 & a) << r, r += 5; while (a >= 32);
-        i = 1 & l ? ~(l >> 1) : l >> 1, r = l = 0, o += i;
-        do a = t.charCodeAt(n++) - 63, l |= (31 & a) << r, r += 5; while (a >= 32);
-        i = 1 & l ? ~(l >> 1) : l >> 1, d.push({ latitude: o / 10 ** e, longitude: (r += i) / 10 ** e });
-    }
-    return d.map(p => ({ latitude: p.latitude, longitude: p.longitude - r / 10 ** e + p.longitude })); // quick fix
-};
-
 // Real polyline decode from google
 function polylineDecode(str: string, precision = 5) {
     let index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null, latitude_change, longitude_change, factor = Math.pow(10, precision);
@@ -433,7 +409,7 @@ const PremiumBar = memo(function PremiumBar({
 });
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', borderRadius: 16 },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.4)' },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.4)' },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -488,6 +464,7 @@ export default function ChatRoom() {
     const insets = useSafeAreaInsets();
     const { incidentId, category } = useLocalSearchParams<{ incidentId: string; category?: string }>();
     const liveIncidentId = String(incidentId || '');
+    const isBackendIncidentId = /^\d+$/.test(liveIncidentId);
     const [selfId, setSelfId] = useState<string | undefined>();
     const { messages, participants, liveLocation, sendMessage, sendLocationUpdate } = useChatSocket(liveIncidentId, selfId, 'VOLUNTEER');
     const [incident, setIncident] = useState<Incident | null>(null);
@@ -523,7 +500,7 @@ export default function ChatRoom() {
 
     // Travel Mode
     const [travelMode, setTravelMode] = useState<TravelMode>('walking');
-    const [travelModeDropdownOpen, setTravelModeDropdownOpen] = useState(false);
+    const [, setTravelModeDropdownOpen] = useState(false);
 
     // Nav Instructions (for live/review mode)
     type NavStep = { instruction: string; distance: string; maneuver?: string; endLocation?: { latitude: number; longitude: number } };
@@ -536,7 +513,7 @@ export default function ChatRoom() {
 
     // Responders list modal state (local mock list of 5)
     const [isRespondersOpen, setRespondersOpen] = useState(false);
-    const [isResponderRemovedOpen, setResponderRemovedOpen] = useState(false);
+    const [isResponderRemovedOpen] = useState(false);
     const [respondersList, setRespondersList] = useState<Responder[]>([]);
     const [responderDirectory, setResponderDirectory] = useState<ResponderDirectory>({
         sosUser: null,
@@ -544,15 +521,6 @@ export default function ChatRoom() {
         responderCount: 0,
         maxResponders: 3,
     });
-
-    const handleRemoveResponder = useCallback((id: string) => {
-        setRespondersList(prev => prev.filter(r => r.id !== id));
-        if (id === selectedResponderId) {
-            setSelectedResponderId(respondersList[0]?.id ?? '');
-        }
-        setResponderRemovedOpen(true);
-        setTimeout(() => setResponderRemovedOpen(false), 2000);
-    }, [selectedResponderId, respondersList]);
 
     // Edit Case Details modal state
     const [isEditCaseOpen, setEditCaseOpen] = useState(false);
@@ -588,6 +556,10 @@ export default function ChatRoom() {
 
     // Leave Dispatch confirmation
     const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+    const [lawStatus, setLawStatus] = useState<string | null>(null);
+    const [lawConfirmOpen, setLawConfirmOpen] = useState(false);
+    const [lawRequesting, setLawRequesting] = useState(false);
+    const [lawMessage, setLawMessage] = useState<string | null>(null);
 
     const handleDeleteChat = useCallback(() => {
         Alert.alert(
@@ -615,6 +587,22 @@ export default function ChatRoom() {
         router.back();
     }, [liveIncidentId, router]);
 
+    const handleRequestLaw = useCallback(async () => {
+        if (!isBackendIncidentId || lawRequesting) return;
+        setLawRequesting(true);
+        setLawMessage(null);
+        try {
+            const request = await incidentService.requestLawEnforcement(liveIncidentId);
+            setLawStatus(request.status || 'PENDING_ADMIN_REVIEW');
+            setLawConfirmOpen(false);
+            setLawMessage('Law enforcement request sent to admin.');
+        } catch (error: any) {
+            setLawMessage(error?.message || 'Unable to request law enforcement.');
+        } finally {
+            setLawRequesting(false);
+        }
+    }, [isBackendIncidentId, lawRequesting, liveIncidentId]);
+
     useEffect(() => {
         getStoredIdentity().then(identity => setSelfId(identity?.userId));
     }, []);
@@ -631,6 +619,13 @@ export default function ChatRoom() {
             .catch(error => Alert.alert('Incident unavailable', error?.message || 'Unable to load this incident.'));
         return () => { mounted = false; };
     }, [liveIncidentId]);
+
+    useEffect(() => {
+        if (!isBackendIncidentId) return;
+        incidentService.getLawEnforcementStatus(liveIncidentId)
+            .then((request) => setLawStatus(request.exists ? request.status || null : null))
+            .catch(() => undefined);
+    }, [isBackendIncidentId, liveIncidentId]);
 
     const loadResponders = useCallback(async () => {
         if (!liveIncidentId) return;
@@ -659,46 +654,57 @@ export default function ChatRoom() {
     useEffect(() => {
         if (!liveIncidentId) return;
         let mounted = true;
-        loadResponders().catch(error => {
-            if (mounted) console.warn('[VolunteerChatRoom] responders unavailable:', error?.message || error);
-        });
-        incidentService.getVolunteerCaseDetails(liveIncidentId)
-            .then(details => {
-                if (!mounted) return;
-                setCaseDetails({
-                    notes: details.notes ?? '',
-                    condition: details.condition ?? '',
-                    actionsTaken: details.actionsTaken ?? '',
-                });
-            })
-            .catch(error => {
-                if (mounted) console.warn('[VolunteerChatRoom] case details unavailable:', error?.message || error);
+        const initialTimer = setTimeout(() => {
+            if (!mounted) return;
+            loadResponders().catch(error => {
+                if (mounted) console.warn('[VolunteerChatRoom] responders unavailable:', error?.message || error);
             });
+            if (!isBackendIncidentId || isMyEmergency) return;
+            incidentService.getVolunteerCaseDetails(liveIncidentId)
+                .then(details => {
+                    if (!mounted) return;
+                    setCaseDetails({
+                        notes: details.notes ?? '',
+                        condition: details.condition ?? '',
+                        actionsTaken: details.actionsTaken ?? '',
+                    });
+                })
+                .catch(error => {
+                    const status = Number(error?.response?.status ?? error?.status);
+                    if (mounted && status !== 403) {
+                        console.warn('[VolunteerChatRoom] case details unavailable:', error?.message || error);
+                    }
+                });
+        }, 0);
         const interval = setInterval(() => {
             loadResponders().catch(() => undefined);
         }, 7000);
         return () => {
             mounted = false;
+            clearTimeout(initialTimer);
             clearInterval(interval);
         };
-    }, [liveIncidentId, loadResponders]);
+    }, [isBackendIncidentId, isMyEmergency, liveIncidentId, loadResponders]);
 
     useEffect(() => {
-        if (responderDirectory.volunteers.length > 0) return;
-        if (isMyEmergency) {
-            setRespondersList([]);
-            setSelectedResponderId('');
-            return;
-        }
-        const nextResponders = participants
-            .filter(participant => participant.role !== 'USER')
-            .map(participant => ({
-                id: participant.id,
-                name: participant.name,
-                avatarUri: participant.avatarUrl ?? null,
-            }));
-        setRespondersList(nextResponders);
-        setSelectedResponderId(prev => prev || nextResponders[0]?.id || '');
+        const timer = setTimeout(() => {
+            if (responderDirectory.volunteers.length > 0) return;
+            if (isMyEmergency) {
+                setRespondersList([]);
+                setSelectedResponderId('');
+                return;
+            }
+            const nextResponders = participants
+                .filter(participant => participant.role !== 'USER')
+                .map(participant => ({
+                    id: participant.id,
+                    name: participant.name,
+                    avatarUri: participant.avatarUrl ?? null,
+                }));
+            setRespondersList(nextResponders);
+            setSelectedResponderId(prev => prev || nextResponders[0]?.id || '');
+        }, 0);
+        return () => clearTimeout(timer);
     }, [isMyEmergency, participants, responderDirectory.volunteers.length]);
 
     const selectedResponder = React.useMemo(
@@ -951,49 +957,52 @@ export default function ChatRoom() {
 
     useEffect(() => {
         if (!isMapOverlayOpen || !liveLocation) return;
-        const role = String(liveLocation.role || '').toUpperCase();
-        const liveUserId = liveLocation.userId ? String(liveLocation.userId) : '';
+        const timer = setTimeout(() => {
+            const role = String(liveLocation.role || '').toUpperCase();
+            const liveUserId = liveLocation.userId ? String(liveLocation.userId) : '';
 
-        if (isMyEmergency) {
-            const isResponderLocation = role === 'VOLUNTEER' && !!liveUserId && liveUserId !== String(selfId ?? '');
-            if (!isResponderLocation) return;
-            const nextResponderLocation = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
-            if (!nextResponderLocation) return;
-            setRespondersList(prev => prev.map(responder =>
-                responder.id === liveUserId ? { ...responder, location: nextResponderLocation } : responder
-            ));
-            setResponderDirectory(prev => ({
-                ...prev,
-                volunteers: prev.volunteers.map(responder =>
+            if (isMyEmergency) {
+                const isResponderLocation = role === 'VOLUNTEER' && !!liveUserId && liveUserId !== String(selfId ?? '');
+                if (!isResponderLocation) return;
+                const nextResponderLocation = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
+                if (!nextResponderLocation) return;
+                setRespondersList(prev => prev.map(responder =>
                     responder.id === liveUserId ? { ...responder, location: nextResponderLocation } : responder
-                ),
-            }));
-            const isSelectedResponder = liveUserId === selectedResponderId || (!selectedResponderId && respondersList[0]?.id === liveUserId);
-            if (!isSelectedResponder) return;
-            const movedM = victimLocation ? haversineDistance(victimLocation, nextResponderLocation) : Infinity;
+                ));
+                setResponderDirectory(prev => ({
+                    ...prev,
+                    volunteers: prev.volunteers.map(responder =>
+                        responder.id === liveUserId ? { ...responder, location: nextResponderLocation } : responder
+                    ),
+                }));
+                const isSelectedResponder = liveUserId === selectedResponderId || (!selectedResponderId && respondersList[0]?.id === liveUserId);
+                if (!isSelectedResponder) return;
+                const movedM = victimLocation ? haversineDistance(victimLocation, nextResponderLocation) : Infinity;
+                if (movedM < 1) return;
+                setVictimLocation({ ...nextResponderLocation });
+                setVictimName(respondersList.find(responder => responder.id === liveUserId)?.name || 'Responder');
+                if (movedM >= ENDPOINT_MOVE_THRESHOLD_M && userLoc && Date.now() - lastVictimRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
+                    lastVictimRouteRefreshRef.current = Date.now();
+                    loadRouteForIncident(userLoc, nextResponderLocation, travelMode, { fit: !isLiveNavMode, clearExisting: false });
+                }
+                return;
+            }
+
+            const isVictimLocation = role === 'USER' || role === 'STANDARD_USER' || (!role && !!liveUserId && liveUserId !== String(selfId ?? ''));
+            if (!isVictimLocation) return;
+
+            const nextVictim = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
+            if (!nextVictim) return;
+
+            const movedM = victimLocation ? haversineDistance(victimLocation, nextVictim) : Infinity;
             if (movedM < 1) return;
-            setVictimLocation({ ...nextResponderLocation });
-            setVictimName(respondersList.find(responder => responder.id === liveUserId)?.name || 'Responder');
+            setVictimLocation({ ...nextVictim });
             if (movedM >= ENDPOINT_MOVE_THRESHOLD_M && userLoc && Date.now() - lastVictimRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
                 lastVictimRouteRefreshRef.current = Date.now();
-                loadRouteForIncident(userLoc, nextResponderLocation, travelMode, { fit: !isLiveNavMode, clearExisting: false });
+                loadRouteForIncident(userLoc, nextVictim, travelMode, { fit: !isLiveNavMode, clearExisting: false });
             }
-            return;
-        }
-
-        const isVictimLocation = role === 'USER' || role === 'STANDARD_USER' || (!role && !!liveUserId && liveUserId !== String(selfId ?? ''));
-        if (!isVictimLocation) return;
-
-        const nextVictim = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
-        if (!nextVictim) return;
-
-        const movedM = victimLocation ? haversineDistance(victimLocation, nextVictim) : Infinity;
-        if (movedM < 1) return;
-        setVictimLocation({ ...nextVictim });
-        if (movedM >= ENDPOINT_MOVE_THRESHOLD_M && userLoc && Date.now() - lastVictimRouteRefreshRef.current > REROUTE_THROTTLE_MS) {
-            lastVictimRouteRefreshRef.current = Date.now();
-            loadRouteForIncident(userLoc, nextVictim, travelMode, { fit: !isLiveNavMode, clearExisting: false });
-        }
+        }, 0);
+        return () => clearTimeout(timer);
     }, [isLiveNavMode, isMapOverlayOpen, isMyEmergency, liveLocation, loadRouteForIncident, respondersList, selectedResponderId, selfId, travelMode, userLoc, victimLocation]);
 
     useEffect(() => {
@@ -1061,36 +1070,40 @@ export default function ChatRoom() {
             zoom: 19,
         }, { duration: 1000 });
 
-        if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
-            const currentStep = navInstructions[currentStepIdx];
-            if (currentStep.endLocation) {
-                const dist = haversineDistance(userLoc, currentStep.endLocation);
-                if (dist <= 25) {
-                    setCurrentStepIdx(prev => prev + 1);
+        const progressTimer = setTimeout(() => {
+            if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
+                const currentStep = navInstructions[currentStepIdx];
+                if (currentStep.endLocation) {
+                    const dist = haversineDistance(userLoc, currentStep.endLocation);
+                    if (dist <= 25) {
+                        setCurrentStepIdx(prev => prev + 1);
+                    }
                 }
             }
-        }
 
-        if (mapRouteCoords.length > 0) {
-            const progress = getForwardRouteProgress(userLoc, mapRouteCoords);
-            setCompletedRouteCoords(progress.completedRouteCoords);
-            setRemainingRouteCoords(progress.remainingRouteCoords);
+            if (mapRouteCoords.length > 0) {
+                const progress = getForwardRouteProgress(userLoc, mapRouteCoords);
+                setCompletedRouteCoords(progress.completedRouteCoords);
+                setRemainingRouteCoords(progress.remainingRouteCoords);
 
-            if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
-                if (!offRouteTimerRef.current && victimLocation) {
-                    offRouteTimerRef.current = setTimeout(() => {
-                        offRouteTimerRef.current = null;
-                        if (!victimLocation) return;
-                        if (Date.now() - lastRerouteAtRef.current < REROUTE_THROTTLE_MS) return;
-                        lastRerouteAtRef.current = Date.now();
-                        loadRouteForIncident(userLoc, victimLocation, travelMode, { fit: false, clearExisting: false });
-                    }, REROUTE_DELAY_MS);
+                if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
+                    if (!offRouteTimerRef.current && victimLocation) {
+                        offRouteTimerRef.current = setTimeout(() => {
+                            offRouteTimerRef.current = null;
+                            if (!victimLocation) return;
+                            if (Date.now() - lastRerouteAtRef.current < REROUTE_THROTTLE_MS) return;
+                            lastRerouteAtRef.current = Date.now();
+                            loadRouteForIncident(userLoc, victimLocation, travelMode, { fit: false, clearExisting: false });
+                        }, REROUTE_DELAY_MS);
+                    }
+                } else if (offRouteTimerRef.current) {
+                    clearTimeout(offRouteTimerRef.current);
+                    offRouteTimerRef.current = null;
                 }
-            } else if (offRouteTimerRef.current) {
-                clearTimeout(offRouteTimerRef.current);
-                offRouteTimerRef.current = null;
             }
-        }
+        }, 0);
+
+        return () => clearTimeout(progressTimer);
     }, [isLiveNavMode, userLoc, currentStepIdx, navInstructions, mapRouteCoords, victimLocation, loadRouteForIncident, travelMode]);
 
     useEffect(() => {
@@ -1269,6 +1282,25 @@ export default function ChatRoom() {
 
                             <View style={st.headerMenuDivider} />
 
+                            {isLive && isBackendIncidentId && (
+                                <>
+                                    <TouchableOpacity
+                                        style={st.headerMenuRow}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            Haptics.selectionAsync();
+                                            setHeaderMenuOpen(false);
+                                            setLawMessage(lawStatus ? 'Law enforcement has already been requested for this incident.' : null);
+                                            setLawConfirmOpen(true);
+                                        }}
+                                    >
+                                        <Feather name="shield" size={16} color={lawStatus ? T.ink4 : '#FFFFFF'} />
+                                        <Text style={[st.headerMenuText, lawStatus && { color: T.ink4 }]}>Request Law Enforcement</Text>
+                                    </TouchableOpacity>
+                                    <View style={st.headerMenuDivider} />
+                                </>
+                            )}
+
                             <TouchableOpacity
                                 style={st.headerMenuRow}
                                 activeOpacity={0.7}
@@ -1279,6 +1311,23 @@ export default function ChatRoom() {
                             </TouchableOpacity>
                         </View>
                     </Pressable>
+                </Modal>
+
+                <Modal transparent visible={lawConfirmOpen} animationType="fade">
+                    <View style={st.leaveBackdropCentered}>
+                        <View style={st.leaveCard}>
+                            <Text style={st.leaveTitle}>Request Law Enforcement?</Text>
+                            <Text style={st.leaveMessage}>This will notify admin to review and forward this SOS case to law enforcement.</Text>
+                            {!!lawStatus && <Text style={[st.leaveMessage, { color: T.violet }]}>Current status: {lawStatus.replace(/_/g, ' ')}</Text>}
+                            {!!lawMessage && <Text style={[st.leaveMessage, { color: lawStatus ? T.violet : T.dangerText }]}>{lawMessage}</Text>}
+                            <View style={st.leaveActions}>
+                                <TouchableOpacity style={st.leaveCancel} onPress={() => setLawConfirmOpen(false)}><Text style={st.leaveCancelText}>Cancel</Text></TouchableOpacity>
+                                <TouchableOpacity style={[st.leaveYes, lawStatus && { opacity: 0.45 }]} disabled={!!lawStatus || lawRequesting} onPress={handleRequestLaw}>
+                                    <Text style={st.leaveYesText}>{lawRequesting ? 'Requesting...' : 'Request'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
                 </Modal>
 
                 {/* Edit Case Details Modal */}
@@ -2297,7 +2346,7 @@ const st = StyleSheet.create({
         zIndex: 10,
     },
     overlayCardTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: `${T.violet}08`,
     },
     responderRow: {

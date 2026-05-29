@@ -11,6 +11,8 @@ const {
   findUserByPhone,
   findUserById,
   createUser,
+  createPoliceProfile,
+  createPoliceUser,
   updatePasswordHash,
   toPublicProfile,
 } = require('../users/user.repository');
@@ -43,12 +45,13 @@ function makeToken(user) {
 }
 
 async function signup(payload) {
-  console.log('[AUTH] signup attempt:', { phone: payload.phoneNumber, role: payload.role });
   const firstName = String(payload.firstName || '').trim();
   const lastName = String(payload.lastName || '').trim();
   const phoneNumber = normalizePhoneNumber(payload.phoneNumber);
   const password = String(payload.password || '');
   const role = String(payload.role || 'standard_user').trim().toLowerCase();
+  const policeStationOrUnit = String(payload.policeStationOrUnit || payload.policeStation || '').trim();
+  const badgeNumber = String(payload.badgeNumber || payload.jobIdNumber || '').trim();
 
   if (!firstName || !lastName) {
     throw httpError(400, 'First name and last name are required.');
@@ -64,9 +67,28 @@ async function signup(payload) {
   if (!ALLOWED_ROLES.has(role)) {
     throw httpError(400, 'Invalid role.');
   }
+  if (role === 'law_enforcement') {
+    if (!policeStationOrUnit) throw httpError(400, 'Police station or unit is required.');
+    if (!badgeNumber) throw httpError(400, 'Badge or job ID number is required.');
+  }
 
   const existing = await findUserByPhone(phoneNumber);
   if (existing) {
+    const existingRole = String(existing.role_name || '').toLowerCase();
+    if (role === 'law_enforcement' && existingRole === 'law_enforcement') {
+      const samePassword = await bcrypt.compare(password, existing.password_hash);
+      if (samePassword && !existing.police_verification_status) {
+        const recoveredUser = await createPoliceProfile({
+          userId: existing.id,
+          policeStationOrUnit,
+          badgeNumber,
+        });
+        return {
+          accessToken: makeToken(recoveredUser),
+          user: toPublicUser(recoveredUser),
+        };
+      }
+    }
     throw httpError(409, 'Phone number is already registered.');
   }
 
@@ -76,16 +98,25 @@ async function signup(payload) {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  const user = await createUser({
-    roleId: roleRow.id,
-    firstName,
-    lastName,
-    phoneNumber,
-    passwordHash,
-  });
+  const user = role === 'law_enforcement'
+    ? await createPoliceUser({
+      roleId: roleRow.id,
+      firstName,
+      lastName,
+      phoneNumber,
+      passwordHash,
+      policeStationOrUnit,
+      badgeNumber,
+    })
+    : await createUser({
+      roleId: roleRow.id,
+      firstName,
+      lastName,
+      phoneNumber,
+      passwordHash,
+    });
 
   const accessToken = makeToken(user);
-  console.log('[AUTH] signup success: user ID =', user.id, 'role =', user.role_name);
   return {
     accessToken,
     user: toPublicUser(user),
@@ -93,7 +124,6 @@ async function signup(payload) {
 }
 
 async function login(payload) {
-  console.log('[AUTH] login attempt:', { phone: payload.phoneNumber });
   const phoneNumber = normalizePhoneNumber(payload.phoneNumber);
   const password = String(payload.password || '');
 
@@ -102,7 +132,6 @@ async function login(payload) {
   }
 
   const user = await findUserByPhone(phoneNumber);
-  console.log('[AUTH] login user found:', user ? { id: user.id, hashLen: user.password_hash?.length } : 'NOT FOUND');
   if (!user) {
     throw httpError(401, 'Invalid credentials. Sign up first.');
   }
@@ -111,7 +140,6 @@ async function login(payload) {
   }
 
   const ok = await bcrypt.compare(password, user.password_hash);
-  console.log('[AUTH] login bcrypt result:', ok);
   if (!ok) {
     throw httpError(401, 'Invalid credentials.');
   }

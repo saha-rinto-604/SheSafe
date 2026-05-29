@@ -500,7 +500,7 @@ export const st = StyleSheet.create({
         zIndex: 10,
     },
     overlayCardTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: `${T.violet}08`,
     },
     overviewRow: {

@@ -217,7 +217,7 @@ const PremiumBar = memo(function PremiumBar({ style, contentStyle, children }: {
 });
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', borderRadius: 16 },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.4)' },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.4)' },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -327,7 +327,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                                             Alert.alert('Permission required', 'Permission to access media library is required.');
                                             return;
                                         }
-                                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.7, allowsEditing: true });
+                                        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7, allowsEditing: true });
                                         if (!res.canceled && res.assets && res.assets.length > 0) {
                                             onImagePicked(res.assets[0].uri);
                                         }
@@ -439,8 +439,13 @@ export default function ChatRoom() {
     const [savingCaseDetails, setSavingCaseDetails] = useState(false);
     const [isSaveConfirmationOpen, setSaveConfirmationOpen] = useState(false);
     const [isLeaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+    const [lawStatus, setLawStatus] = useState<string | null>(null);
+    const [lawConfirmOpen, setLawConfirmOpen] = useState(false);
+    const [lawRequesting, setLawRequesting] = useState(false);
+    const [lawMessage, setLawMessage] = useState<string | null>(null);
 
-    const isRealIncident = !!incidentId && !incidentId.startsWith('temp-') && incidentId !== 'sos-new';
+    const isBackendIncidentId = /^\d+$/.test(String(incidentId || ''));
+    const isRealIncident = isBackendIncidentId && !incidentId.startsWith('temp-') && incidentId !== 'sos-new';
 
     useEffect(() => {
         incidentService.getOne(incidentId)
@@ -508,6 +513,13 @@ export default function ChatRoom() {
         return () => { mounted = false; };
     }, [incidentId, isRealIncident]);
 
+    useEffect(() => {
+        if (!isRealIncident) return;
+        incidentService.getLawEnforcementStatus(incidentId)
+            .then((request) => setLawStatus(request.exists ? request.status || null : null))
+            .catch(() => undefined);
+    }, [incidentId, isRealIncident]);
+
     const activeMessages = isRealIncident ? messages : localMessages;
 
     useEffect(() => {
@@ -556,6 +568,22 @@ export default function ChatRoom() {
         if (isRealIncident) await incidentService.leaveChat(incidentId);
         router.back();
     }, [incidentId, isRealIncident, router]);
+
+    const handleRequestLaw = useCallback(async () => {
+        if (!isRealIncident || lawRequesting) return;
+        setLawRequesting(true);
+        setLawMessage(null);
+        try {
+            const request = await incidentService.requestLawEnforcement(incidentId);
+            setLawStatus(request.status || 'PENDING_ADMIN_REVIEW');
+            setLawConfirmOpen(false);
+            setLawMessage('Law enforcement request sent to admin.');
+        } catch (error: any) {
+            setLawMessage(error?.message || 'Unable to request law enforcement.');
+        } finally {
+            setLawRequesting(false);
+        }
+    }, [incidentId, isRealIncident, lawRequesting]);
 
     const handleSaveCaseDetails = useCallback(async () => {
         setSavingCaseDetails(true);
@@ -789,7 +817,7 @@ export default function ChatRoom() {
         setNavInstructions([]);
         setCurrentStepIdx(0);
         loadRouteForResponder(userLoc, selectedResponder, travelMode);
-    }, [travelMode, selectedResponderId, isMapOverlayOpen, isLiveNavMode, userLoc, loadRouteForResponder]);
+    }, [travelMode, selectedResponder, selectedResponderId, isMapOverlayOpen, isLiveNavMode, userLoc, loadRouteForResponder]);
 
     useEffect(() => {
         if (!isMapOverlayOpen) return;
@@ -854,20 +882,22 @@ export default function ChatRoom() {
         const nextVolunteerLocation = sanitizeCoordinate(Number(liveLocation.latitude), Number(liveLocation.longitude));
         if (!nextVolunteerLocation) return;
 
-        setRespondersList(prev => {
-            let changed = false;
-            const next = prev.map(responder => {
-                if (liveUserId && String(responder.id) !== liveUserId) return responder;
-                const movedM = responder.location ? haversineDistance(responder.location, nextVolunteerLocation) : Infinity;
-                if (movedM < 1) return responder;
-                changed = true;
-                return { ...responder, location: { ...nextVolunteerLocation } };
+        const updateTimer = setTimeout(() => {
+            setRespondersList(prev => {
+                let changed = false;
+                const next = prev.map(responder => {
+                    if (liveUserId && String(responder.id) !== liveUserId) return responder;
+                    const movedM = responder.location ? haversineDistance(responder.location, nextVolunteerLocation) : Infinity;
+                    if (movedM < 1) return responder;
+                    changed = true;
+                    return { ...responder, location: { ...nextVolunteerLocation } };
+                });
+                return changed ? next : prev;
             });
-            return changed ? next : prev;
-        });
+        }, 0);
 
-        if (!selectedResponder) return;
-        if (liveUserId && String(selectedResponder.id) !== liveUserId) return;
+        if (!selectedResponder) return () => clearTimeout(updateTimer);
+        if (liveUserId && String(selectedResponder.id) !== liveUserId) return () => clearTimeout(updateTimer);
 
         const movedM = selectedResponder.location
             ? haversineDistance(selectedResponder.location, nextVolunteerLocation)
@@ -881,6 +911,8 @@ export default function ChatRoom() {
                 { fit: !isLiveNavMode, clearExisting: false },
             );
         }
+
+        return () => clearTimeout(updateTimer);
     }, [isLiveNavMode, isMapOverlayOpen, liveLocation, loadRouteForResponder, selectedResponder, travelMode, userId, userLoc]);
 
     useEffect(() => {
@@ -925,19 +957,23 @@ export default function ChatRoom() {
         }
         const volunteerLocation = selectedResponder.location;
         const focusLocation = userLoc ?? volunteerLocation;
+        let advanceTimer: ReturnType<typeof setTimeout> | undefined;
+        let progressTimer: ReturnType<typeof setTimeout> | undefined;
         mapRef.current?.animateCamera({ center: focusLocation, pitch: 45, heading: userLoc?.heading ?? 0, zoom: 19 }, { duration: 1000 });
 
         if (navInstructions.length > 0 && currentStepIdx < navInstructions.length - 1) {
             const currentStep = navInstructions[currentStepIdx];
             if (currentStep.endLocation && haversineDistance(volunteerLocation, currentStep.endLocation) <= 25) {
-                setCurrentStepIdx(prev => prev + 1);
+                advanceTimer = setTimeout(() => setCurrentStepIdx(prev => prev + 1), 0);
             }
         }
 
         if (mapRouteCoords.length > 0) {
             const progress = getReverseRouteProgress(volunteerLocation, mapRouteCoords);
-            setCompletedRouteCoords(progress.completedRouteCoords);
-            setRemainingRouteCoords(progress.remainingRouteCoords);
+            progressTimer = setTimeout(() => {
+                setCompletedRouteCoords(progress.completedRouteCoords);
+                setRemainingRouteCoords(progress.remainingRouteCoords);
+            }, 0);
 
             if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
                 if (!offRouteTimerRef.current && userLoc) {
@@ -954,6 +990,10 @@ export default function ChatRoom() {
                 offRouteTimerRef.current = null;
             }
         }
+        return () => {
+            if (advanceTimer) clearTimeout(advanceTimer);
+            if (progressTimer) clearTimeout(progressTimer);
+        };
     }, [isLiveNavMode, selectedResponder, currentStepIdx, navInstructions, mapRouteCoords, userLoc, loadRouteForResponder, travelMode]);
 
     useEffect(() => {
@@ -1063,6 +1103,23 @@ export default function ChatRoom() {
                             </TouchableOpacity>
                             <View style={st.headerMenuDivider} />
 
+                            {isLive && isRealIncident && (
+                                <>
+                                    <TouchableOpacity
+                                        style={st.headerMenuRow}
+                                        onPress={() => {
+                                            setHeaderMenuOpen(false);
+                                            setLawMessage(lawStatus ? 'Law enforcement has already been requested for this incident.' : null);
+                                            setLawConfirmOpen(true);
+                                        }}
+                                    >
+                                        <Feather name="shield" size={16} color={lawStatus ? T.ink4 : '#FFFFFF'} />
+                                        <Text style={[st.headerMenuText, lawStatus && { color: T.ink4 }]}>Request Law Enforcement</Text>
+                                    </TouchableOpacity>
+                                    <View style={st.headerMenuDivider} />
+                                </>
+                            )}
+
                             {/* Standard User Controls & Shared Log out */}
                             {isLive ? (
                                 <TouchableOpacity style={st.headerMenuRow} onPress={() => { setHeaderMenuOpen(false); setLeaveConfirmOpen(true); }}>
@@ -1080,6 +1137,23 @@ export default function ChatRoom() {
                 </Modal>
 
                 {/* â”€â”€ Extra Modals (Edit Case, Confirmations) â”€â”€ */}
+                <Modal transparent visible={lawConfirmOpen} animationType="fade">
+                    <View style={st.leaveBackdropCentered}>
+                        <View style={st.leaveCard}>
+                            <Text style={st.leaveTitle}>Request Law Enforcement?</Text>
+                            <Text style={st.leaveMessage}>This will notify admin to review and forward this SOS case to law enforcement.</Text>
+                            {!!lawStatus && <Text style={[st.leaveMessage, { color: T.violet }]}>Current status: {lawStatus.replace(/_/g, ' ')}</Text>}
+                            {!!lawMessage && <Text style={[st.leaveMessage, { color: lawStatus ? T.violet : T.dangerText }]}>{lawMessage}</Text>}
+                            <View style={st.leaveActions}>
+                                <TouchableOpacity style={st.leaveCancel} onPress={() => setLawConfirmOpen(false)}><Text style={st.leaveCancelText}>Cancel</Text></TouchableOpacity>
+                                <TouchableOpacity style={[st.leaveYes, lawStatus && { opacity: 0.45 }]} disabled={!!lawStatus || lawRequesting} onPress={handleRequestLaw}>
+                                    <Text style={st.leaveYesText}>{lawRequesting ? 'Requesting...' : 'Request'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
                 <Modal transparent={true} visible={isEditCaseOpen} animationType="slide">
                     <Pressable style={st.caseModalBackdrop} onPress={() => setEditCaseOpen(false)}>
                         <View style={st.caseModalSheet}>
@@ -1458,7 +1532,7 @@ const st = StyleSheet.create({
     overlayTitleWrap: { backgroundColor: 'rgba(30, 21, 58, 0.85)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
     overlayTitle: { color: T.ink, fontSize: 13, fontWeight: '700' },
     overlayBottomCard: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(10, 5, 20, 0.5)', paddingTop: 20, paddingHorizontal: S.s4, zIndex: 10 },
-    overlayCardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: `${T.violet}08` },
+    overlayCardTint: { ...StyleSheet.absoluteFill, backgroundColor: `${T.violet}08` },
     responderRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 14, marginBottom: 16 },
     responderAvatarWrap: { flex: 1, alignItems: 'center' },
     responderAvatarRing: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },

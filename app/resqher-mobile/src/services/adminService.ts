@@ -9,6 +9,7 @@ import {
   type MockIncident,
   type MockReport,
   type MockSafePlaceRequest,
+  type MockPoliceUser,
   type MockStandardUser,
   type MockVerification,
   type MockVolunteer,
@@ -75,7 +76,12 @@ function timeLabel(value?: string | null) {
 }
 
 function roleLabel(role?: string | null) {
-  return String(role || '').toLowerCase() === 'volunteer' ? 'Volunteer' : 'Standard User';
+  const normalized = String(role || '').toLowerCase();
+  if (normalized === 'volunteer') return 'Volunteer';
+  if (normalized === 'police' || normalized === 'law_enforcement' || normalized === 'law-enforcement') {
+    return 'Police/Law Enforcement';
+  }
+  return 'Standard User';
 }
 
 function displayCode(id: string) {
@@ -112,13 +118,36 @@ export function mapIncidentToMock(item: any): MockIncident {
 export function mapVerificationToMock(item: any): MockVerification {
   return {
     id: String(item?.id ?? ''),
+    kind: 'volunteer',
+    userId: item?.user?.id ? String(item.user.id) : undefined,
+    typeLabel: item?.typeLabel || 'Volunteer Verification',
     name: item?.user?.name || 'Unknown',
     phone: item?.user?.phone || '',
     submitted: timeLabel(item?.submittedAt),
-    idCardUrl: item?.idCardUrl || 'https://placehold.co/600x400/222/FFFFFF/png?text=ID+Card',
-    selfieUrl: item?.selfieUrl || 'https://placehold.co/400x600/222/FFFFFF/png?text=Selfie',
+    idCardUrl: item?.idCardUrl || undefined,
+    selfieUrl: item?.selfieUrl || undefined,
     certificateUrl: item?.certificateUrl || undefined,
     status: item?.status,
+  };
+}
+
+export function mapPoliceVerificationToMock(item: any): MockVerification {
+  const userId = item?.userId || item?.user?.id || item?.id;
+  return {
+    id: `police-${String(userId ?? '')}`,
+    kind: 'police',
+    userId: String(userId ?? ''),
+    typeLabel: item?.typeLabel || 'Police/Law Enforcement Verification',
+    name: item?.name || item?.user?.name || 'Unknown',
+    phone: item?.phoneNumber || item?.phone || item?.user?.phone || '',
+    submitted: timeLabel(item?.submittedAt),
+    idCardUrl: item?.idCardUrl || item?.documents?.nidCardUrl || item?.nidCardUrl || undefined,
+    selfieUrl: item?.selfieUrl || item?.documents?.selfieUrl || undefined,
+    certificateUrl: item?.certificateUrl || item?.documents?.jobIdCardUrl || item?.jobIdCardUrl || undefined,
+    jobIdCardUrl: item?.jobIdCardUrl || item?.documents?.jobIdCardUrl || undefined,
+    policeStationOrUnit: item?.policeStationOrUnit || null,
+    badgeNumber: item?.badgeNumber || null,
+    status: item?.status || item?.verificationStatus,
   };
 }
 
@@ -189,12 +218,31 @@ export function mapUserToVolunteer(item: any): MockVolunteer {
   };
 }
 
-async function request<T>(path: string, options?: { method?: 'get' | 'patch'; body?: any; params?: any }): Promise<T> {
+export function mapUserToPolice(item: any): MockPoliceUser {
+  return {
+    id: String(item?.id ?? ''),
+    name: item?.name || 'Unknown',
+    phone: item?.phone || '',
+    accountStatus: item?.accountStatus || 'ACTIVE',
+    warningCount: Number(item?.warningCount || 0),
+    reportCount: Number(item?.reportCount || 0),
+    joinedAt: item?.joinedAt,
+    verificationStatus: item?.verificationStatus || null,
+    policeStationOrUnit: item?.policeStationOrUnit || null,
+    badgeNumber: item?.badgeNumber || null,
+    jobIdCardUrl: item?.jobIdCardUrl || null,
+    activePoliceRequests: Number(item?.activePoliceRequests || 0),
+  };
+}
+
+async function request<T>(path: string, options?: { method?: 'get' | 'patch' | 'post'; body?: any; params?: any }): Promise<T> {
   try {
     const method = options?.method || 'get';
     const response = method === 'patch'
       ? await api.patch(path, options?.body || {}, { params: options?.params })
-      : await api.get(path, { params: options?.params });
+      : method === 'post'
+        ? await api.post(path, options?.body || {}, { params: options?.params })
+        : await api.get(path, { params: options?.params });
     return response.data as T;
   } catch (error) {
     throw normalizeError(error);
@@ -245,17 +293,19 @@ export const adminService = {
     return mapIncidentToMock(data.incident);
   },
 
-  async getUsers(role: 'standard_user' | 'volunteer') {
+  async getUsers(role: 'standard_user' | 'volunteer' | 'law_enforcement') {
     if (__DEV__ && USE_ADMIN_MOCKS) return role === 'volunteer' ? MOCK_VOLUNTEERS : MOCK_STANDARD_USERS;
     const data = await request<{ users: any[] }>('/api/admin/users', { params: { role } });
-    return role === 'volunteer'
-      ? (data.users || []).map(mapUserToVolunteer)
-      : (data.users || []).map(mapUserToStandard);
+    if (role === 'volunteer') return (data.users || []).map(mapUserToVolunteer);
+    if (role === 'law_enforcement') return (data.users || []).map(mapUserToPolice);
+    return (data.users || []).map(mapUserToStandard);
   },
 
-  async getUserById(id: Id, role?: 'standard_user' | 'volunteer') {
+  async getUserById(id: Id, role?: 'standard_user' | 'volunteer' | 'law_enforcement') {
     const data = await request<{ user: any }>(`/api/admin/users/${id}`);
-    return role === 'volunteer' ? mapUserToVolunteer(data.user) : mapUserToStandard(data.user);
+    if (role === 'volunteer') return mapUserToVolunteer(data.user);
+    if (role === 'law_enforcement') return mapUserToPolice(data.user);
+    return mapUserToStandard(data.user);
   },
 
   async warnUser(id: Id, reason: string) {
@@ -275,8 +325,22 @@ export const adminService = {
 
   async getVerifications(status: 'pending' | 'verified' | 'rejected' | 'all' = 'pending') {
     if (__DEV__ && USE_ADMIN_MOCKS) return MOCK_VERIFICATIONS;
-    const data = await request<{ verifications: any[] }>('/api/admin/verifications', { params: { status } });
-    return (data.verifications || []).map(mapVerificationToMock);
+    const policeStatusMap = {
+      pending: 'PENDING',
+      verified: 'APPROVED',
+      rejected: 'REJECTED',
+      all: 'ALL',
+    } as const;
+    const [volunteerData, policeData] = await Promise.all([
+      request<{ verifications: any[] }>('/api/admin/verifications', { params: { status } }),
+      request<{ policeVerifications: any[] }>('/api/admin/police/verifications', {
+        params: { status: policeStatusMap[status] },
+      }),
+    ]);
+    return [
+      ...(volunteerData.verifications || []).map(mapVerificationToMock),
+      ...(policeData.policeVerifications || []).map(mapPoliceVerificationToMock),
+    ];
   },
 
   async getVerificationById(id: Id) {
@@ -292,6 +356,44 @@ export const adminService = {
   async rejectVerification(id: Id, reason: string) {
     const data = await request<{ verification: any }>(`/api/admin/verifications/${id}/reject`, { method: 'patch', body: { reason } });
     return mapVerificationToMock(data.verification);
+  },
+
+  async getPoliceVerifications(status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL' = 'PENDING') {
+    const data = await request<{ policeVerifications: any[] }>('/api/admin/police/verifications', { params: { status } });
+    return data.policeVerifications || [];
+  },
+
+  async approvePoliceVerification(userId: Id) {
+    const data = await request<{ policeVerification: any }>(`/api/admin/police/verifications/${userId}/approve`, { method: 'patch' });
+    return data.policeVerification;
+  },
+
+  async rejectPoliceVerification(userId: Id, reason: string) {
+    const data = await request<{ policeVerification: any }>(`/api/admin/police/verifications/${userId}/reject`, { method: 'patch', body: { reason } });
+    return data.policeVerification;
+  },
+
+  async getApprovedPolice() {
+    const data = await request<{ police: any[] }>('/api/admin/police/approved');
+    return data.police || [];
+  },
+
+  async getLawEnforcementRequests() {
+    const data = await request<{ requests: any[] }>('/api/admin/law-enforcement/requests');
+    return data.requests || [];
+  },
+
+  async assignLawEnforcementRequest(requestId: Id, policeId?: Id | null, assignToAll = false) {
+    const data = await request<{ request: any }>(
+      `/api/admin/law-enforcement/requests/${requestId}/assign`,
+      { method: 'post', body: assignToAll ? { assignToAll: true } : { policeId } }
+    );
+    return data.request;
+  },
+
+  async cancelLawEnforcementRequest(requestId: Id, reason?: string) {
+    const data = await request<{ request: any }>(`/api/admin/law-enforcement/requests/${requestId}/cancel`, { method: 'post', body: { reason } });
+    return data.request;
   },
 
   async getSafePlaces(status: 'PENDING' | 'CONFIRMED' | 'REJECTED' | 'ALL' = 'PENDING') {

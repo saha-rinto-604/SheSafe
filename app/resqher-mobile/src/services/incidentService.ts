@@ -249,6 +249,58 @@ export interface VolunteerCertificateData {
   totalPoints: number;
 }
 
+export type LawEnforcementRequestStatus =
+  | 'PENDING_ADMIN_REVIEW'
+  | 'ASSIGNED_TO_POLICE'
+  | 'ACCEPTED_BY_POLICE'
+  | 'REJECTED_BY_POLICE'
+  | 'RESOLVED'
+  | 'CANCELLED';
+
+export interface LawEnforcementStatus {
+  exists: boolean;
+  id?: string;
+  incidentId?: string;
+  status?: LawEnforcementRequestStatus;
+  assignedPoliceId?: string | null;
+  isAccepted?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LawEnforcementAdminRequest {
+  id: string;
+  incidentId: string;
+  incidentDisplayCode: string;
+  requesterName: string;
+  requesterRole: string;
+  victimName: string;
+  incidentStatus: string;
+  address?: string | null;
+  status: LawEnforcementRequestStatus;
+  assignedPoliceId?: string | null;
+  assignedPoliceName?: string | null;
+  rejectionReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PoliceTask {
+  id: string;
+  incidentId: string;
+  incidentDisplayCode: string;
+  victimName: string;
+  incidentStatus: string;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  victimLiveLocation?: { latitude: number; longitude: number } | null;
+  status: LawEnforcementRequestStatus;
+  requestNote?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 function normalizeApiError(error: any) {
   const data = error?.response?.data;
   const next = new Error(data?.message || data?.detail || error?.message || 'Request failed') as Error & {
@@ -377,6 +429,40 @@ export const incidentService = {
     return res.data?.incidents ?? [];
   },
 
+  async requestLawEnforcement(incidentId: number | string, requestNote?: string): Promise<LawEnforcementStatus> {
+    try {
+      const res = await api.post('/api/law-enforcement/request', { incidentId, requestNote });
+      return res.data?.request;
+    } catch (error) {
+      throw normalizeApiError(error);
+    }
+  },
+
+  async getLawEnforcementStatus(incidentId: number | string): Promise<LawEnforcementStatus> {
+    const res = await api.get(`/api/law-enforcement/incident/${incidentId}/status`);
+    return res.data?.request ?? { exists: false };
+  },
+
+  async getPoliceTasks(): Promise<PoliceTask[]> {
+    const res = await api.get('/api/police/tasks');
+    return res.data?.tasks ?? [];
+  },
+
+  async acceptPoliceTask(requestId: number | string): Promise<LawEnforcementStatus> {
+    const res = await api.post(`/api/police/tasks/${requestId}/accept`);
+    return res.data?.request;
+  },
+
+  async rejectPoliceTask(requestId: number | string, reason?: string): Promise<LawEnforcementStatus> {
+    const res = await api.post(`/api/police/tasks/${requestId}/reject`, { reason });
+    return res.data?.request;
+  },
+
+  async resolvePoliceTask(requestId: number | string): Promise<LawEnforcementStatus> {
+    const res = await api.post(`/api/police/tasks/${requestId}/resolve`);
+    return res.data?.request;
+  },
+
   async archiveChatForMe(id: number | string) {
     await api.patch(`/api/chat/${id}/archive-for-me`);
   },
@@ -476,7 +562,8 @@ export const incidentService = {
 export const safePlaceService = {
   async getSafePlaces(): Promise<SafePlace[]> {
     const res = await api.get('/api/safe-places');
-    return (res.data?.zones ?? []).map((place: any) => ({
+    const places = res.data?.zones ?? res.data?.safePlaces ?? res.data?.items ?? [];
+    return places.map((place: any) => ({
       ...place,
       id: String(place?.id),
       name: String(place?.name ?? 'Safe Place'),

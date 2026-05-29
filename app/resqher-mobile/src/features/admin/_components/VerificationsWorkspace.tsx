@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Modal, TextInput, Image, Dimensions, useWindowDimensions,
+  Modal, TextInput, Dimensions, useWindowDimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T, Ty, R } from '../../../constants/theme';
@@ -10,6 +10,7 @@ import UserAvatar from '../../../components/shared/UserAvatar';
 import { useToast } from '../../../components/Toast';
 import { AnimatedListItem } from './AnimatedListItem';
 import adminService from '../../../services/adminService';
+import VerificationDocumentViewer from './VerificationDocumentViewer';
 
 type Props = {
   insetsBottom?: number;
@@ -20,10 +21,10 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
   const [verifications, setVerifications] = useState<MockVerification[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   // Selection state
   const [selectedVerification, setSelectedVerification] = useState<MockVerification | null>(null);
-  
+
   // Track removing items
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
 
@@ -68,10 +69,14 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
     setLoading(true);
     setSelectedVerification(null);
     try {
-      await adminService.approveVerification(item.id);
+      if (item.kind === 'police') {
+        await adminService.approvePoliceVerification(item.userId || item.id.replace(/^police-/, ''));
+      } else {
+        await adminService.approveVerification(item.id);
+      }
       showToast({
         type: 'success',
-        title: 'Volunteer Approved',
+        title: item.kind === 'police' ? 'Police Approved' : 'Volunteer Approved',
         message: `${item.name} has been verified successfully.`,
       });
       removeVerification(item.id);
@@ -93,16 +98,23 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
       showToast({ type: 'warning', title: 'Reason Required', message: 'Please enter a rejection reason.' });
       return;
     }
-    
+
     const idToRemove = rejectingVerification.id;
     const name = rejectingVerification.name;
-    
+
     setRejectingVerification(null);
     setRejectionReason('');
     setSelectedVerification(null);
     setLoading(true);
     try {
-      await adminService.rejectVerification(idToRemove, cleanReason);
+      if (rejectingVerification.kind === 'police') {
+        await adminService.rejectPoliceVerification(
+          rejectingVerification.userId || rejectingVerification.id.replace(/^police-/, ''),
+          cleanReason
+        );
+      } else {
+        await adminService.rejectVerification(idToRemove, cleanReason);
+      }
       showToast({
         type: 'info',
         title: 'Application Rejected',
@@ -119,8 +131,8 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
   return (
     <View style={[st.container, { paddingBottom: insetsBottom }]}>
       <View style={st.header}>
-        <Text style={st.title}>Volunteer Verifications</Text>
-        <Text style={st.subtitle}>Review and approve pending volunteer applications.</Text>
+        <Text style={st.title}>Pending Verifications</Text>
+        <Text style={st.subtitle}>Review volunteer and police/law enforcement applications.</Text>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.listContent}>
@@ -141,8 +153,8 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
         ) : (
           verifications.map((item, index) => (
             <AnimatedListItem key={item.id} index={index} isRemoving={removingIds.has(item.id)} style={cardWidthStyle}>
-              <TouchableOpacity 
-                style={st.card} 
+              <TouchableOpacity
+                style={st.card}
                 activeOpacity={0.8}
                 onPress={() => setSelectedVerification(item)}
               >
@@ -150,6 +162,7 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
                   <UserAvatar size={44} />
                   <View style={st.cardInfo}>
                     <Text style={st.cardName}>{item.name}</Text>
+                    <Text style={st.typeBadgeText}>{item.typeLabel || 'Volunteer Verification'}</Text>
                     <Text style={st.cardSub}>Submitted {item.submitted}</Text>
                   </View>
                   <Feather name="chevron-right" size={20} color={T.ink4} />
@@ -185,45 +198,49 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
                     <View style={st.detailsUserText}>
                       <Text style={st.detailsName}>{selectedVerification.name}</Text>
                       <Text style={st.detailsPhone}>{selectedVerification.phone}</Text>
+                      <Text style={st.typeBadgeText}>{selectedVerification.typeLabel || 'Volunteer Verification'}</Text>
                     </View>
                   </View>
+
+                  {selectedVerification.kind === 'police' && (
+                    <View style={st.policeInfoBox}>
+                      <Text style={st.infoLine}>Unit: {selectedVerification.policeStationOrUnit || 'Not provided'}</Text>
+                      <Text style={st.infoLine}>Badge / Job ID: {selectedVerification.badgeNumber || 'Not provided'}</Text>
+                    </View>
+                  )}
 
                   <View style={st.divider} />
 
                   {/* Documents */}
                   <Text style={st.sectionTitle}>Provided Documents</Text>
+                  <VerificationDocumentViewer
+                    documents={[
+                      { label: 'ID Card Image', uri: selectedVerification.idCardUrl, required: true },
+                      { label: 'Selfie With ID', uri: selectedVerification.selfieUrl, required: true },
+                      {
+                        label: selectedVerification.kind === 'police'
+                          ? 'Police Job Certificate / Job ID Card'
+                          : 'Certificates',
+                        uri: selectedVerification.jobIdCardUrl || selectedVerification.certificateUrl,
+                        required: selectedVerification.kind === 'police',
+                      },
+                    ]}
+                  />
 
-                  <View style={st.docItem}>
-                    <Text style={st.docLabel}>ID Card Image</Text>
-                    <Image source={{ uri: selectedVerification.idCardUrl }} style={st.docImage} resizeMode="contain" />
-                  </View>
-
-                  <View style={st.docItem}>
-                    <Text style={st.docLabel}>Selfie With ID</Text>
-                    <Image source={{ uri: selectedVerification.selfieUrl }} style={st.docImage} resizeMode="contain" />
-                  </View>
-
-                  {selectedVerification.certificateUrl && (
-                    <View style={st.docItem}>
-                      <Text style={st.docLabel}>Certificates (Optional)</Text>
-                      <Image source={{ uri: selectedVerification.certificateUrl }} style={st.docImage} resizeMode="contain" />
-                    </View>
-                  )}
-                  
                   <View style={{ height: 40 }} />
                 </ScrollView>
 
                 <View style={st.modalFooter}>
-                  <TouchableOpacity 
-                    style={[st.actionBtn, st.btnReject]} 
+                  <TouchableOpacity
+                    style={[st.actionBtn, st.btnReject]}
                     activeOpacity={0.8}
                     onPress={() => handleRejectInit(selectedVerification)}
                   >
                     <Feather name="x" size={18} color={T.danger} />
                     <Text style={[st.actionBtnTxt, { color: T.danger }]}>Reject</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={[st.actionBtn, st.btnApprove]} 
+                  <TouchableOpacity
+                    style={[st.actionBtn, st.btnApprove]}
                     activeOpacity={0.8}
                     onPress={() => handleApprove(selectedVerification)}
                   >
@@ -250,7 +267,7 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
             <Text style={st.rejectSub}>
               Are you sure you want to reject {rejectingVerification?.name}'s application?
             </Text>
-            
+
             <TextInput
               style={st.rejectInput}
               placeholder="Reason for rejection"
@@ -282,11 +299,11 @@ const st = StyleSheet.create({
   header: { marginBottom: 20 },
   title: { ...Ty.h2, color: T.ink },
   subtitle: { fontSize: 14, color: T.ink3, marginTop: 4 },
-  
+
   listContent: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, width: '100%' },
   emptyText: { fontSize: 15, color: T.ink4, marginTop: 12, fontWeight: '500' },
-  
+
   card: {
     backgroundColor: '#0F1020',
     borderRadius: R.lg,
@@ -298,6 +315,7 @@ const st = StyleSheet.create({
   cardInfo: { marginLeft: 14, flex: 1 },
   cardName: { fontSize: 15, fontWeight: '700', color: T.ink },
   cardSub: { fontSize: 13, color: T.ink4, marginTop: 2 },
+  typeBadgeText: { fontSize: 11, color: T.violet, fontWeight: '900', marginTop: 3 },
 
   // Detail Modal
   modalOverlay: {
@@ -334,26 +352,25 @@ const st = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   modalScroll: { padding: 20 },
-  
+
   detailsUserInfo: { flexDirection: 'row', alignItems: 'center' },
   detailsUserText: { marginLeft: 16, flex: 1 },
   detailsName: { fontSize: 18, fontWeight: '800', color: T.ink },
   detailsPhone: { fontSize: 14, color: T.ink3, marginTop: 4 },
-  
+  policeInfoBox: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: T.surfaceCard,
+    borderWidth: 1,
+    borderColor: T.lineMid,
+    gap: 4,
+  },
+  infoLine: { fontSize: 13, color: T.ink3, fontWeight: '700' },
+
   divider: { height: 1, backgroundColor: T.lineMid, marginVertical: 20 },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: T.violet, marginBottom: 16, textTransform: 'uppercase', letterSpacing: 0.5 },
-  
-  docItem: { marginBottom: 24 },
-  docLabel: { fontSize: 14, fontWeight: '600', color: T.ink, marginBottom: 10 },
-  docImage: {
-    width: '100%',
-    height: 300,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  
+
   modalFooter: {
     flexDirection: 'row',
     paddingHorizontal: 20,

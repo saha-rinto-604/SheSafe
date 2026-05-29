@@ -16,6 +16,7 @@ import SheSafeMark from '../../../components/SheSafeMark';
 
 const SIDEBAR_W = 260;
 const DRAWER_W_RATIO = 0.78;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 type Props = {
   activeKey: string;
@@ -33,7 +34,7 @@ function MenuItem({ item, active, onPress }: { item: SidebarItem; active: boolea
     Animated.timing(fadeAnim, {
       toValue: active ? 1 : 0,
       duration: 200,
-      useNativeDriver: true,
+      useNativeDriver: USE_NATIVE_DRIVER,
     }).start();
   }, [active]);
 
@@ -121,13 +122,13 @@ export function MobileDrawer({ isDrawerOpen, onCloseDrawer, ...rest }: Props) {
     const w = Dimensions.get('window').width * DRAWER_W_RATIO;
     if (isDrawerOpen) {
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: true }),
-        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     } else {
       Animated.parallel([
-        Animated.timing(slideAnim, { toValue: -w, duration: 240, useNativeDriver: true }),
-        Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: -w, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     }
   }, [isDrawerOpen]);
@@ -137,7 +138,7 @@ export function MobileDrawer({ isDrawerOpen, onCloseDrawer, ...rest }: Props) {
   const drawerWidth = Dimensions.get('window').width * DRAWER_W_RATIO;
 
   return (
-    <View style={[StyleSheet.absoluteFill, { pointerEvents: 'box-none' }]}>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Animated.View style={[st.overlay, { opacity: fadeAnim }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onCloseDrawer} />
       </Animated.View>
@@ -266,7 +267,7 @@ const st = StyleSheet.create({
 
   /* Mobile Drawer */
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.6)',
     zIndex: 998,
   },

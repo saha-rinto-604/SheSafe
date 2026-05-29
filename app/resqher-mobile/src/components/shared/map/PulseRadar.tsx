@@ -6,8 +6,7 @@
  */
 
 import React, { useRef, useEffect, memo } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
-import { Animated as RNAnimated, Easing } from 'react-native';
+import { Animated as RNAnimated, Dimensions, Easing, StyleSheet, Text, View } from 'react-native';
 import { T } from '../../../constants/theme';
 
 const { height } = Dimensions.get('window');
@@ -17,9 +16,9 @@ export const PulseRadar = memo(function PulseRadar() {
     const a0 = useRef(new RNAnimated.Value(0)).current;
     const a1 = useRef(new RNAnimated.Value(0)).current;
     const a2 = useRef(new RNAnimated.Value(0)).current;
-    const anims = [a0, a1, a2];
 
     useEffect(() => {
+        const anims = [a0, a1, a2];
         anims.forEach((a, i) => {
             const loop = () => {
                 a.setValue(0);
@@ -31,7 +30,9 @@ export const PulseRadar = memo(function PulseRadar() {
             };
             loop();
         });
-    }, []);
+    }, [a0, a1, a2]);
+
+    const anims = [a0, a1, a2];
 
     return (
         <View style={rdr.wrap} pointerEvents="none">

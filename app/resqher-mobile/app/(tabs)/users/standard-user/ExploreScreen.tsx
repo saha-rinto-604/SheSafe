@@ -9,13 +9,12 @@ import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
     TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
+    Animated as RNAnimated, Easing,
 } from 'react-native';
-import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
-import { Ionicons } from '@expo/vector-icons';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -50,6 +49,11 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
+function useAnimatedValue(initialValue: number) {
+    const [value] = useState(() => new RNAnimated.Value(initialValue));
+    return value;
+}
+
 /** Zero-trust coordinate sanitizer — validates lat/lng before forwarding to any external service. */
 function sanitizeCoordinate(lat: number, lng: number): { latitude: number; longitude: number } | null {
     if (!isFinite(lat) || !isFinite(lng)) return null;
@@ -77,11 +81,6 @@ async function fetchWithRetry<T>(
     throw lastError;
 }
 
-function isRedIncidentZone(zone: any): boolean {
-    const incidentCount = Number(zone?.incidentCount ?? zone?.incident_count ?? zone?.count ?? zone?.incidents?.length ?? 0);
-    return incidentCount >= 5;
-}
-
 function formatIncidentTime(value?: string | Date | null): string {
     if (!value) return 'Recently';
     const date = value instanceof Date ? value : new Date(value);
@@ -94,89 +93,6 @@ function formatIncidentTime(value?: string | Date | null): string {
     if (hours < 24) return `${hours} hr ago`;
     const days = Math.floor(hours / 24);
     return days === 1 ? 'Yesterday' : `${days} days ago`;
-}
-
-/** Returns an object indicating safety and the name of the avoided zone if applicable. */
-function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolean; blockedZoneName?: string } {
-    if (coordinates.length === 0) return { isSafe: true };
-
-    for (let i = 0; i < coordinates.length - 1; i++) {
-        const p1 = coordinates[i];
-        const p2 = coordinates[i + 1];
-
-        for (const zone of zones) {
-            if (!isRedIncidentZone(zone)) continue;
-            if (haversineDistance(p1, zone) <= zone.radius) {
-                return { isSafe: false, blockedZoneName: zone.name };
-            }
-        }
-
-        const dist = haversineDistance(p1, p2);
-        const SEGMENT_CHECK_INTERVAL_M = 20;
-
-        if (dist > SEGMENT_CHECK_INTERVAL_M) {
-            const steps = Math.ceil(dist / SEGMENT_CHECK_INTERVAL_M);
-            for (let j = 1; j < steps; j++) {
-                const fraction = j / steps;
-                const interpPoint = {
-                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
-                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
-                };
-
-                for (const zone of zones) {
-                    if (!isRedIncidentZone(zone)) continue;
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
-                        return { isSafe: false, blockedZoneName: zone.name };
-                    }
-                }
-            }
-        }
-    }
-
-    const lastPoint = coordinates[coordinates.length - 1];
-    for (const zone of zones) {
-        if (!isRedIncidentZone(zone)) continue;
-        if (haversineDistance(lastPoint, zone) <= zone.radius) {
-            return { isSafe: false, blockedZoneName: zone.name };
-        }
-    }
-
-    return { isSafe: true };
-}
-
-/** Computes route risk dynamically — heavily penalizes Red blocks while tracking Yellow cells gently */
-function getRouteRiskScore(coordinates: LatLng[], zones: any[]): number {
-    let score = 0;
-    if (coordinates.length === 0) return 0;
-
-    for (let i = 0; i < coordinates.length - 1; i++) {
-        const p1 = coordinates[i];
-        const p2 = coordinates[i + 1];
-
-        for (const zone of zones) {
-            if (haversineDistance(p1, zone) <= zone.radius) {
-                score += isRedIncidentZone(zone) ? 25 : 1;
-            }
-        }
-
-        const dist = haversineDistance(p1, p2);
-        if (dist > 20) {
-            const steps = Math.ceil(dist / 20);
-            for (let j = 1; j < steps; j++) {
-                const fraction = j / steps;
-                const interpPoint = {
-                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
-                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
-                };
-                for (const zone of zones) {
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
-                        score += isRedIncidentZone(zone) ? 25 : 1;
-                    }
-                }
-            }
-        }
-    }
-    return score;
 }
 
 const stripHtml = (html: string): string => html.replace(/<[^>]*>/g, '');
@@ -223,7 +139,7 @@ const PremiumBar = memo(function PremiumBar({
 });
 const pb = StyleSheet.create({
     bar: { backgroundColor: 'rgba(30,21,58,0.65)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    tint: { ...StyleSheet.absoluteFillObject, backgroundColor: T.surfaceOverlay },
+    tint: { ...StyleSheet.absoluteFill, backgroundColor: T.surfaceOverlay },
     content: { flexDirection: 'row', alignItems: 'center' },
 });
 
@@ -290,10 +206,10 @@ function decodePolyline(encoded: string): LatLng[] {
 }
 
 const PulseRadar = memo(function PulseRadar() {
-    const a0 = useRef(new RNAnimated.Value(0)).current;
-    const a1 = useRef(new RNAnimated.Value(0)).current;
-    const a2 = useRef(new RNAnimated.Value(0)).current;
-    const anims = [a0, a1, a2];
+    const a0 = useAnimatedValue(0);
+    const a1 = useAnimatedValue(0);
+    const a2 = useAnimatedValue(0);
+    const anims = useMemo(() => [a0, a1, a2], [a0, a1, a2]);
 
     useEffect(() => {
         anims.forEach((a, i) => {
@@ -307,7 +223,7 @@ const PulseRadar = memo(function PulseRadar() {
             };
             loop();
         });
-    }, []);
+    }, [anims]);
 
     return (
         <View style={rdr.wrap} pointerEvents="none">
@@ -402,7 +318,7 @@ const SafetyScanOverlay = memo(function SafetyScanOverlay({
 
 const scanStyles = StyleSheet.create({
     backdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3, 2, 6, 0.45)',
         justifyContent: 'center',
         alignItems: 'center',
@@ -423,7 +339,7 @@ const scanStyles = StyleSheet.create({
         }),
     },
     cardTint: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(15, 11, 28, 0.88)',
         zIndex: -1,
     },
@@ -495,13 +411,13 @@ const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label:
 ];
 
 const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
-    const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
+    const slideX = useAnimatedValue(-width * 0.76);
     useEffect(() => {
         RNAnimated.spring(slideX, {
             toValue: visible ? 0 : -width * 0.76,
             useNativeDriver: true, tension: 62, friction: 13,
         }).start();
-    }, [visible]);
+    }, [slideX, visible]);
 
     return (
         <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
@@ -531,7 +447,7 @@ const Drawer = memo(function Drawer({ visible, onClose }: { visible: boolean; on
     );
 });
 const dr = StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.65)' },
     drawer: {
         position: 'absolute', left: 0, top: 0, bottom: 0, width: width * 0.76, backgroundColor: T.surface,
         ...Platform.select({
@@ -558,7 +474,7 @@ const dr = StyleSheet.create({
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
-    const scale = useRef(new RNAnimated.Value(1)).current;
+    const scale = useAnimatedValue(1);
 
     const handlePress = useCallback(() => {
         RNAnimated.sequence([
@@ -566,7 +482,7 @@ const NavTab = memo(function NavTab({
             RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
         ]).start();
         onPress();
-    }, [onPress]);
+    }, [onPress, scale]);
 
     return (
         <TouchableOpacity
@@ -661,7 +577,7 @@ export default function ExploreScreen() {
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
-    const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
+    const safePlaceSuccessAnim = useAnimatedValue(0);
 
     const [routeUnsafe, setRouteUnsafe] = useState(false);
     const [blockedZoneName, setBlockedZoneName] = useState<string | null>(null);
@@ -669,10 +585,10 @@ export default function ExploreScreen() {
     const [unsafeRouteCoords, setUnsafeRouteCoords] = useState<LatLng[]>([]);
     const [safeRouteCoords, setSafeRouteCoords] = useState<LatLng[]>([]);
     const [showSafePath, setShowSafePath] = useState(false);
-    const scanAnim = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
+    const scanAnim = useAnimatedValue(0);
+    const radarAnim0 = useAnimatedValue(0);
+    const radarAnim1 = useAnimatedValue(0);
+    const radarAnim2 = useAnimatedValue(0);
 
     const locationSubRef = useRef<Location.LocationSubscription | null>(null);
     const isMountedRef = useRef(true);
@@ -680,6 +596,8 @@ export default function ExploreScreen() {
     const safePathRequestIdRef = useRef(0);
     const navigationGuardRef = useRef(false);
     const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const liveRouteProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const liveStepAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRerouteAtRef = useRef(0);
 
     const navigateSafely = useCallback((path: string, replace = false) => {
@@ -694,6 +612,14 @@ export default function ExploreScreen() {
         if (offRouteTimerRef.current) {
             clearTimeout(offRouteTimerRef.current);
             offRouteTimerRef.current = null;
+        }
+        if (liveRouteProgressTimerRef.current) {
+            clearTimeout(liveRouteProgressTimerRef.current);
+            liveRouteProgressTimerRef.current = null;
+        }
+        if (liveStepAdvanceTimerRef.current) {
+            clearTimeout(liveStepAdvanceTimerRef.current);
+            liveStepAdvanceTimerRef.current = null;
         }
         setIsLiveNav(false);
         setAudioEnabled(false);
@@ -712,7 +638,6 @@ export default function ExploreScreen() {
     }, [router, stopRouteAudio]);
 
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
-    const [zonesLoading, setZonesLoading] = useState(true);
     const [zonesError, setZonesError] = useState<string | null>(null);
     const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
     const safePlaceTapRef = useRef<{ id: string; at: number } | null>(null);
@@ -775,6 +700,14 @@ export default function ExploreScreen() {
             clearTimeout(offRouteTimerRef.current);
             offRouteTimerRef.current = null;
         }
+        if (liveRouteProgressTimerRef.current) {
+            clearTimeout(liveRouteProgressTimerRef.current);
+            liveRouteProgressTimerRef.current = null;
+        }
+        if (liveStepAdvanceTimerRef.current) {
+            clearTimeout(liveStepAdvanceTimerRef.current);
+            liveStepAdvanceTimerRef.current = null;
+        }
         lastRerouteAtRef.current = 0;
         void stopRouteAudio();
     }, [stopRouteAudio]);
@@ -794,8 +727,6 @@ export default function ExploreScreen() {
             if (isMountedRef.current) {
                 setZonesError(err instanceof Error ? err.message : 'Unable to fetch incident zones');
             }
-        } finally {
-            if (isMountedRef.current) setZonesLoading(false);
         }
     }, []);
 
@@ -822,18 +753,27 @@ export default function ExploreScreen() {
 
     useEffect(() => {
         isMountedRef.current = true;
-        fetchLiveZones();
-        fetchConfirmedSafePlaces();
-        const interval = setInterval(() => {
+        const refreshMapData = () => {
             fetchLiveZones();
             fetchConfirmedSafePlaces();
-        }, 60_000);
+        };
+        const initialRefresh = setTimeout(refreshMapData, 0);
+        const interval = setInterval(refreshMapData, 60_000);
         return () => {
             isMountedRef.current = false;
+            clearTimeout(initialRefresh);
             clearInterval(interval);
             if (offRouteTimerRef.current) {
                 clearTimeout(offRouteTimerRef.current);
                 offRouteTimerRef.current = null;
+            }
+            if (liveRouteProgressTimerRef.current) {
+                clearTimeout(liveRouteProgressTimerRef.current);
+                liveRouteProgressTimerRef.current = null;
+            }
+            if (liveStepAdvanceTimerRef.current) {
+                clearTimeout(liveStepAdvanceTimerRef.current);
+                liveStepAdvanceTimerRef.current = null;
             }
             safePathRequestIdRef.current += 1;
             routeRequestIdRef.current += 1;
@@ -849,13 +789,13 @@ export default function ExploreScreen() {
         }, [refreshAndRecenterMap]),
     );
 
-    const searchProgress = useRef(new RNAnimated.Value(0)).current;
-    const locationCardY = useRef(new RNAnimated.Value(300)).current;
-    const locationCardOpacity = useRef(new RNAnimated.Value(0)).current;
-    const placeSheetY = useRef(new RNAnimated.Value(height)).current;
-    const placeSheetOpacity = useRef(new RNAnimated.Value(0)).current;
-    const placeSheetDragY = useRef(new RNAnimated.Value(0)).current;
-    const directionsProgress = useRef(new RNAnimated.Value(0)).current;
+    const searchProgress = useAnimatedValue(0);
+    const locationCardY = useAnimatedValue(300);
+    const locationCardOpacity = useAnimatedValue(0);
+    const placeSheetY = useAnimatedValue(height);
+    const placeSheetOpacity = useAnimatedValue(0);
+    const placeSheetDragY = useAnimatedValue(0);
+    const directionsProgress = useAnimatedValue(0);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
 
@@ -947,16 +887,24 @@ export default function ExploreScreen() {
             const currentStep = navInstructions[currentStepIdx];
             if (currentStep.endLocation) {
                 const dist = haversineDistance(userLoc, currentStep.endLocation);
-                if (dist <= 25) {
-                    setCurrentStepIdx(prev => prev + 1);
+                if (dist <= 25 && !liveStepAdvanceTimerRef.current) {
+                    liveStepAdvanceTimerRef.current = setTimeout(() => {
+                        liveStepAdvanceTimerRef.current = null;
+                        setCurrentStepIdx(prev => prev + 1);
+                    }, 0);
                 }
             }
         }
 
         if (routeCoords.length > 0) {
             const progress = getForwardRouteProgress(userLoc, routeCoords);
-            setCompletedRouteCoords(progress.completedRouteCoords);
-            setRemainingRouteCoords(progress.remainingRouteCoords);
+            if (!liveRouteProgressTimerRef.current) {
+                liveRouteProgressTimerRef.current = setTimeout(() => {
+                    liveRouteProgressTimerRef.current = null;
+                    setCompletedRouteCoords(progress.completedRouteCoords);
+                    setRemainingRouteCoords(progress.remainingRouteCoords);
+                }, 0);
+            }
 
             if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
                 if (!offRouteTimerRef.current) {
@@ -1069,10 +1017,12 @@ export default function ExploreScreen() {
     useEffect(() => {
         if (!searchActive) return;
         if (query.length < 1) {
-            setSearchSuggestions([]);
-            setSearchStatus(null);
-            searchSessionTokenRef.current = null;
-            return;
+            const handle = setTimeout(() => {
+                setSearchSuggestions([]);
+                setSearchStatus(null);
+                searchSessionTokenRef.current = null;
+            }, 0);
+            return () => clearTimeout(handle);
         }
         const requestId = ++searchRequestIdRef.current;
         if (!searchSessionTokenRef.current) searchSessionTokenRef.current = createSessionToken();
@@ -1091,10 +1041,12 @@ export default function ExploreScreen() {
     useEffect(() => {
         if (!startSearchActive) return;
         if (startQuery.length < 1) {
-            setStartSuggestions([]);
-            setStartStatus(null);
-            startSessionTokenRef.current = null;
-            return;
+            const handle = setTimeout(() => {
+                setStartSuggestions([]);
+                setStartStatus(null);
+                startSessionTokenRef.current = null;
+            }, 0);
+            return () => clearTimeout(handle);
         }
         const requestId = ++startRequestIdRef.current;
         if (!startSessionTokenRef.current) startSessionTokenRef.current = createSessionToken();
@@ -1226,7 +1178,7 @@ export default function ExploreScreen() {
         if (directionsMode) {
             buildRoute();
         }
-    }, [directionsMode, endLocation, startLocation, travelMode]);
+    }, [directionsMode, endLocation, normalizedIncidentZones, startLocation, travelMode]);
 
     const startScanAnimation = useCallback(() => {
         const radarAnims = [radarAnim0, radarAnim1, radarAnim2];
@@ -1475,11 +1427,14 @@ export default function ExploreScreen() {
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName, playRouteAudio]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, blockedZoneName, playRouteAudio]);
 
     useEffect(() => {
         if (!isLiveNav || !showSafePath || !routeUnsafe || scanState === 'SCANNING') return;
-        triggerSafetyRecalculation();
+        const handle = setTimeout(() => {
+            triggerSafetyRecalculation();
+        }, 0);
+        return () => clearTimeout(handle);
     }, [isLiveNav, routeUnsafe, scanState, showSafePath, triggerSafetyRecalculation]);
 
     const closePlaceSheet = useCallback(() => {
@@ -1499,7 +1454,7 @@ export default function ExploreScreen() {
             RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
             RNAnimated.timing(locationCardOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
         ]).start(() => setShowLocationCard(false));
-    }, []);
+    }, [locationCardOpacity, locationCardY]);
 
     const openLocationCard = useCallback(() => {
         if (!userLoc) return;
@@ -1811,8 +1766,8 @@ export default function ExploreScreen() {
         handleStartSelect(current);
     }, [address, handleStartSelect, userLoc]);
 
-    const sheetPanResponder = useRef(
-        PanResponder.create({
+    const sheetPanResponder = useMemo(
+        () => PanResponder.create({
             onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 6,
             onPanResponderMove: (_, gesture) => {
                 if (gesture.dy > 0) placeSheetDragY.setValue(gesture.dy);
@@ -1824,18 +1779,20 @@ export default function ExploreScreen() {
                     RNAnimated.spring(placeSheetDragY, { toValue: 0, useNativeDriver: true, tension: 80, friction: 12 }).start();
                 }
             },
-        })
-    ).current;
+        }),
+        [closePlaceSheet, placeSheetDragY],
+    );
 
     return (
         <AtmosphericShell>
             <View style={s.root}>
                 <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+                <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
                 {/* ── Map Framework ── */}
                 <MapView
                     ref={mapRef}
-                    style={StyleSheet.absoluteFillObject}
+                    style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
                     showsUserLocation={!isLiveNav}
@@ -2887,7 +2844,7 @@ const s = StyleSheet.create({
     searchIcon: { marginRight: 6 },
     searchInput: { flex: 1, fontSize: 13, fontWeight: '500', color: T.ink, height: 38, padding: 0 },
     searchOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0B0716', zIndex: 240 },
-    searchOverlayBackdrop: { ...StyleSheet.absoluteFillObject },
+    searchOverlayBackdrop: { ...StyleSheet.absoluteFill },
     searchOverlayContent: { paddingHorizontal: 16, gap: 12 },
     searchSectionTitle: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 1.1, textTransform: 'uppercase', marginBottom: 4 },
     searchRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 10, borderRadius: 12, backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 8 },
@@ -2931,7 +2888,7 @@ const s = StyleSheet.create({
             android: { elevation: 7, shadowColor: '#8A38F6' },
         }),
     },
-    placeSheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,3,8,0.35)', zIndex: 230 },
+    placeSheetBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(3,3,8,0.35)', zIndex: 230 },
     placeSheet: {
         position: 'absolute', left: 0, right: 0, height: height * 0.5, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', zIndex: 240, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
         ...Platform.select({
@@ -2939,7 +2896,7 @@ const s = StyleSheet.create({
             android: { elevation: 12 },
         }),
     },
-    placeSheetTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(12,9,22,0.92)' },
+    placeSheetTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(12,9,22,0.92)' },
     placeSheetHandleWrap: { alignItems: 'center', paddingTop: 10 },
     placeSheetHandle: { width: 44, height: 4, borderRadius: 2, backgroundColor: T.lineBold, opacity: 0.6 },
     placeSheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 12 },
@@ -3002,7 +2959,7 @@ const s = StyleSheet.create({
     placeIncidentPillResolved: { backgroundColor: T.safeLight, borderColor: `${T.success}40` },
     placeIncidentPillCancelled: { backgroundColor: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' },
     placeIncidentPillText: { fontSize: 10, fontWeight: '700', color: T.ink, letterSpacing: 0.6 },
-    locationBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(3,3,8,0.26)', zIndex: 220 },
+    locationBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(3,3,8,0.26)', zIndex: 220 },
     locationCard: {
         position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: `${T.violet}30`, zIndex: 250,
         ...Platform.select({
@@ -3012,7 +2969,7 @@ const s = StyleSheet.create({
     },
     locationCardGrabberWrap: { alignItems: 'center', paddingTop: 10 },
     locationCardGrabber: { width: 42, height: 4, borderRadius: 2, backgroundColor: T.lineBold, opacity: 0.75 },
-    locationCardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.80)' },
+    locationCardTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.80)' },
     locationCardContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: 10, paddingBottom: 14, gap: S.s3 },
     locationCardLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: S.s3 },
     locationCardIconWrap: { width: 40, height: 40, borderRadius: R.hBtn, backgroundColor: `${T.violet}18`, borderWidth: 1, borderColor: `${T.violet}30`, alignItems: 'center', justifyContent: 'center' },
@@ -3043,7 +3000,7 @@ const ns = StyleSheet.create({
             android: { elevation: 10 },
         }),
     },
-    cardTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.88)' },
+    cardTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.88)' },
     cardBody: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingTop: S.s4, paddingBottom: S.s2, gap: S.s3 },
     iconWrap: { width: 44, height: 44, borderRadius: R.sm, backgroundColor: T.violetDim, borderWidth: 1, borderColor: `${T.violet}35`, alignItems: 'center', justifyContent: 'center' },
     textWrap: { flex: 1 },
@@ -3065,7 +3022,7 @@ const ns = StyleSheet.create({
 
 const lb = StyleSheet.create({
     bannerWrap: { position: 'absolute', left: 14, right: 14, borderRadius: R.lg, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', zIndex: 360 },
-    bannerTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,10,18,0.85)' },
+    bannerTint: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(10,10,18,0.85)' },
     bannerBody: { width: '100%', flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingVertical: S.s4, gap: S.s4 },
     textWrap: { flex: 1 },
     distText: { fontSize: 16, fontWeight: '800', color: T.violet, marginBottom: 4, letterSpacing: -0.2 },

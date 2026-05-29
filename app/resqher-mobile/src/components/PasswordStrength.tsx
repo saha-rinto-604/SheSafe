@@ -6,7 +6,7 @@
  */
 
 import React, { useMemo, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T, R, S } from '../../src/constants/theme';
 
@@ -45,6 +45,7 @@ const STRENGTH_LEVELS = [
   { label: 'Good',         color: '#22D3EE' },           // 4
   { label: 'Strong',       color: '#10B981' },           // 5
 ] as const;
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 // ── Animated Check Item ────────────────────────────────────────────────────────
 function CheckItem({ label, passed }: { label: string; passed: boolean }) {
@@ -57,12 +58,12 @@ function CheckItem({ label, passed }: { label: string; passed: boolean }) {
         toValue: passed ? 1 : 0.95,
         tension: 200,
         friction: 15,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(opacity, {
         toValue: passed ? 1 : 0.45,
         duration: 200,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start();
   }, [passed]);

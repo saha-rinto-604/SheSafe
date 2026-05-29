@@ -8,26 +8,67 @@ type DispatchEvent =
     | { type: 'sos.new'; payload: { incidentId: string; victimName: string; avatarUri?: string | null; latitude: number; longitude: number; address: string | null; distanceKm: number | null; createdAt: string } }
     | { type: 'sos.accepted'; payload: { incidentId: string; volunteer: { id: string; name: string; photoUrl: string | null } } }
     | { type: 'sos.claimed'; payload: { incidentId: string } }
-    | { type: 'sos.rejected'; payload: { incidentId: string } };
+    | { type: 'sos.rejected'; payload: { incidentId: string } }
+    | { type: 'law_enforcement.assigned' | 'police:assigned'; payload: PoliceDispatchPayload }
+    | { type: 'incident_status_updated' | 'incident:status_updated'; payload: PoliceDispatchPayload }
+    | { type: 'law_enforcement.requested' | 'law_enforcement.request_updated'; payload: LawEnforcementRequestPayload };
+
+export type PoliceDispatchPayload = {
+    notificationId?: string | null;
+    type?: string | null;
+    incidentId: string;
+    requestId?: string | null;
+    status?: string | null;
+    title?: string | null;
+    message?: string | null;
+    createdAt?: string | null;
+    assignedPoliceId?: string | null;
+    stationId?: string | null;
+};
+
+export type LawEnforcementRequestPayload = {
+    notificationId?: string | null;
+    type?: string | null;
+    incidentId?: string | null;
+    requestId?: string | null;
+    status?: string | null;
+    title?: string | null;
+    message?: string | null;
+    createdAt?: string | null;
+};
 
 type Handlers = {
+    enabled?: boolean;
     onNewSos?: (incident: NearbyIncident) => void;
     onAccepted?: (payload: Extract<DispatchEvent, { type: 'sos.accepted' }>['payload']) => void;
     onClaimed?: (incidentId: string) => void;
+    onIncidentStatusUpdated?: (payload: PoliceDispatchPayload) => void;
+    onPoliceAssignment?: (payload: PoliceDispatchPayload) => void;
+    onLawEnforcementRequest?: (payload: LawEnforcementRequestPayload) => void;
 };
 
-export function useDispatchSocket({ onNewSos, onAccepted, onClaimed }: Handlers) {
+export function useDispatchSocket({
+    enabled = true,
+    onNewSos,
+    onAccepted,
+    onClaimed,
+    onIncidentStatusUpdated,
+    onPoliceAssignment,
+    onLawEnforcementRequest,
+}: Handlers) {
     const [isConnected, setIsConnected] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
     const mountedRef = useRef(true);
     const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const handlersRef = useRef({ onNewSos, onAccepted, onClaimed });
+    const connectRef = useRef<(() => Promise<void>) | null>(null);
+    const handlersRef = useRef({ onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest });
 
     useEffect(() => {
-        handlersRef.current = { onNewSos, onAccepted, onClaimed };
-    }, [onNewSos, onAccepted, onClaimed]);
+        handlersRef.current = { onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest };
+    }, [onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest]);
 
     const connect = useCallback(async () => {
+        if (!enabled) return;
         try {
             const token = await getAccessToken();
             const ws = new WebSocket(getWebSocketUrl(`/ws/dispatch/?token=${encodeURIComponent(token || '')}`));
@@ -63,6 +104,34 @@ export function useDispatchSocket({ onNewSos, onAccepted, onClaimed }: Handlers)
                     if (data.type === 'sos.claimed') {
                         handlersRef.current.onClaimed?.(String(data.payload.incidentId));
                     }
+
+                    if (data.type === 'incident_status_updated' || data.type === 'incident:status_updated') {
+                        handlersRef.current.onIncidentStatusUpdated?.({
+                            ...data.payload,
+                            incidentId: String(data.payload.incidentId),
+                            requestId: data.payload.requestId ? String(data.payload.requestId) : null,
+                            status: data.payload.status ? String(data.payload.status).toUpperCase() : undefined,
+                            assignedPoliceId: data.payload.assignedPoliceId ? String(data.payload.assignedPoliceId) : null,
+                        });
+                    }
+
+                    if (data.type === 'law_enforcement.assigned' || data.type === 'police:assigned') {
+                        handlersRef.current.onPoliceAssignment?.({
+                            ...data.payload,
+                            incidentId: String(data.payload.incidentId),
+                            requestId: data.payload.requestId ? String(data.payload.requestId) : null,
+                            assignedPoliceId: data.payload.assignedPoliceId ? String(data.payload.assignedPoliceId) : null,
+                        });
+                    }
+
+                    if (data.type === 'law_enforcement.requested' || data.type === 'law_enforcement.request_updated') {
+                        handlersRef.current.onLawEnforcementRequest?.({
+                            ...data.payload,
+                            incidentId: data.payload.incidentId ? String(data.payload.incidentId) : null,
+                            requestId: data.payload.requestId ? String(data.payload.requestId) : null,
+                            status: data.payload.status ? String(data.payload.status).toUpperCase() : undefined,
+                        });
+                    }
                 } catch {
                     // Ignore malformed dispatch frames.
                 }
@@ -75,33 +144,47 @@ export function useDispatchSocket({ onNewSos, onAccepted, onClaimed }: Handlers)
             ws.onclose = () => {
                 if (!mountedRef.current) return;
                 setIsConnected(false);
-                reconnectRef.current = setTimeout(connect, 3000);
+                reconnectRef.current = setTimeout(() => { void connectRef.current?.(); }, 3000);
             };
         } catch {
             if (!mountedRef.current) return;
             setIsConnected(false);
-            reconnectRef.current = setTimeout(connect, 3000);
+            reconnectRef.current = setTimeout(() => { void connectRef.current?.(); }, 3000);
         }
-    }, []);
+    }, [enabled]);
+
+    useEffect(() => {
+        connectRef.current = connect;
+    }, [connect]);
 
     useEffect(() => {
         mountedRef.current = true;
-        connect();
+        let disabledTimer: ReturnType<typeof setTimeout> | null = null;
+        if (enabled) {
+            connect();
+        } else {
+            disabledTimer = setTimeout(() => {
+                if (mountedRef.current) setIsConnected(false);
+            }, 0);
+            wsRef.current?.close();
+            wsRef.current = null;
+        }
 
         const sub = AppState.addEventListener('change', (state) => {
-            if (state === 'active' && mountedRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
+            if (enabled && state === 'active' && mountedRef.current && wsRef.current?.readyState !== WebSocket.OPEN) {
                 connect();
             }
         });
 
         return () => {
             mountedRef.current = false;
+            if (disabledTimer) clearTimeout(disabledTimer);
             if (reconnectRef.current) clearTimeout(reconnectRef.current);
             wsRef.current?.close();
             wsRef.current = null;
             sub.remove();
         };
-    }, [connect]);
+    }, [connect, enabled]);
 
     return { isConnected };
 }

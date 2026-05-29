@@ -51,47 +51,37 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
 }
 
-function requireApiBaseUrl() {
+function resolveApiBaseUrl() {
   const raw = process.env.EXPO_PUBLIC_API_URL?.trim();
   if (!raw) {
-    throw new Error('Missing EXPO_PUBLIC_API_URL. Set it in app/resqher-mobile/.env before starting Expo.');
+    console.warn('[api] Missing EXPO_PUBLIC_API_URL. API calls will fail until it is configured.');
+    return '';
   }
 
   const normalized = normalizeBaseUrl(raw);
   if (!/^https?:\/\//i.test(normalized)) {
-    throw new Error('EXPO_PUBLIC_API_URL must start with http:// or https://.');
+    console.warn('[api] EXPO_PUBLIC_API_URL must start with http:// or https://. API calls will fail until it is fixed.');
+    return '';
   }
 
   return normalized;
 }
 
 function toWebSocketBaseUrl(apiBaseUrl: string) {
+  if (!apiBaseUrl) return '';
   if (apiBaseUrl.startsWith('https://')) {
     return apiBaseUrl.replace(/^https:\/\//, 'wss://');
   }
   return apiBaseUrl.replace(/^http:\/\//, 'ws://');
 }
 
-export const API_BASE_URL = requireApiBaseUrl();
+export const API_BASE_URL = resolveApiBaseUrl();
 export const WS_BASE_URL = toWebSocketBaseUrl(API_BASE_URL);
 export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning';
 
 export function getWebSocketUrl(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${WS_BASE_URL}${normalizedPath}`;
-}
-
-function redactForLog(data: unknown) {
-  if (!data) return '';
-  if (typeof FormData !== 'undefined' && data instanceof FormData) return '[form-data]';
-
-  try {
-    return JSON.stringify(data, (key, value) => (
-      /password|token|secret|otp/i.test(key) ? '[redacted]' : value
-    )).substring(0, 120);
-  } catch {
-    return '[unserializable body]';
-  }
 }
 
 const api = axios.create({
@@ -137,9 +127,8 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
   try { return JSON.parse(raw) as StoredIdentity; } catch { return null; }
 }
 
-// Attach token automatically + debug logger
+// Attach token automatically.
 api.interceptors.request.use(async (config) => {
-  console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`, redactForLog(config.data));
   config.headers = config.headers ?? {};
   config.headers[NGROK_SKIP_BROWSER_WARNING_HEADER] = 'true';
   const token = await getAccessToken();
@@ -199,7 +188,8 @@ export const authService = {
     password: string,
     firstName: string,
     lastName: string,
-    role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER'
+    role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER',
+    policeDetails?: { policeStationOrUnit?: string; badgeNumber?: string; jobIdCardUrl?: string }
   ) {
     if (role === 'ADMIN') {
       throw new Error('Admin accounts cannot be created through public signup.');
@@ -211,6 +201,7 @@ export const authService = {
         firstName,
         lastName,
         role: ROLE_MAP[role],
+        ...(role === 'POLICE' ? policeDetails : {}),
       });
       const { accessToken } = res.data || {};
       if (accessToken) {
@@ -228,7 +219,7 @@ export const authService = {
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
-      return accessToken as string;
+      return res.data as { accessToken: string; user?: any };
     } catch (e) {
       throw friendlyError(e);
     }
@@ -240,7 +231,7 @@ export const authService = {
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
-      return accessToken as string;
+      return res.data as { accessToken: string; user?: any };
     } catch (e) {
       throw friendlyError(e);
     }

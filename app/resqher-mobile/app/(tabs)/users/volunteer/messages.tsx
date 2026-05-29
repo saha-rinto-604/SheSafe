@@ -8,8 +8,8 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
-    Platform, StatusBar, RefreshControl, TextInput,
-    Animated, LayoutAnimation, UIManager, ActivityIndicator, Modal,
+    StatusBar, RefreshControl, TextInput,
+    Animated, LayoutAnimation, ActivityIndicator, Modal,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
@@ -308,12 +308,6 @@ export default function VolunteerMessages() {
         router.push(path as any);
         setTimeout(() => { navigationGuardRef.current = false; }, 800);
     }, [router]);
-
-    useEffect(() => {
-        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-            UIManager.setLayoutAnimationEnabledExperimental(true);
-        }
-    }, []);
 
     // Subscribe to unread count so the red dot updates in real-time.
     useEffect(() => {

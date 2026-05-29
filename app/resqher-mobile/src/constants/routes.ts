@@ -61,7 +61,25 @@ export const VOLUNTEER = {
 // ── Police / Admin routes ────────────────────────────────────────────────────
 export const POLICE = {
   DASHBOARD: '/(tabs)/users/police/dashboard',
+  VERIFICATION: '/(tabs)/users/police/verification',
+  PENDING: '/(tabs)/users/police/pending',
+  REJECTED: '/(tabs)/users/police/rejected',
+  MAP: '/(tabs)/users/police/live-map',
+  NOTIFICATIONS: '/(tabs)/users/police/notifications',
 } as const;
+
+export function routeForPoliceStatus(
+  status?: string | null,
+  policeProfile?: { nidCardUrl?: string | null; selfieUrl?: string | null; jobIdCardUrl?: string | null } | null
+) {
+  const normalized = String(status || '').toUpperCase();
+  if (!normalized || normalized === 'NOT_SUBMITTED' || normalized === 'NOT SUBMITTED' || !policeProfile) return POLICE.VERIFICATION;
+  const hasRequiredDocuments = !!policeProfile?.nidCardUrl && !!policeProfile?.selfieUrl && !!policeProfile?.jobIdCardUrl;
+  if (normalized === 'PENDING' && !hasRequiredDocuments) return POLICE.VERIFICATION;
+  if (normalized === 'PENDING') return POLICE.PENDING;
+  if (normalized === 'REJECTED') return POLICE.REJECTED;
+  return POLICE.DASHBOARD;
+}
 
 export const ADMIN = {
   DASHBOARD: '/(tabs)/users/admin/dashboard',

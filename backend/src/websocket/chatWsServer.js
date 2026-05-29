@@ -178,14 +178,175 @@ function notifyRejected(volunteerId, incidentId) {
   });
 }
 
-function notifyClosed(incidentId) {
+async function getPoliceRecipientsForStatusEvent({ incidentId, requestId }) {
+  try {
+    const params = [];
+    const filters = [];
+    if (requestId) {
+      filters.push('ler.id = ?');
+      params.push(requestId);
+    }
+    if (incidentId) {
+      filters.push('ler.incident_id = ?');
+      params.push(incidentId);
+    }
+    if (!filters.length) return [];
+
+    const rows = await query(
+      `SELECT ler.id AS request_id, ler.incident_id, ler.assigned_police_id AS police_id
+       FROM law_enforcement_requests ler
+       WHERE (${filters.join(' OR ')})
+         AND ler.assigned_police_id IS NOT NULL
+       UNION
+       SELECT ler.id AS request_id, ler.incident_id, lerc.police_id
+       FROM law_enforcement_requests ler
+       JOIN law_enforcement_request_candidates lerc ON lerc.request_id = ler.id
+       WHERE (${filters.join(' OR ')})
+         AND lerc.police_id IS NOT NULL`,
+      [...params, ...params]
+    );
+
+    const seen = new Set();
+    return rows
+      .filter((row) => row.police_id)
+      .filter((row) => {
+        const key = String(row.police_id);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  } catch (err) {
+    console.error('[WS] Failed to load police status recipients:', err.message);
+    return [];
+  }
+}
+
+async function notifyPoliceIncidentStatus({ incidentId, requestId = null, status, message }) {
+  const normalizedStatus = String(status || '').toUpperCase();
+  const recipients = await getPoliceRecipientsForStatusEvent({ incidentId, requestId });
+  const createdAt = new Date().toISOString();
+  const notificationType = normalizedStatus === 'RESOLVED'
+    ? 'INCIDENT_RESOLVED'
+    : normalizedStatus === 'CANCELLED'
+      ? 'INCIDENT_CANCELLED'
+      : 'INCIDENT_STATUS_UPDATED';
+  const title = normalizedStatus === 'RESOLVED'
+    ? 'Incident Resolved'
+    : normalizedStatus === 'CANCELLED'
+      ? 'Incident Cancelled'
+      : 'Incident Status Updated';
+  const payloadBase = {
+    notificationId: `police-status:${incidentId}:${requestId || 'incident'}:${normalizedStatus}:${createdAt}`,
+    type: notificationType,
+    incidentId: String(incidentId),
+    requestId: requestId ? String(requestId) : null,
+    status: normalizedStatus,
+    title,
+    message: message || (
+      normalizedStatus === 'RESOLVED'
+        ? 'This incident has been resolved.'
+        : normalizedStatus === 'CANCELLED'
+          ? 'This incident has been cancelled.'
+          : 'This incident status changed.'
+    ),
+    createdAt,
+  };
+
+  broadcastAll(String(incidentId), {
+    type: 'incident:status_updated',
+    payload: payloadBase,
+  });
+
+  if (normalizedStatus === 'RESOLVED' || normalizedStatus === 'CANCELLED') {
+    broadcastDispatch({
+      type: 'law_enforcement.request_updated',
+      payload: {
+        ...payloadBase,
+        type: 'LAW_ENFORCEMENT_REQUEST_UPDATED',
+      },
+    });
+  }
+
+  for (const recipient of recipients) {
+    sendToUser(recipient.police_id, {
+      type: 'incident_status_updated',
+      payload: {
+        ...payloadBase,
+        assignedPoliceId: String(recipient.police_id),
+        requestId: payloadBase.requestId || String(recipient.request_id),
+      },
+    });
+  }
+}
+
+async function notifyPoliceAssignment({ incidentId, requestId, message }) {
+  const recipients = await getPoliceRecipientsForStatusEvent({ incidentId, requestId });
+  const createdAt = new Date().toISOString();
+  const payloadBase = {
+    notificationId: `police-assignment:${incidentId}:${requestId || 'request'}:${createdAt}`,
+    type: 'POLICE_ASSIGNMENT',
+    incidentId: String(incidentId),
+    requestId: requestId ? String(requestId) : null,
+    title: 'New Police Assignment',
+    message: message || 'A law enforcement request has been assigned.',
+    createdAt,
+  };
+
+  for (const recipient of recipients) {
+    sendToUser(recipient.police_id, {
+      type: 'law_enforcement.assigned',
+      payload: {
+        ...payloadBase,
+        assignedPoliceId: String(recipient.police_id),
+        requestId: payloadBase.requestId || String(recipient.request_id),
+      },
+    });
+  }
+}
+
+function notifyLawEnforcementRequestCreated(request) {
+  const createdAt = new Date().toISOString();
+  broadcastDispatch({
+    type: 'law_enforcement.requested',
+    payload: {
+      notificationId: `law-request:${request?.incidentId || 'incident'}:${request?.id || 'request'}:${createdAt}`,
+      type: 'LAW_ENFORCEMENT_REQUESTED',
+      incidentId: request?.incidentId ? String(request.incidentId) : null,
+      requestId: request?.id ? String(request.id) : null,
+      status: request?.status || 'PENDING_ADMIN_REVIEW',
+      title: 'New Law Enforcement Request',
+      message: 'A law enforcement request needs admin review.',
+      createdAt,
+    },
+  });
+}
+
+function notifyLawEnforcementRequestUpdated(request, action = 'updated') {
+  const createdAt = new Date().toISOString();
+  broadcastDispatch({
+    type: 'law_enforcement.request_updated',
+    payload: {
+      notificationId: `law-request-${action}:${request?.incidentId || 'incident'}:${request?.id || 'request'}:${createdAt}`,
+      type: 'LAW_ENFORCEMENT_REQUEST_UPDATED',
+      incidentId: request?.incidentId ? String(request.incidentId) : null,
+      requestId: request?.id ? String(request.id) : null,
+      status: request?.status || null,
+      title: 'Law Enforcement Request Updated',
+      message: 'A law enforcement request was updated.',
+      createdAt,
+    },
+  });
+}
+
+async function notifyClosed(incidentId, status = 'CLOSED', message) {
   broadcastDispatch({
     type: 'sos.claimed',
     payload: { incidentId: String(incidentId) },
   });
-  broadcastAll(String(incidentId), {
-    type: 'incident:status_updated',
-    payload: { incidentId: String(incidentId) },
+  await notifyPoliceIncidentStatus({
+    incidentId,
+    status,
+    message,
   });
 }
 
@@ -383,6 +544,10 @@ module.exports = {
   notifyClosed,
   notifyRespondersUpdated,
   notifyMessageNew,
+  notifyPoliceIncidentStatus,
+  notifyPoliceAssignment,
+  notifyLawEnforcementRequestCreated,
+  notifyLawEnforcementRequestUpdated,
   broadcastDispatch,
   sendToUser,
 };

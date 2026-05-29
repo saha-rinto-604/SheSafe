@@ -28,6 +28,15 @@ export type UserProfile = {
     homeAddress: string;
     /** Cloudinary URL from backend, or local URI from image picker */
     photoUri: string | null;
+    verificationStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | string | null;
+    policeProfile?: {
+        policeStationOrUnit?: string;
+        badgeNumber?: string;
+        nidCardUrl?: string;
+        selfieUrl?: string;
+        jobIdCardUrl?: string;
+        rejectionReason?: string;
+    } | null;
 };
 
 const DEFAULT_PROFILE: UserProfile = {
@@ -40,6 +49,8 @@ const DEFAULT_PROFILE: UserProfile = {
     medicalInfo: [],
     homeAddress: '',
     photoUri: null,
+    verificationStatus: null,
+    policeProfile: null,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -56,6 +67,8 @@ function apiToProfile(apiUser: any): UserProfile {
         medicalInfo: Array.isArray(apiUser.medicalInfo) ? apiUser.medicalInfo : [],
         homeAddress: apiUser.homeAddress || '',
         photoUri: apiUser.photoUrl || null,
+        verificationStatus: apiUser.verificationStatus || null,
+        policeProfile: apiUser.policeProfile || null,
     };
 }
 
