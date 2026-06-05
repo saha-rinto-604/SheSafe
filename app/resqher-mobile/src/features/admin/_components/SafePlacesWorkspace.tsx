@@ -39,7 +39,10 @@ export function SafePlacesWorkspace({ insetsBottom }: { insetsBottom: number }) 
   }, [activeTab]);
 
   useEffect(() => {
-    loadRequests();
+    const timer = setTimeout(() => {
+      loadRequests();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadRequests]);
 
   const removeRequest = (id: string) => {

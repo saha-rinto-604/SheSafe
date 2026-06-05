@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     View,
     Text,
@@ -70,8 +70,8 @@ export default function VolunteerActivity() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const indicator = useRef(new Animated.Value(0)).current;
-    const pulse = useRef(new Animated.Value(0)).current;
+    const [indicator] = useState(() => new Animated.Value(0));
+    const [pulse] = useState(() => new Animated.Value(0));
 
     const loadData = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
         if (mode === 'initial') setLoading(true);
@@ -94,7 +94,10 @@ export default function VolunteerActivity() {
     }, []);
 
     useEffect(() => {
-        loadData();
+        const timer = setTimeout(() => {
+            loadData();
+        }, 0);
+        return () => clearTimeout(timer);
     }, [loadData]);
 
     useEffect(() => {

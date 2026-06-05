@@ -18,6 +18,8 @@ export type IncidentCategory = 'ASSISTED' | 'MY_EMERGENCY';
 export interface Participant {
     id: string;
     name: string;
+    username?: string;
+    notificationName?: string;
     role: Role;
     avatarUrl?: string;
 }

@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
     },
     liveFrame: {
         backgroundColor: T.violetDim,
-        borderColor: T.violet,
+        borderColor: 'rgba(139,92,246,0.34)',
     },
     idleFrame: {
         backgroundColor: 'rgba(255,255,255,0.04)',
@@ -104,7 +104,7 @@ const styles = StyleSheet.create({
         top: 3,
         overflow: 'hidden',
         borderWidth: 1.5,
-        borderColor: '#0A0A12',
+        borderColor: 'rgba(255,255,255,0.10)',
     },
     avatarFront: {
         position: 'absolute',
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
         bottom: 3,
         overflow: 'hidden',
         borderWidth: 1.5,
-        borderColor: '#0A0A12',
+        borderColor: 'rgba(255,255,255,0.10)',
     },
     liveDot: {
         position: 'absolute',
@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
         borderRadius: 5,
         backgroundColor: T.danger,
         borderWidth: 1.5,
-        borderColor: '#120B22',
+        borderColor: 'rgba(255,255,255,0.10)',
         zIndex: 10,
     },
 });

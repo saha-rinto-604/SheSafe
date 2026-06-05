@@ -14,10 +14,12 @@ CREATE TABLE IF NOT EXISTS users (
   role_id INT UNSIGNED NOT NULL,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
+  username VARCHAR(50) DEFAULT NULL,
   phone_number VARCHAR(30) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   entry_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_users_username (username),
   UNIQUE KEY uq_users_phone_number (phone_number),
   KEY idx_users_role_id (role_id),
   CONSTRAINT fk_users_role_id FOREIGN KEY (role_id)

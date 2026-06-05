@@ -1,11 +1,11 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
   Dimensions, ScrollView, Platform, Pressable, Modal,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { T, R, Ty } from '../../../constants/theme';
+import { T } from '../../../constants/theme';
 import adminService, { type AdminNotification } from '../../../services/adminService';
 
 const DRAWER_WIDTH = 340;
@@ -46,8 +46,8 @@ function mapNotification(item: AdminNotification): Notification {
 export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const screenWidth = Dimensions.get('window').width;
-  const slideAnim = useRef(new Animated.Value(screenWidth)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [slideAnim] = useState(() => new Animated.Value(screenWidth));
+  const [fadeAnim] = useState(() => new Animated.Value(0));
   
   const [notifications, setNotifications] = React.useState<Notification[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -71,8 +71,11 @@ export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
   };
 
   useEffect(() => {
+    let loadTimer: ReturnType<typeof setTimeout> | null = null;
     if (isOpen) {
-      loadNotifications();
+      loadTimer = setTimeout(() => {
+        loadNotifications();
+      }, 0);
       Animated.parallel([
         Animated.timing(slideAnim, { toValue: 0, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
         Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: USE_NATIVE_DRIVER }),
@@ -83,7 +86,10 @@ export function AdminNotificationsDrawer({ isOpen, onClose }: Props) {
         Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     }
-  }, [isOpen, loadNotifications]);
+    return () => {
+      if (loadTimer) clearTimeout(loadTimer);
+    };
+  }, [fadeAnim, isOpen, loadNotifications, slideAnim]);
 
   if (!isOpen && (slideAnim as any)._value === DRAWER_WIDTH) return null;
 

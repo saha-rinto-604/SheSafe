@@ -19,7 +19,26 @@ type WSEvent =
     | { type: 'incident.participants.list'; payload: Participant[] }
     | { type: 'incident:responders_updated'; payload: { incidentId: string } }
     | { type: 'incident:status_updated'; payload: { incidentId: string; status?: string; message?: string; requestId?: string | null } }
-    | { type: 'incident.location.updated'; payload: IncidentLocation };
+    | { type: 'incident.location.updated'; payload: IncidentLocation }
+    | { type: 'error'; payload: { message?: string } };
+
+function isPhoneLike(value: string) {
+    const compact = value.replace(/[\s().-]/g, '');
+    return /^\+?\d{7,15}$/.test(compact);
+}
+
+function notificationIdentity(person?: Partial<Participant> | null) {
+    const username = String(person?.username || '').trim().toLowerCase();
+    if (/^[a-z0-9_]{3,30}$/.test(username)) return `@${username}`;
+    const notificationName = String(person?.notificationName || '').trim();
+    if (notificationName && !isPhoneLike(notificationName)) return notificationName;
+    const name = String(person?.name || '').trim();
+    if (name && !isPhoneLike(name)) return name;
+    if (person?.role === 'VOLUNTEER') return 'A responder';
+    if (person?.role === 'POLICE') return 'An officer';
+    if (person?.role === 'USER') return 'A SheSafe user';
+    return 'Someone';
+}
 
 function normalizeSocketMessage(raw: any): Message {
     const isSystem = raw?.type === 'SYSTEM' || raw?.message_type === 'SYSTEM' || raw?.senderRole === 'system';
@@ -29,6 +48,8 @@ function normalizeSocketMessage(raw: any): Message {
             sender: {
                 ...raw.sender,
                 name: isSystem ? '' : raw.sender.name,
+                username: raw.sender.username,
+                notificationName: raw.sender.notificationName,
                 avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
             },
         } as Message;
@@ -39,6 +60,8 @@ function normalizeSocketMessage(raw: any): Message {
         sender: {
             id: String(raw.senderId ?? raw.sender_id),
             name: isSystem ? '' : raw.senderName ?? raw.name ?? '',
+            username: raw.senderUsername ?? raw.username,
+            notificationName: raw.senderNotificationName ?? raw.notificationName,
             role: raw.senderRole === 'volunteer' ? 'VOLUNTEER' : raw.senderRole === 'law_enforcement' ? 'POLICE' : 'USER',
             avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
         },
@@ -54,6 +77,7 @@ interface UseChatSocketReturn {
     victimLocation: IncidentLocation | null;
     liveLocation: IncidentLocation | null;
     isConnected: boolean;
+    error: string | null;
     sendMessage: (content: string, type?: 'TEXT' | 'IMAGE' | 'AUDIO') => Promise<void>;
     sendLocationUpdate: (location: { latitude: number; longitude: number; heading?: number | null }) => Promise<void>;
     refreshMessages: () => Promise<void>;
@@ -70,6 +94,7 @@ export function useChatSocket(
     const [victimLocation, setVictimLocation] = useState<IncidentLocation | null>(null);
     const [liveLocation, setLiveLocation] = useState<IncidentLocation | null>(null);
     const [isConnected, setIsConnected] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -82,13 +107,25 @@ export function useChatSocket(
 
     // ── Fetch messages via REST (initial load + polling fallback) ──
     const refreshMessages = useCallback(async () => {
+        if (!incidentId) return;
         try {
             const msgs = await chatService.getMessages(incidentId);
             if (mountedRef.current) {
                 setMessages(msgs);
+                setError(null);
                 chatStore.save(incidentId, msgs); // persist for offline re-open
             }
-        } catch { /* silent — cached messages remain */ }
+        } catch (err: any) {
+            const status = err?.response?.status ?? err?.status;
+            const message = err?.response?.data?.message || err?.message || 'Unable to load chat messages.';
+            console.warn('[Chat] Failed to load messages', {
+                incidentId,
+                endpoint: `/api/incidents/${incidentId}/messages`,
+                status,
+                message,
+            });
+            if (mountedRef.current) setError(message);
+        }
     }, [incidentId]);
 
     // ── Start polling fallback ──
@@ -106,6 +143,7 @@ export function useChatSocket(
 
     // ── WebSocket connection ──
     const connectWS = useCallback(async () => {
+        if (!incidentId) return;
         try {
             const token = await getAccessToken();
             const url = getWebSocketUrl(`/ws/chat/${incidentId}/?token=${encodeURIComponent(token || '')}`);
@@ -152,7 +190,7 @@ export function useChatSocket(
                                 notificationStore.add({
                                     type: 'message_received',
                                     title: 'New Message',
-                                    body: `${incoming.sender.name}: ${incoming.content.slice(0, 60)}`,
+                                    body: `${notificationIdentity(incoming.sender)} sent you a message`,
                                     incidentId,
                                     createdAt: new Date().toISOString(),
                                 });
@@ -172,7 +210,7 @@ export function useChatSocket(
                                 notificationStore.add({
                                     type: 'volunteer_joined',
                                     title: 'Responder Joined',
-                                    body: `${data.payload.name || 'A responder'} has joined your incident`,
+                                    body: `${notificationIdentity(data.payload)} has joined your incident`,
                                     incidentId,
                                     createdAt: new Date().toISOString(),
                                 });
@@ -184,6 +222,9 @@ export function useChatSocket(
                         case 'incident.location.updated':
                             setLiveLocation({ ...data.payload });
                             setVictimLocation({ ...data.payload });
+                            break;
+                        case 'error':
+                            setError(data.payload?.message || 'Chat connection error.');
                             break;
                     }
                 } catch { /* malformed message, ignore */ }
@@ -226,6 +267,7 @@ export function useChatSocket(
         content: string,
         type: 'TEXT' | 'IMAGE' | 'AUDIO' = 'TEXT',
     ) => {
+        if (!incidentId) return;
         // Try WS first — add an optimistic entry immediately so the message
         // appears in the list without waiting for the server echo
         if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -256,7 +298,18 @@ export function useChatSocket(
                     return next;
                 });
             }
-        } catch { /* REST fallback failed — backend unreachable */ }
+        } catch (err: any) {
+            const status = err?.response?.status ?? err?.status;
+            const message = err?.response?.data?.message || err?.message || 'Unable to send chat message.';
+            console.warn('[Chat] Failed to send message', {
+                incidentId,
+                endpoint: `/api/incidents/${incidentId}/messages`,
+                status,
+                message,
+            });
+            if (mountedRef.current) setError(message);
+            throw err;
+        }
     }, [incidentId]);
 
     // ── Lifecycle ──
@@ -291,6 +344,25 @@ export function useChatSocket(
     useEffect(() => {
         mountedRef.current = true;
 
+        if (!incidentId) {
+            const clearTimer = setTimeout(() => {
+                if (!mountedRef.current) return;
+                setMessages([]);
+                setParticipants([]);
+                setVictimLocation(null);
+                setLiveLocation(null);
+                setIsConnected(false);
+                setError('Missing incident id. Open this chat from a valid incident.');
+            }, 0);
+            return () => {
+                clearTimeout(clearTimer);
+                mountedRef.current = false;
+                wsRef.current?.close();
+                wsRef.current = null;
+                stopPolling();
+            };
+        }
+
         // Load cached messages immediately so chat isn't blank on re-open
         chatStore.load(incidentId).then(cached => {
             if (mountedRef.current && cached.length > 0) setMessages(cached);
@@ -321,5 +393,5 @@ export function useChatSocket(
         };
     }, [connectWS, incidentId, refreshMessages, stopPolling]);
 
-    return { messages, participants, victimLocation, liveLocation, isConnected, sendMessage, sendLocationUpdate, refreshMessages };
+    return { messages, participants, victimLocation, liveLocation, isConnected, error, sendMessage, sendLocationUpdate, refreshMessages };
 }

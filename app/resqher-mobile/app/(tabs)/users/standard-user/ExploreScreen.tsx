@@ -24,6 +24,7 @@ import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SheSafeLogo from '../../../../src/components/SheSafeLogo';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
+import AICopilotFloatingButton from '../../../../components/AICopilotFloatingButton';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone } from '../../../../src/services/incidentService';
 import { getConfirmedSafePlaces, mapSafePlaceToDestination, type SafePlace } from '../../../../src/services/safePlaceService';
@@ -513,7 +514,7 @@ export default function ExploreScreen() {
     const mapRef = useRef<MapViewRef>(null);
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
-    const { playRouteAudio, stopRouteAudio } = useRouteAudio('ExploreScreen');
+    const { playRouteAudio, stopRouteAudio, routeAudioActiveRef } = useRouteAudio('ExploreScreen');
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
@@ -553,25 +554,6 @@ export default function ExploreScreen() {
 
     // ── Live Navigation Audio Engine ──
     const lastSpokenStepRef = useRef<number>(-1);
-    useEffect(() => {
-        if (isLiveNav && audioEnabled && navInstructions.length > 0 && currentStepIdx !== lastSpokenStepRef.current) {
-            const instruction = navInstructions[currentStepIdx]?.instruction;
-            if (instruction) {
-                Speech.stop();
-                setTimeout(() => {
-                    Speech.speak(instruction, {
-                        language: 'en',
-                        pitch: 1.0,
-                        rate: Platform.OS === 'android' ? 0.9 : 0.95,
-                    });
-                }, 100);
-                lastSpokenStepRef.current = currentStepIdx;
-            }
-        }
-        if (!isLiveNav) {
-            lastSpokenStepRef.current = -1;
-        }
-    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
 
     const [placeSheetMode, setPlaceSheetMode] = useState<'incidents' | 'safe_place'>('incidents');
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
@@ -647,6 +629,10 @@ export default function ExploreScreen() {
             .map(normalizeIncidentZone)
             .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
     }, [incidentZones]);
+    const normalizedIncidentZonesRef = useRef<IncidentZone[]>(normalizedIncidentZones);
+    useEffect(() => {
+        normalizedIncidentZonesRef.current = normalizedIncidentZones;
+    }, [normalizedIncidentZones]);
     const selectedPlaceZoneSeverity = useMemo(() => {
         if (!selectedPlace?.id.startsWith('zone-')) return selectedPlace?.zoneSeverity;
         const zone = normalizedIncidentZones.find(item => selectedPlace.id === `zone-${item.id}`);
@@ -798,6 +784,8 @@ export default function ExploreScreen() {
     const directionsProgress = useAnimatedValue(0);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
+    const searchOverlayOpen = searchActive || startSearchActive;
+    const routeOverlayBlocked = searchOverlayOpen;
 
     useEffect(() => {
         (async () => {
@@ -934,19 +922,26 @@ export default function ExploreScreen() {
 
     // ── Decoupled Audio Alert Engine: Standalone thread — always stops previous utterance first ──
     useEffect(() => {
-        if (!isLiveNav || !audioEnabled) return;
+        if (!isLiveNav || !audioEnabled) {
+            lastSpokenStepRef.current = -1;
+            return;
+        }
         if (navInstructions.length === 0 || currentStepIdx >= navInstructions.length) return;
-        // Stop any previous utterance before queueing the next to prevent TTS buildup on Android/iOS
+        if (routeAudioActiveRef.current) return;
+        if (currentStepIdx === lastSpokenStepRef.current) return;
+
         Speech.stop();
         const tid = setTimeout(() => {
+            if (routeAudioActiveRef.current) return;
             Speech.speak(navInstructions[currentStepIdx].instruction, {
                 language: 'en',
                 pitch: 1.0,
                 rate: Platform.OS === 'android' ? 0.9 : 0.95,
             });
         }, 80);
+        lastSpokenStepRef.current = currentStepIdx;
         return () => clearTimeout(tid);
-    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
+    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions, routeAudioActiveRef]);
 
     const activateSearch = useCallback(() => {
         if (searchActive) return;
@@ -1103,7 +1098,7 @@ export default function ExploreScreen() {
                 const chosenRoute = data.routes[0];
                 const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
-                let latestZones = normalizedIncidentZones;
+                let latestZones = normalizedIncidentZonesRef.current;
                 try {
                     const fetchedZones = await incidentService.getZones();
                     if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
@@ -1178,7 +1173,7 @@ export default function ExploreScreen() {
         if (directionsMode) {
             buildRoute();
         }
-    }, [directionsMode, endLocation, normalizedIncidentZones, startLocation, travelMode]);
+    }, [directionsMode, endLocation, startLocation, travelMode]);
 
     const startScanAnimation = useCallback(() => {
         const radarAnims = [radarAnim0, radarAnim1, radarAnim2];
@@ -2200,7 +2195,7 @@ export default function ExploreScreen() {
                 )}
 
                 {/* ── Top Live Banner ── */}
-                {isLiveNav && navInstructions.length > 0 && (
+                {isLiveNav && navInstructions.length > 0 && !routeOverlayBlocked && (
                     <PremiumBar
                         style={[lb.bannerWrap, { top: insets.top + 8 }]}
                         contentStyle={lb.bannerBody}
@@ -2224,7 +2219,7 @@ export default function ExploreScreen() {
                             style={lb.audioBtn}
                             onPress={() => {
                                 setAudioEnabled(prev => {
-                                    if (prev) Speech.stop();
+                                    if (prev && !routeAudioActiveRef.current) Speech.stop();
                                     return !prev;
                                 });
                             }}
@@ -2409,7 +2404,7 @@ export default function ExploreScreen() {
                 )}
 
                 {/* ── Current location control button ── */}
-                {!directionsMode && !selectedPlace && (
+                {!directionsMode && !selectedPlace && !searchOverlayOpen && (
                     <View style={s.mapControls}>
                         <TouchableOpacity
                             style={s.ctrlBtn}
@@ -2423,7 +2418,7 @@ export default function ExploreScreen() {
                 )}
 
                 {/* ── Location Card ── */}
-                {showLocationCard && (
+                {showLocationCard && !searchOverlayOpen && (
                     <>
                         <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closeLocationCard} />
@@ -2464,7 +2459,7 @@ export default function ExploreScreen() {
                 )}
 
                 {/* ── Place Detail Sheet ── */}
-                {placeSheetOpen && selectedPlace && (
+                {placeSheetOpen && selectedPlace && !searchOverlayOpen && (
                     <>
                         <RNAnimated.View style={[s.placeSheetBackdrop, { opacity: placeSheetOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closePlaceSheet} />
@@ -2642,7 +2637,7 @@ export default function ExploreScreen() {
                 )}
 
                 {/* ── Step-by-Step Instruction Card ── */}
-                {directionsMode && navInstructions.length > 0 && (
+                {directionsMode && navInstructions.length > 0 && !routeOverlayBlocked && (
                     <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                         <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={ns.cardTint} pointerEvents="none" />
@@ -2669,6 +2664,35 @@ export default function ExploreScreen() {
                                 </Text>
                             </View>
                         </View>
+                        {isReviewMode && !isLiveNav && (
+                            <ScrollView
+                                style={{ maxHeight: 132 }}
+                                contentContainerStyle={{ paddingHorizontal: S.s4, paddingBottom: S.s2, gap: 6 }}
+                                showsVerticalScrollIndicator={false}
+                                nestedScrollEnabled
+                            >
+                                {navInstructions.map((step, index) => (
+                                    <TouchableOpacity
+                                        key={`${index}-${step.instruction}`}
+                                        style={[
+                                            s.searchRow,
+                                            { marginBottom: 0, paddingVertical: 8 },
+                                            index === currentStepIdx && { borderColor: `${T.violet}70` },
+                                        ]}
+                                        onPress={() => setCurrentStepIdx(index)}
+                                        activeOpacity={0.75}
+                                    >
+                                        <View style={s.searchIconWrap}>
+                                            <Text style={s.searchTitle}>{index + 1}</Text>
+                                        </View>
+                                        <View style={s.searchTextWrap}>
+                                            <Text style={s.searchTitle} numberOfLines={1}>{step.instruction}</Text>
+                                            <Text style={s.searchSubtitle}>{step.distance}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        )}
                         <View style={ns.cardFooter}>
                             <Text style={ns.stepCounter}>
                                 Step {currentStepIdx + 1} of {navInstructions.length}
@@ -2748,6 +2772,21 @@ export default function ExploreScreen() {
                 />
 
                 {/* ── Bottom Navbar ── */}
+                <AICopilotFloatingButton
+                    role="standard"
+                    storageKey="standard-explore"
+                    bottom={NAV_BOT_OFFSET + NAV_HEIGHT + 86}
+                    hidden={
+                        searchActive
+                        || startSearchActive
+                        || drawerOpen
+                        || directionsMode
+                        || !!selectedPlace
+                        || placeSheetOpen
+                        || scanState === 'SCANNING'
+                    }
+                />
+
                 <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                         {NAV_TABS.map(tab => (

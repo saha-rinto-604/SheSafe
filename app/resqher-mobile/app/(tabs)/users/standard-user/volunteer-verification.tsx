@@ -6,7 +6,7 @@
  * Upload: expo-image-picker (gallery for ID/Certificate, camera+gallery for Selfie)
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -18,12 +18,12 @@ import {
     Image,
     Platform,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import api from '../../../../src/services/api';
-import { T, R, S } from '../../../../src/constants/theme';
+import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
 

@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const chatService = require('../modules/chat/chat.service');
 const locationService = require('../modules/locations/location.service');
+const notificationService = require('../modules/notifications/notification.service');
 const { query } = require('../config/db');
 const { jwt: jwtConfig } = env;
 
@@ -38,6 +39,18 @@ async function isBlockedUser(userId) {
     [userId]
   );
   return String(rows[0]?.account_status || '').toUpperCase() === 'BLOCKED';
+}
+
+async function isFinalIncident(incidentId) {
+  const rows = await query(
+    `SELECT status
+     FROM incidents
+     WHERE id = ?
+     LIMIT 1`,
+    [incidentId]
+  );
+  const status = String(rows[0]?.status || '').toUpperCase();
+  return status === 'RESOLVED' || status === 'CANCELLED';
 }
 
 function getRoomId(pathname) {
@@ -267,16 +280,24 @@ async function notifyPoliceIncidentStatus({ incidentId, requestId = null, status
     });
   }
 
-  for (const recipient of recipients) {
-    sendToUser(recipient.police_id, {
+  await Promise.all(recipients.map((recipient) => notificationService.createAndDispatchNotification({
+    userId: recipient.police_id,
+    type: notificationType,
+    title,
+    body: payloadBase.message,
+    incidentId,
+    data: { context: 'police_incident_update', role: 'law_enforcement', requestId: payloadBase.requestId || String(recipient.request_id) },
+    pushTitle: title,
+    pushBody: 'Open SheSafe for the latest assignment update.',
+    emit: () => sendToUser(recipient.police_id, {
       type: 'incident_status_updated',
       payload: {
         ...payloadBase,
         assignedPoliceId: String(recipient.police_id),
         requestId: payloadBase.requestId || String(recipient.request_id),
       },
-    });
-  }
+    }),
+  })));
 }
 
 async function notifyPoliceAssignment({ incidentId, requestId, message }) {
@@ -292,16 +313,24 @@ async function notifyPoliceAssignment({ incidentId, requestId, message }) {
     createdAt,
   };
 
-  for (const recipient of recipients) {
-    sendToUser(recipient.police_id, {
+  await Promise.all(recipients.map((recipient) => notificationService.createAndDispatchNotification({
+    userId: recipient.police_id,
+    type: 'POLICE_ASSIGNMENT',
+    title: payloadBase.title,
+    body: payloadBase.message,
+    incidentId,
+    data: { context: 'police_assignment', role: 'law_enforcement', requestId: payloadBase.requestId || String(recipient.request_id) },
+    pushTitle: payloadBase.title,
+    pushBody: 'Open SheSafe to view the assignment.',
+    emit: () => sendToUser(recipient.police_id, {
       type: 'law_enforcement.assigned',
       payload: {
         ...payloadBase,
         assignedPoliceId: String(recipient.police_id),
         requestId: payloadBase.requestId || String(recipient.request_id),
       },
-    });
-  }
+    }),
+  })));
 }
 
 function notifyLawEnforcementRequestCreated(request) {
@@ -371,6 +400,54 @@ function normalizeSocketRole(role) {
   return 'USER';
 }
 
+function notificationIdentity(user = {}) {
+  const username = String(user.username || '').trim().toLowerCase();
+  if (/^[a-z0-9_]{3,30}$/.test(username)) return `@${username}`;
+  const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+  if (fullName) return fullName;
+  const role = String(user.role_name || user.role || '').toLowerCase();
+  if (role === 'volunteer') return 'A responder';
+  if (role === 'law_enforcement') return 'An officer';
+  if (role === 'standard_user') return 'A SheSafe user';
+  return 'Someone';
+}
+
+async function getSocketUserIdentity(userId, tokenPayload = {}) {
+  try {
+    const rows = await query(
+      `SELECT u.id, u.first_name, u.last_name, u.username, u.photo_url, r.role_name
+       FROM users u
+       JOIN roles r ON r.id = u.role_id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    if (rows[0]) {
+      return {
+        id: String(rows[0].id),
+        name: [rows[0].first_name, rows[0].last_name].filter(Boolean).join(' ').trim() || notificationIdentity(rows[0]),
+        notificationName: notificationIdentity(rows[0]),
+        username: rows[0].username || null,
+        role: rows[0].role_name,
+        photoUrl: rows[0].photo_url || null,
+      };
+    }
+  } catch {
+    // Token fallback keeps old sessions usable if the identity lookup fails.
+  }
+  const fallback = {
+    id: String(userId),
+    username: tokenPayload.username || null,
+    role: tokenPayload.role,
+  };
+  return {
+    ...fallback,
+    name: notificationIdentity(fallback),
+    notificationName: notificationIdentity(fallback),
+    photoUrl: null,
+  };
+}
+
 // ── WebSocket Server ────────────────────────────────────────────────────────
 
 function attach(server) {
@@ -422,11 +499,7 @@ function attach(server) {
 
   wss.on('connection', async (ws, req, { incidentId, isDispatch, userPayload }) => {
     const userId = Number(userPayload.sub);
-    const userInfo = {
-      id: String(userId),
-      role: userPayload.role,
-      phoneNumber: userPayload.phoneNumber,
-    };
+    const userInfo = await getSocketUserIdentity(userId, userPayload);
 
     if (await isBlockedUser(userId)) {
       ws.close(1008, 'Account blocked');
@@ -476,7 +549,14 @@ function attach(server) {
     // Notify all others that this participant joined
     broadcast(incidentId, {
       type: 'incident.participant.joined',
-      payload: { id: String(userId), name: userPayload.phoneNumber, role: userPayload.role },
+      payload: {
+        id: String(userId),
+        name: userInfo.name,
+        notificationName: userInfo.notificationName,
+        username: userInfo.username || undefined,
+        role: userInfo.role || userPayload.role,
+        avatarUrl: userInfo.photoUrl || undefined,
+      },
     }, ws);
 
     // Send current participants to the newly connected client
@@ -499,6 +579,14 @@ function attach(server) {
       }
 
       if (data.type === 'incident.location.update') {
+        if (await isFinalIncident(incidentId)) {
+          ws.send(JSON.stringify({
+            type: 'incident.location.rejected',
+            payload: { incidentId: String(incidentId), reason: 'INCIDENT_FINAL' },
+          }));
+          return;
+        }
+
         const loc = data.payload || {};
         const latitude = Number(loc.latitude);
         const longitude = Number(loc.longitude);

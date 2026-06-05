@@ -1,14 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { T, Ty, R, S } from '../../../../src/constants/theme';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
 import api from '../../../../src/services/api';
+import { useAuth } from '../../../../src/context/AuthContext';
 
 export default function PolicePending() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { signOut } = useAuth();
   const [checking, setChecking] = useState(false);
+
+  const goToLogin = useCallback(async () => {
+    await signOut();
+    router.replace('/(auth)/login' as any);
+  }, [router, signOut]);
 
   const checkStatus = useCallback(async () => {
     setChecking(true);
@@ -28,14 +37,25 @@ export default function PolicePending() {
   }, [router]);
 
   useEffect(() => {
-    checkStatus();
+    const initialTimer = setTimeout(checkStatus, 0);
     const timer = setInterval(checkStatus, 5000);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(timer);
+    };
   }, [checkStatus]);
 
   return (
     <SafeAreaView style={st.root}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <TouchableOpacity
+        style={[st.backBtn, { top: insets.top + S.s3 }]}
+        onPress={goToLogin}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        activeOpacity={0.75}
+      >
+        <Feather name="chevron-left" size={22} color={T.ink} />
+      </TouchableOpacity>
       <View style={st.card}>
         <View style={st.logoWrap}>
           <SheSafeMark size={58} />
@@ -52,6 +72,7 @@ export default function PolicePending() {
 
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bg, justifyContent: 'center', padding: S.s5 },
+  backBtn: { position: 'absolute', left: S.s4, width: 36, height: 36, borderRadius: R.hBtn, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: T.lineMid, backgroundColor: T.surfaceCard, zIndex: 5 },
   card: { alignItems: 'center', padding: S.s6, borderRadius: R.lg, backgroundColor: T.surfaceBulkyGlass, borderWidth: 1, borderColor: T.lineMid },
   logoWrap: { width: 74, height: 74, borderRadius: R.lg, backgroundColor: T.violetDim, borderWidth: 1, borderColor: T.lineMid, alignItems: 'center', justifyContent: 'center' },
   title: { ...Ty.h2, color: T.ink, textAlign: 'center', marginTop: S.s4 },

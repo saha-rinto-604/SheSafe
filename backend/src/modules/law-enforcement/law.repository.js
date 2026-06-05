@@ -1,5 +1,7 @@
-const { query } = require('../../config/db');
+const { query, pool } = require('../../config/db');
 const { ensurePoliceProfilesSchema } = require('../users/user.repository');
+const { ensureVolunteerDispatchSchema } = require('../incidents/incident.repository');
+const { ensureChatSchema } = require('../chat/chat.repository');
 
 const ACTIVE_REQUEST_STATUSES = ['PENDING_ADMIN_REVIEW', 'ASSIGNED_TO_POLICE', 'ACCEPTED_BY_POLICE'];
 let schemaReadyPromise = null;
@@ -22,10 +24,24 @@ async function addColumnIfMissing(tableName, columnName, ddl) {
   }
 }
 
+async function hasIndex(tableName, indexName) {
+  const rows = await query(
+    `SELECT COUNT(*) AS count
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND INDEX_NAME = ?`,
+    [tableName, indexName]
+  );
+  return Number(rows[0]?.count || 0) > 0;
+}
+
 async function ensureLawSchema() {
   if (!schemaReadyPromise) {
     schemaReadyPromise = (async () => {
       await query(`INSERT IGNORE INTO roles (role_name) VALUES ('law_enforcement')`);
+      await ensureVolunteerDispatchSchema();
+      await ensureChatSchema();
       await ensurePoliceProfilesSchema();
 
       await addColumnIfMissing(
@@ -101,6 +117,36 @@ async function ensureLawSchema() {
       );
       await addColumnIfMissing(
         'law_enforcement_requests',
+        'incident_summary',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN incident_summary TEXT DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
+        'severity',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN severity VARCHAR(20) DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
+        'severity_reason',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN severity_reason TEXT DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
+        'summary_generated_at',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN summary_generated_at DATETIME DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
+        'reviewed_by_admin_id',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN reviewed_by_admin_id BIGINT UNSIGNED DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
+        'reviewed_at',
+        `ALTER TABLE law_enforcement_requests ADD COLUMN reviewed_at DATETIME DEFAULT NULL`
+      );
+      await addColumnIfMissing(
+        'law_enforcement_requests',
         'rejection_reason',
         `ALTER TABLE law_enforcement_requests ADD COLUMN rejection_reason TEXT DEFAULT NULL`
       );
@@ -135,6 +181,9 @@ async function ensureLawSchema() {
            'CANCELLED'
          ) NOT NULL DEFAULT 'PENDING_ADMIN_REVIEW'`
       );
+      if (!(await hasIndex('law_enforcement_requests', 'idx_law_requests_severity'))) {
+        await query(`ALTER TABLE law_enforcement_requests ADD KEY idx_law_requests_severity (severity)`);
+      }
 
       await query(
         `CREATE TABLE IF NOT EXISTS law_enforcement_request_candidates (
@@ -197,14 +246,168 @@ async function findActiveForIncident(incidentId) {
   return rows[0] || null;
 }
 
-async function createRequest({ incidentId, requestedByUserId, requestedByRole, requestNote }) {
-  const result = await query(
-    `INSERT INTO law_enforcement_requests
-       (incident_id, requested_by_user_id, requested_by_role, request_note, status)
-     VALUES (?, ?, ?, ?, 'PENDING_ADMIN_REVIEW')`,
-    [incidentId, requestedByUserId, requestedByRole, requestNote || null]
+async function getIncidentSummaryContext(incidentId, requesterId) {
+  const incidentRows = await query(
+    `SELECT
+       i.id,
+       i.user_id,
+       i.volunteer_id,
+       i.status,
+       i.latitude,
+       i.longitude,
+       i.address,
+       i.created_at,
+       i.updated_at,
+       i.accepted_at,
+       i.user_case_details,
+       i.volunteer_case_details,
+       i.final_location_snapshot,
+       victim.first_name AS victim_first_name,
+       victim.last_name AS victim_last_name,
+       victim.phone_number AS victim_phone,
+       victim.latest_latitude AS victim_latest_latitude,
+       victim.latest_longitude AS victim_latest_longitude,
+       requester.first_name AS requester_first_name,
+       requester.last_name AS requester_last_name,
+       requester.phone_number AS requester_phone,
+       requester_role.role_name AS requester_role_name,
+       requester.latest_latitude AS requester_latest_latitude,
+       requester.latest_longitude AS requester_latest_longitude
+     FROM incidents i
+     JOIN users victim ON victim.id = i.user_id
+     JOIN users requester ON requester.id = ?
+     JOIN roles requester_role ON requester_role.id = requester.role_id
+     WHERE i.id = ?
+     LIMIT 1`,
+    [requesterId, incidentId]
   );
-  return findById(result.insertId);
+  const incident = incidentRows[0] || null;
+  if (!incident) return null;
+
+  const volunteers = await query(
+    `SELECT
+       iv.volunteer_id AS id,
+       iv.status,
+       iv.accepted_at,
+       ${fullName('u')} AS name,
+       u.phone_number AS phone_number,
+       u.latest_latitude,
+       u.latest_longitude
+     FROM incident_volunteers iv
+     JOIN users u ON u.id = iv.volunteer_id
+     WHERE iv.incident_id = ?
+       AND iv.status IN ('ACCEPTED', 'LEFT', 'REMOVED')
+     ORDER BY iv.accepted_at ASC, iv.id ASC`,
+    [incidentId]
+  );
+
+  const chatMessages = await query(
+    `SELECT
+       m.id,
+       m.content,
+       m.message_type,
+       m.created_at,
+       u.id AS sender_id,
+       ${fullName('u')} AS sender_name,
+       r.role_name AS sender_role
+     FROM chat_messages m
+     JOIN users u ON u.id = m.sender_id
+     JOIN roles r ON r.id = u.role_id
+     WHERE m.incident_id = ?
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT 30`,
+    [incidentId]
+  ).catch(() => []);
+
+  const participantRows = await query(
+    `SELECT COUNT(*) AS count
+     FROM incident_participants
+     WHERE incident_id = ?
+       AND left_at IS NULL`,
+    [incidentId]
+  ).catch(() => [{ count: 0 }]);
+
+  return {
+    incident,
+    volunteers,
+    chatMessages: chatMessages.reverse(),
+    responderCount: volunteers.filter((item) => item.status === 'ACCEPTED').length,
+    participantCount: Number(participantRows[0]?.count || 0),
+  };
+}
+
+async function createRequest({ incidentId, requestedByUserId, requestedByRole, requestNote, incidentSummary, severity, severityReason }) {
+  const conn = await pool.getConnection();
+  const lockName = `law_request_incident_${incidentId}`;
+  try {
+    const [lockRows] = await conn.query(`SELECT GET_LOCK(?, 5) AS got_lock`, [lockName]);
+    if (Number(lockRows?.[0]?.got_lock || 0) !== 1) {
+      throw new Error('Could not lock incident police request.');
+    }
+
+    const [duplicateRows] = await conn.query(
+      `SELECT *
+       FROM law_enforcement_requests
+       WHERE incident_id = ?
+         AND status IN (?, ?, ?)
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [incidentId, ...ACTIVE_REQUEST_STATUSES]
+    );
+    if (duplicateRows.length) {
+      const duplicate = duplicateRows[0];
+      if (!duplicate.incident_summary) {
+        await conn.query(
+          `UPDATE law_enforcement_requests
+           SET incident_summary = ?,
+               severity = ?,
+               severity_reason = ?,
+               summary_generated_at = COALESCE(summary_generated_at, NOW())
+           WHERE id = ?`,
+          [incidentSummary || null, severity || null, severityReason || null, duplicate.id]
+        );
+        const [updatedRows] = await conn.query(
+          `SELECT *
+           FROM law_enforcement_requests
+           WHERE id = ?
+           LIMIT 1`,
+          [duplicate.id]
+        );
+        return { row: updatedRows[0], duplicate: true };
+      }
+      return { row: duplicate, duplicate: true };
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO law_enforcement_requests
+         (incident_id, requested_by_user_id, requested_by_role, request_note, incident_summary,
+          severity, severity_reason, summary_generated_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 'PENDING_ADMIN_REVIEW')`,
+      [
+        incidentId,
+        requestedByUserId,
+        requestedByRole,
+        requestNote || null,
+        incidentSummary || null,
+        severity || null,
+        severityReason || null,
+      ]
+    );
+    const [createdRows] = await conn.query(
+      `SELECT *
+       FROM law_enforcement_requests
+       WHERE id = ?
+       LIMIT 1`,
+      [result.insertId]
+    );
+    return { row: createdRows[0], duplicate: false };
+  } finally {
+    try {
+      await conn.query(`SELECT RELEASE_LOCK(?)`, [lockName]);
+    } finally {
+      conn.release();
+    }
+  }
 }
 
 async function addSystemMessage(incidentId, senderId, content) {
@@ -255,6 +458,12 @@ async function listAdminRequests() {
        ler.status,
        ler.requested_by_role,
        ler.request_note,
+       ler.incident_summary,
+       ler.severity,
+       ler.severity_reason,
+       ler.summary_generated_at,
+       ler.reviewed_by_admin_id,
+       ler.reviewed_at,
        ler.rejection_reason,
        ler.cancel_reason,
        ler.created_at,
@@ -302,6 +511,12 @@ async function getAdminRequestById(requestId) {
        ler.status,
        ler.requested_by_role,
        ler.request_note,
+       ler.incident_summary,
+       ler.severity,
+       ler.severity_reason,
+       ler.summary_generated_at,
+       ler.reviewed_by_admin_id,
+       ler.reviewed_at,
        ler.rejection_reason,
        ler.cancel_reason,
        ler.created_at,
@@ -334,6 +549,16 @@ async function getAdminRequestById(requestId) {
     [requestId]
   );
   return rows[0] || null;
+}
+
+async function markAdminReviewed({ requestId, adminId }) {
+  await query(
+    `UPDATE law_enforcement_requests
+     SET reviewed_by_admin_id = ?,
+         reviewed_at = COALESCE(reviewed_at, NOW())
+     WHERE id = ?`,
+    [adminId, requestId]
+  );
 }
 
 async function listApprovedPolice() {
@@ -583,12 +808,14 @@ module.exports = {
   findIncidentForRequest,
   isAcceptedVolunteer,
   findActiveForIncident,
+  getIncidentSummaryContext,
   createRequest,
   addSystemMessage,
   findById,
   getIncidentStatus,
   listAdminRequests,
   getAdminRequestById,
+  markAdminReviewed,
   listApprovedPolice,
   findApprovedPolice,
   assignRequest,

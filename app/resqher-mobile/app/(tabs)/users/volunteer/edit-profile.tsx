@@ -15,21 +15,21 @@ import {
     Alert,
     ScrollView,
     StatusBar,
-    Image,
     TextInput,
     Platform,
     Modal,
     ActivityIndicator,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
-import { T, R, S } from '../../../../src/constants/theme';
+import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import { getUserProfile, saveUserProfile } from '../../../../src/services/profile';
+import { getUserProfile, saveUserProfile, uploadProfilePhoto } from '../../../../src/services/profile';
+import { useAuth } from '../../../../src/context/AuthContext';
 
 // ─── Blood group & gender options ────────────────────────────────────────────
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -158,10 +158,12 @@ function Divider() {
 export default function EditProfileScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { refreshIdentity } = useAuth();
 
     // ── Form state — loaded from local profile service on mount ────────────────
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
+    const [username, setUsername] = useState('');
     const [phone, setPhone] = useState('+880 1XXX-XXXXXX');
     /** ISO date string, e.g. "1995-06-15" */
     const [dobISO, setDobISO] = useState('');
@@ -185,6 +187,7 @@ export default function EditProfileScreen() {
         getUserProfile().then(p => {
             setFirstName(p.firstName);
             setLastName(p.lastName);
+            setUsername(p.username);
             setPhone(p.phone);
             setDobISO(p.dobISO);
             setGender(p.gender);
@@ -198,14 +201,14 @@ export default function EditProfileScreen() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            // TODO: also call PATCH /api/v1/users/me/ when backend is ready
             await saveUserProfile({
-                firstName, lastName, phone, dobISO, gender, bloodGroup, medicalInfo, homeAddress, photoUri,
+                firstName, lastName, username, phone, dobISO, gender, bloodGroup, medicalInfo, homeAddress, photoUri,
             });
+            await refreshIdentity();
             Alert.alert('Saved', 'Your profile has been updated.');
             router.back();
-        } catch {
-            Alert.alert('Error', 'Could not save your profile. Please try again.');
+        } catch (error: any) {
+            Alert.alert('Error', error?.message || 'Could not save your profile. Please try again.');
         } finally {
             setSaving(false);
         }
@@ -227,7 +230,15 @@ export default function EditProfileScreen() {
             quality: 0.85,
         });
         if (!result.canceled && result.assets?.[0]?.uri) {
-            setPhotoUri(result.assets[0].uri);
+            const localUri = result.assets[0].uri;
+            setPhotoUri(localUri);
+            try {
+                const updated = await uploadProfilePhoto(localUri);
+                if (updated.photoUri) setPhotoUri(updated.photoUri);
+                await refreshIdentity();
+            } catch {
+                console.log('[VOLUNTEER_EDIT_PROFILE] Photo upload failed, keeping local URI');
+            }
         }
     };
 
@@ -338,7 +349,25 @@ export default function EditProfileScreen() {
 
                         <Divider />
 
-                        {/* Phone number — directly editable; OTP verification coming later */}
+                        <View style={s.fieldWrap}>
+                            <Text style={s.fieldLabel}>Username</Text>
+                            <View style={s.inputRow}>
+                                <TextInput
+                                    style={[s.input, s.inputFlex]}
+                                    value={username}
+                                    onChangeText={(value) => setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 30))}
+                                    placeholder="username"
+                                    placeholderTextColor={T.ink4}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    selectionColor={T.violet}
+                                />
+                            </View>
+                        </View>
+
+                        <Divider />
+
+                        {/* Phone number — directly editable */}
                         <View style={s.fieldWrap}>
                             <Text style={s.fieldLabel}>Phone Number</Text>
                             <View style={s.inputRow}>
@@ -352,7 +381,6 @@ export default function EditProfileScreen() {
                                     selectionColor={T.violet}
                                 />
                             </View>
-                            <Text style={s.fieldHint}>OTP verification will be added in a future update</Text>
                         </View>
                     </Section>
 

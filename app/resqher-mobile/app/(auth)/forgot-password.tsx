@@ -80,17 +80,8 @@ export default function ForgotPassword() {
     }
     setLoading(true);
     try {
-      const res = await authService.forgotPassword(trimmed);
-      if (res?.otpCode) {
-        showToast({
-          type: 'info',
-          title: 'OTP Generated',
-          message: `Your verification code is: ${res.otpCode}`,
-          duration: 8000,
-        });
-      } else {
-        showToast({ type: 'success', title: 'OTP Sent', message: 'Check your registered phone for the verification code.' });
-      }
+      await authService.forgotPassword(trimmed);
+      showToast({ type: 'success', title: 'OTP Sent', message: 'Check your phone for the verification code.' });
       setStep(2);
     } catch (e: any) {
       showToast({ type: 'error', title: 'Request Failed', message: e?.message ?? 'Unable to send OTP. Please verify your phone number.' });
@@ -244,7 +235,7 @@ export default function ForgotPassword() {
                 onPress={handleRequestOtp}
                 activeOpacity={0.7}
               >
-                <Text style={st.resendTxt}>Didn't receive OTP? Resend</Text>
+                <Text style={st.resendTxt}>Didn&apos;t receive OTP? Resend</Text>
               </TouchableOpacity>
             </>
           )}

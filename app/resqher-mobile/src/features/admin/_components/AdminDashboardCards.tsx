@@ -2,14 +2,14 @@
  * AdminDashboardCards — All card components for the Admin Dashboard.
  * Hero card, stat cards, incident cards, escalation cards, verification cards, report cards.
  */
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   Animated, Easing,
 } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { T, S, R } from '../../../constants/theme';
+import { T } from '../../../constants/theme';
 import { G } from '../../../constants/gradients';
 import {
   type MockIncident, type MockEscalation,
@@ -38,7 +38,7 @@ type HeroOverview = {
 };
 
 export function HeroCard({ onOpenIncidentCenter, overview }: { onOpenIncidentCenter?: () => void; overview?: HeroOverview | null }) {
-  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const [pulseAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     Animated.loop(
@@ -47,7 +47,7 @@ export function HeroCard({ onOpenIncidentCenter, overview }: { onOpenIncidentCen
         Animated.timing(pulseAnim, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
       ])
     ).start();
-  }, []);
+  }, [pulseAnim]);
 
   const glowOpacity = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.35] });
 

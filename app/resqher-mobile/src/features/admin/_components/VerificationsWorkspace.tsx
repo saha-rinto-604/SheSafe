@@ -50,7 +50,10 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
   }, []);
 
   useEffect(() => {
-    loadVerifications();
+    const timer = setTimeout(() => {
+      loadVerifications();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadVerifications]);
 
   const removeVerification = (id: string) => {
@@ -265,7 +268,7 @@ export function VerificationsWorkspace({ insetsBottom = 0 }: Props) {
           <View style={st.rejectModalContent}>
             <Text style={st.rejectTitle}>Reject Verification</Text>
             <Text style={st.rejectSub}>
-              Are you sure you want to reject {rejectingVerification?.name}'s application?
+              Are you sure you want to reject {rejectingVerification?.name}{'\''}s application?
             </Text>
 
             <TextInput

@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, useWindowDimensions , Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T } from '../../../constants/theme';
 import UserAvatar from '../../../components/shared/UserAvatar';
 import { type MockReport } from '../_data/adminMockData';
 import { AnimatedListItem } from './AnimatedListItem';
 import { useToast } from '../../../components/Toast';
-import { Animated } from 'react-native';
 import adminService from '../../../services/adminService';
 
 type TabType = 'Recent Reports' | 'All Reports';
@@ -35,7 +34,7 @@ export function ReportsWorkspace({
   const setActioned = setGlobalActionedReports || setLocalActionedReports;
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
-  const fadeAnim = React.useRef(new Animated.Value(1)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(1));
   const { showToast } = useToast();
 
   const { width } = useWindowDimensions();
@@ -60,7 +59,10 @@ export function ReportsWorkspace({
   }, []);
 
   useEffect(() => {
-    loadReports();
+    const timer = setTimeout(() => {
+      loadReports();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadReports]);
 
   const handleAction = async (action: ActionType) => {

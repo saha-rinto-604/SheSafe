@@ -10,6 +10,8 @@ function toMessage(raw: any): Message {
       sender: {
         id: String(raw.senderId ?? raw.sender_id),
         name: isSystem ? '' : raw.senderName ?? raw.name ?? '',
+        username: raw.senderUsername ?? raw.username,
+        notificationName: raw.senderNotificationName ?? raw.notificationName,
         role: raw.senderRole === 'volunteer' ? 'VOLUNTEER' : raw.senderRole === 'law_enforcement' ? 'POLICE' : 'USER',
         avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
       },
@@ -27,11 +29,15 @@ function toMessage(raw: any): Message {
       ? {
           ...raw.sender,
           name: isSystem ? '' : raw.sender.name,
+          username: raw.sender.username,
+          notificationName: raw.sender.notificationName,
           avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
         }
       : {
           id: String(raw.sender_id),
           name: isSystem ? '' : raw.name ?? '',
+          username: raw.username,
+          notificationName: raw.notificationName,
           role: raw.role ?? 'USER',
           avatarUrl: raw.senderPhotoUri ?? raw.senderPhotoUrl ?? raw.photoUrl ?? raw.photo_url,
         },

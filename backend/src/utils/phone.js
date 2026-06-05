@@ -1,15 +1,19 @@
 function normalizePhoneNumber(value) {
   let phone = String(value || '').trim().replace(/[\s-]+/g, '');
-  if (phone.startsWith('+880')) {
-    phone = `0${phone.slice(4)}`;
-  } else if (phone.startsWith('880')) {
-    phone = `0${phone.slice(3)}`;
+  if (phone.startsWith('00')) {
+    phone = `+${phone.slice(2)}`;
+  }
+  if (/^01[3-9]\d{8}$/.test(phone)) {
+    return `+880${phone.slice(1)}`;
+  }
+  if (/^8801[3-9]\d{8}$/.test(phone)) {
+    return `+${phone}`;
   }
   return phone;
 }
 
 function isValidBdPhone(value) {
-  return /^01[3-9]\d{8}$/.test(normalizePhoneNumber(value));
+  return /^\+8801[3-9]\d{8}$/.test(normalizePhoneNumber(value));
 }
 
 function phoneSearchVariants(value) {
@@ -20,9 +24,9 @@ function phoneSearchVariants(value) {
     raw,
   ];
 
-  if (/^01[3-9]\d{8}$/.test(normalized)) {
-    variants.push(`+880${normalized.slice(1)}`);
-    variants.push(`880${normalized.slice(1)}`);
+  if (/^\+8801[3-9]\d{8}$/.test(normalized)) {
+    variants.push(`0${normalized.slice(4)}`);
+    variants.push(normalized.slice(1));
   }
 
   return [...new Set(variants.filter(Boolean))];

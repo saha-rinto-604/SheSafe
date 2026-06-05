@@ -15,7 +15,7 @@ import {
     TouchableOpacity,
     StatusBar,
 } from 'react-native';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import api from '../../../../src/services/api';
@@ -143,7 +143,7 @@ export default function IncidentHistoryScreen() {
     const router = useRouter();
 
     const [incidents, setIncidents] = useState<Incident[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [, setLoading] = useState(true);
 
     // ── Fetch incident history from API on mount ────────────────────────
     useEffect(() => {

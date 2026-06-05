@@ -1,4 +1,8 @@
 const chatService = require('./chat.service');
+const chatWsServer = require('../../websocket/chatWsServer');
+const incidentService = require('../incidents/incident.service');
+const notificationService = require('../notifications/notification.service');
+const userService = require('../users/user.service');
 
 async function getMessages(req, res, next) {
   try {
@@ -12,6 +16,26 @@ async function getMessages(req, res, next) {
 async function sendMessage(req, res, next) {
   try {
     const message = await chatService.sendMessage(req.user.id, req.params.incidentId, req.body, req.user.role);
+    const recipients = await incidentService.getNotificationRecipients(req.params.incidentId, { excludeUserId: req.user.id });
+    const messageType = String(message?.type || req.body?.type || 'TEXT').toUpperCase();
+    const notBlockedRecipients = messageType === 'SYSTEM'
+      ? recipients
+      : (await Promise.all(recipients.map(async (recipient) => {
+          const blocked = await userService.isUserBlockedBy(recipient.userId, req.user.id);
+          return blocked ? null : recipient;
+        }))).filter(Boolean);
+    await Promise.all(notBlockedRecipients.map((recipient) => notificationService.createAndDispatchNotification({
+      userId: recipient.userId,
+      type: 'CHAT_MESSAGE',
+      title: 'New chat message',
+      body: 'You have a new incident chat message.',
+      incidentId: req.params.incidentId,
+      data: { context: 'incident_chat', role: recipient.role || '' },
+      pushTitle: 'New chat message',
+      pushBody: 'Open SheSafe to view the incident chat.',
+      emit: (event) => chatWsServer.sendToUser(recipient.userId, event),
+    })));
+    chatWsServer.notifyMessageNew?.(req.params.incidentId, message);
     res.status(201).json({ message });
   } catch (error) {
     next(error);

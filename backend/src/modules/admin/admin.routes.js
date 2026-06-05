@@ -30,6 +30,7 @@ router.patch('/police/verifications/:userId/reject', adminWriteLimiter, controll
 router.get('/police/approved', adminReadLimiter, controller.approvedPolice);
 
 router.get('/law-enforcement/requests', adminReadLimiter, controller.lawEnforcementRequests);
+router.get('/law-enforcement/requests/:requestId', adminReadLimiter, controller.lawEnforcementRequest);
 router.post('/law-enforcement/requests/:requestId/assign', adminWriteLimiter, controller.assignLawEnforcementRequest);
 router.post('/law-enforcement/requests/:requestId/cancel', adminWriteLimiter, controller.cancelLawEnforcementRequest);
 

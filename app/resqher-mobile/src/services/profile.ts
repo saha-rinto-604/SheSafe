@@ -19,6 +19,7 @@ export const PROFILE_KEY = 'resqher_user_profile_v1';
 export type UserProfile = {
     firstName: string;
     lastName: string;
+    username: string;
     phone: string;
     /** ISO date string, e.g. "1995-06-15" */
     dobISO: string;
@@ -29,6 +30,7 @@ export type UserProfile = {
     /** Cloudinary URL from backend, or local URI from image picker */
     photoUri: string | null;
     verificationStatus?: 'PENDING' | 'APPROVED' | 'REJECTED' | string | null;
+    acceptSosRequests: boolean;
     policeProfile?: {
         policeStationOrUnit?: string;
         badgeNumber?: string;
@@ -42,6 +44,7 @@ export type UserProfile = {
 const DEFAULT_PROFILE: UserProfile = {
     firstName: '',
     lastName: '',
+    username: '',
     phone: '+880 1XXX-XXXXXX',
     dobISO: '',
     gender: '',
@@ -50,6 +53,7 @@ const DEFAULT_PROFILE: UserProfile = {
     homeAddress: '',
     photoUri: null,
     verificationStatus: null,
+    acceptSosRequests: true,
     policeProfile: null,
 };
 
@@ -60,6 +64,7 @@ function apiToProfile(apiUser: any): UserProfile {
     return {
         firstName: apiUser.firstName || '',
         lastName: apiUser.lastName || '',
+        username: apiUser.username || '',
         phone: apiUser.phoneNumber || '+880 1XXX-XXXXXX',
         dobISO: apiUser.dobISO || '',
         gender: apiUser.gender || '',
@@ -68,8 +73,19 @@ function apiToProfile(apiUser: any): UserProfile {
         homeAddress: apiUser.homeAddress || '',
         photoUri: apiUser.photoUrl || null,
         verificationStatus: apiUser.verificationStatus || null,
+        acceptSosRequests: apiUser.acceptSosRequests !== false,
         policeProfile: apiUser.policeProfile || null,
     };
+}
+
+export async function updateAcceptSosRequests(acceptSosRequests: boolean): Promise<UserProfile> {
+    const { data } = await api.patch('/api/users/me', { acceptSosRequests });
+    if (data?.user) {
+        const profile = apiToProfile(data.user);
+        await cacheLocally(profile);
+        return profile;
+    }
+    throw new Error('Unexpected response from server.');
 }
 
 /** Cache profile locally for offline access. */
@@ -117,6 +133,7 @@ export async function saveUserProfile(patch: Partial<UserProfile>): Promise<User
     const { data } = await api.patch('/api/users/me', {
         firstName: patch.firstName,
         lastName: patch.lastName,
+        username: patch.username,
         phoneNumber: patch.phone,
         dobISO: patch.dobISO,
         gender: patch.gender,

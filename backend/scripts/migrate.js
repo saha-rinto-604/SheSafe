@@ -18,12 +18,18 @@ const MIGRATIONS = [
   'migration_add_locations.sql',
   'migration_add_chat.sql',
   'migration_add_otp.sql',
+  'migration_add_pending_signups.sql',
   'migration_add_safe_places.sql',
   'migration_add_profile_and_modules.sql',
   '003_multi_volunteer_incidents.sql',
   '004_user_case_details.sql',
   '006_admin_module.sql',
   '007_law_enforcement_requests.sql',
+  '008_incident_final_location_snapshot.sql',
+  '009_notifications_system.sql',
+  '010_law_request_incident_summary.sql',
+  '011_user_blocks.sql',
+  '012_usernames.sql',
   'seed_medical.sql',        // idempotent — INSERT IGNORE
   'seed_incidents_demo.sql', // idempotent — WHERE NOT EXISTS
 ]; // add new migration files here in order

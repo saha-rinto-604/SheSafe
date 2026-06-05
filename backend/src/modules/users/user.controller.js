@@ -82,9 +82,57 @@ async function removePhoto(req, res) {
   }
 }
 
+async function getConnectedUsers(req, res) {
+  try {
+    const data = await userService.getConnectedUsers(req.user.id);
+    res.json({ success: true, data });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+async function getBlockedUsers(req, res) {
+  try {
+    const data = await userService.getBlockedUsers(req.user.id);
+    res.json({ success: true, data });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+async function blockUser(req, res) {
+  try {
+    const data = await userService.blockConnectedUser(
+      req.user.id,
+      req.body?.blockedUserId,
+      req.body?.reason
+    );
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, message: err.message });
+  }
+}
+
+async function unblockUser(req, res) {
+  try {
+    const data = await userService.unblockConnectedUser(req.user.id, req.params.blockedUserId);
+    res.status(200).json({ success: true, data });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ success: false, message: err.message });
+  }
+}
+
 module.exports = {
   getProfile,
   updateProfile,
   uploadPhoto,
   removePhoto,
+  getConnectedUsers,
+  getBlockedUsers,
+  blockUser,
+  unblockUser,
 };

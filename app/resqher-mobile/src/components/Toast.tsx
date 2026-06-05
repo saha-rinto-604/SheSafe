@@ -13,11 +13,11 @@ import React, {
   createContext, useContext, useState, useCallback, useRef, useEffect,
 } from 'react';
 import {
-  View, Text, StyleSheet, Animated, TouchableOpacity, Platform, Dimensions,
+  View, Text, StyleSheet, Animated, TouchableOpacity, Platform,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { T, R, S } from '../../src/constants/theme';
+import { R, S } from '../../src/constants/theme';
 
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
@@ -117,9 +117,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 // ── Banner Component ───────────────────────────────────────────────────────────
 function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: () => void }) {
   const insets = useSafeAreaInsets();
-  const translateY = useRef(new Animated.Value(-120)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-  const progress = useRef(new Animated.Value(1)).current;
+  const [translateY] = useState(() => new Animated.Value(-120));
+  const [opacity] = useState(() => new Animated.Value(0));
+  const [progress] = useState(() => new Animated.Value(1));
   const theme = TOAST_THEMES[config.type];
   const duration = config.duration ?? 4000;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -138,7 +138,7 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start(() => onDismiss());
-  }, []);
+  }, [onDismiss, opacity, translateY]);
 
   useEffect(() => {
     // Entrance
@@ -168,9 +168,7 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, []);
-
-  const screenW = Dimensions.get('window').width;
+  }, [dismiss, duration, opacity, progress, translateY]);
 
   return (
     <Animated.View

@@ -1,92 +1,66 @@
 /**
- * privacySecurity.ts — Privacy & Security service layer
- * ─────────────────────────────────────────────────────
- * All functions expose stable signatures that mirror expected REST endpoints.
- * Currently backed by local SecureStore stubs — replace the TODO blocks with
- * real api.post / api.get / api.delete calls when the backend is ready.
+ * Privacy & Security service layer.
  */
 
 import * as SecureStore from 'expo-secure-store';
-// import api from './api'; // uncomment and use in TODO blocks when backend is ready
+import api from './api';
 
-// ── Storage keys ──────────────────────────────────────────────────────────────
 const TWO_FACTOR_KEY = 'resqher_2fa_enabled_v1';
-const BLOCKED_USERS_KEY = 'resqher_blocked_users_v1';
 
-// ── Types (export so screens can import them) ─────────────────────────────────
-export type BlockedUser = {
-    id: string;
-    name: string;
+export type ConnectedUser = {
+    userId: number;
+    displayName: string;
+    role: 'standard_user' | 'volunteer' | string;
+    avatarUrl: string | null;
+    lastIncidentId: number | null;
+    lastIncidentCode: string | null;
+    lastConnectedAt: string | null;
+    connectionLabel: string;
+    isBlocked: boolean;
 };
 
-// ── Seed data ─────────────────────────────────────────────────────────────────
-const DUMMY_BLOCKED: BlockedUser[] = [
-    { id: 'user-0001', name: 'John Doe' },
-];
+export type BlockedUser = {
+    userId: number;
+    displayName: string;
+    role: 'standard_user' | 'volunteer' | string;
+    avatarUrl: string | null;
+    blockedAt: string | null;
+    reason?: string | null;
+};
 
-// ── Account Security ──────────────────────────────────────────────────────────
-
-/**
- * Change the authenticated user's password.
- * TODO: replace stub with:
- *   await api.post('/api/v1/auth/change-password/', { current_password: currentPassword, new_password: newPassword });
- */
 export async function changePassword(
     _currentPassword: string,
     _newPassword: string,
 ): Promise<void> {
-    // Simulate network delay
     await new Promise<void>(resolve => setTimeout(resolve, 700));
-    // No local persistence — passwords must never be stored client-side.
 }
 
-// ── Two-Factor Authentication ─────────────────────────────────────────────────
-
-/**
- * Get current 2FA enabled state.
- * TODO: replace stub with:
- *   const res = await api.get('/api/v1/auth/2fa/');
- *   return res.data.enabled as boolean;
- */
 export async function getTwoFactorState(): Promise<boolean> {
     const val = await SecureStore.getItemAsync(TWO_FACTOR_KEY);
     return val === 'true';
 }
 
-/**
- * Enable or disable 2FA.
- * TODO: replace stub with:
- *   await api.post('/api/v1/auth/2fa/', { enabled });
- */
 export async function setTwoFactorEnabled(enabled: boolean): Promise<void> {
     await SecureStore.setItemAsync(TWO_FACTOR_KEY, enabled ? 'true' : 'false');
 }
 
-// ── Blocked Users ─────────────────────────────────────────────────────────────
-
-/**
- * List all blocked users.
- * TODO: replace stub with:
- *   const res = await api.get('/api/v1/users/blocked/');
- *   return res.data as BlockedUser[];
- */
-export async function listBlockedUsers(): Promise<BlockedUser[]> {
-    const raw = await SecureStore.getItemAsync(BLOCKED_USERS_KEY);
-    if (raw !== null) {
-        try { return JSON.parse(raw) as BlockedUser[]; } catch { /* fall through to seed */ }
-    }
-    // First-run: seed with dummy data
-    await SecureStore.setItemAsync(BLOCKED_USERS_KEY, JSON.stringify(DUMMY_BLOCKED));
-    return [...DUMMY_BLOCKED];
+export async function listConnectedUsers(): Promise<ConnectedUser[]> {
+    const res = await api.get<{ success: boolean; data: ConnectedUser[] }>('/api/users/connected-users');
+    return Array.isArray(res.data?.data) ? res.data.data : [];
 }
 
-/**
- * Unblock a user by id.
- * TODO: replace stub with:
- *   await api.delete(`/api/v1/users/blocked/${userId}/`);
- */
-export async function unblockUser(userId: string): Promise<void> {
-    const current = await listBlockedUsers();
-    const updated = current.filter(u => u.id !== userId);
-    await SecureStore.setItemAsync(BLOCKED_USERS_KEY, JSON.stringify(updated));
+export async function listBlockedUsers(): Promise<BlockedUser[]> {
+    const res = await api.get<{ success: boolean; data: BlockedUser[] }>('/api/users/blocked-users');
+    return Array.isArray(res.data?.data) ? res.data.data : [];
+}
+
+export async function blockUser(blockedUserId: number | string, reason?: string): Promise<void> {
+    await api.post('/api/users/block', {
+        blockedUserId: Number(blockedUserId),
+        reason,
+    });
+}
+
+export async function unblockUser(userId: number | string): Promise<void> {
+    await api.delete(`/api/users/block/${userId}`);
 }

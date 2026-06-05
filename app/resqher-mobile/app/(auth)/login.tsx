@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, ScrollView,
@@ -14,41 +14,34 @@ import { useAuth } from '../../src/context/AuthContext';
 import { ROLE_DEFAULT_ROUTE, routeForPoliceStatus } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
+import SecureTextField from '../../components/auth/SecureTextField';
+import { getApiBaseUrlError } from '../../src/services/api';
 
 type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { signIn, isLoading: authLoading } = useAuth();
   const { showToast } = useToast();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState<'phone' | 'password' | null>(null);
+  const submittingRef = useRef(false);
 
   const onSubmit = async (data: FormData) => {
+    if (submittingRef.current || submitting || authLoading) return;
+    const apiError = getApiBaseUrlError();
+    if (apiError) {
+      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      return;
+    }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const phone = data.phone.trim();
       const password = data.password;
-
-      // Mock Login bypass
-      if (phone === '1234' && password === '1234') {
-        setTimeout(() => {
-          setSubmitting(false);
-          router.replace('/(tabs)/users/standard-user/sos_screen' as any);
-        }, 600);
-        return;
-      }
-      
-      if (['5', '6', '7', '8', '5678'].includes(phone) && ['5', '6', '7', '8', '5678'].includes(password)) {
-        setTimeout(() => {
-          setSubmitting(false);
-          router.replace('/(tabs)/users/volunteer/volunteer-verification' as any);
-        }, 600);
-        return;
-      }
 
       const { role, verificationStatus, user } = await signIn(phone, password);
       let route = role === 'POLICE'
@@ -57,6 +50,7 @@ export default function Login() {
       router.replace(route as any);
     } catch (e: any) {
       const msg = e?.message ?? '';
+      const code = e?.code;
       if (msg.toLowerCase().includes('sign up')) {
         showToast({
           type: 'warning',
@@ -65,16 +59,20 @@ export default function Login() {
           action: { label: 'Sign Up', onPress: () => router.push('/(auth)/signup') },
         });
       } else {
+        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
         showToast({
           type: 'error',
-          title: 'Authentication Failed',
+          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Authentication Failed',
           message: msg || 'Please check your phone number and password, then try again.',
         });
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
+
+  const busy = submitting || authLoading;
 
   return (
     <AuthShell>
@@ -137,29 +135,21 @@ export default function Login() {
               rules={{ required: 'Password is required' }}
               render={({ field: { onChange, value } }) => (
                 <>
-                  <View style={[
-                    st.inputWrap,
-                    focused === 'password' && st.inputFocused,
-                    errors.password && st.inputError,
-                  ]}>
-                    <Feather
-                      name="lock"
-                      size={18}
-                      color={focused === 'password' ? T.violet : T.inputIconDefault}
-                      style={st.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="Password"
-                      placeholderTextColor={T.ink5}
-                      value={value}
-                      onChangeText={onChange}
-                      secureTextEntry
-                      style={st.input}
-                      onFocus={() => setFocused('password')}
-                      onBlur={() => setFocused(null)}
-                      accessibilityLabel="Password"
-                    />
-                  </View>
+                  <SecureTextField
+                    placeholder="Password"
+                    value={value}
+                    onChangeText={onChange}
+                    focused={focused === 'password'}
+                    hasError={!!errors.password}
+                    containerStyle={st.inputWrap}
+                    focusedStyle={st.inputFocused}
+                    errorStyle={st.inputError}
+                    inputStyle={st.input}
+                    iconStyle={st.inputIcon}
+                    onFocus={() => setFocused('password')}
+                    onBlur={() => setFocused(null)}
+                    accessibilityLabel="Password"
+                  />
                   {!!errors.password && <Text style={st.errTxt}>{errors.password.message}</Text>}
                 </>
               )}
@@ -167,6 +157,7 @@ export default function Login() {
 
             {/* Forgot password */}
             <TouchableOpacity
+              disabled={busy}
               onPress={() => router.push('/(auth)/forgot-password' as any)}
               style={st.forgotRow}
               activeOpacity={0.7}
@@ -177,9 +168,9 @@ export default function Login() {
 
           {/* ── Login button ── */}
           <TouchableOpacity
-            disabled={submitting}
+            disabled={busy}
             style={st.primaryBtn}
-            onPress={handleSubmit(onSubmit)}
+            onPress={() => handleSubmit(onSubmit)()}
             activeOpacity={0.82}
             accessibilityRole="button"
             accessibilityLabel="Login"
@@ -190,7 +181,7 @@ export default function Login() {
               end={G.navActive.end}
               style={st.gradientBtn}
             >
-              {submitting
+              {busy
                 ? <ActivityIndicator color={T.onPrimary} />
                 : <Text style={st.btnTxt}>Login</Text>
               }
@@ -199,6 +190,7 @@ export default function Login() {
 
           {/* ── Sign up link ── */}
           <TouchableOpacity
+            disabled={busy}
             onPress={() => router.push('/(auth)/signup')}
             style={st.linkRow}
             activeOpacity={0.7}

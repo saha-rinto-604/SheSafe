@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { T, Ty, R, S } from '../../../../src/constants/theme';
 import { useRouter } from 'expo-router';
+import AICopilotFloatingButton from '../../../../components/AICopilotFloatingButton';
 
 export default function VolunteerDashboard() {
     const router = useRouter();
@@ -32,6 +33,8 @@ export default function VolunteerDashboard() {
                     <Text style={st.sosBtnText}>Emergency SOS</Text>
                 </TouchableOpacity>
             </View>
+
+            <AICopilotFloatingButton role="volunteer" storageKey="volunteer-dashboard" bottom={90} />
         </SafeAreaView>
     );
 }

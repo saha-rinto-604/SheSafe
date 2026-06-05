@@ -9,10 +9,10 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
     StatusBar, RefreshControl, TextInput,
-    Animated, LayoutAnimation, ActivityIndicator, Modal,
+    Animated, LayoutAnimation, ActivityIndicator, Modal, AppState,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -22,6 +22,11 @@ import { T, R, S } from '../../../../src/constants/theme';
 import { type Incident, type IncidentCategory } from '../../../../src/types/chat';
 import { incidentService } from '../../../../src/services/incidentService';
 import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
+import {
+    compareIncidentChatsByNewestIncident,
+    getIncidentChatCreatedTimestamp,
+    type IncidentChatOrderingInput,
+} from '../../../../src/utils/incidentChatOrdering';
 
 const D = {
     cardFill: T.surfaceBulky,
@@ -47,10 +52,11 @@ type VolunteerIncident = Incident & {
     activeParticipants?: GroupChatAvatarParticipant[];
     responderCount?: number;
     maxResponders?: number;
-};
+} & IncidentChatOrderingInput;
 
-function isActiveStatus(status: Incident['status']): boolean {
-    return status === 'ACTIVE' || status === 'LIVE';
+function isActiveStatus(status: Incident['status'] | string): boolean {
+    const normalized = String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
+    return normalized === 'ACTIVE' || normalized === 'LIVE' || normalized === 'IN_PROGRESS';
 }
 
 function isCancelledStatus(status: Incident['status']): boolean {
@@ -58,10 +64,11 @@ function isCancelledStatus(status: Incident['status']): boolean {
 }
 
 function normalizeStatus(status: string): Incident['status'] {
-    if (status === 'Active') return 'ACTIVE';
-    if (status === 'Resolved') return 'RESOLVED';
-    if (status === 'Cancelled') return 'CANCELLED';
-    return (status || 'ACTIVE') as Incident['status'];
+    const normalized = String(status || 'ACTIVE').trim().toUpperCase().replace(/\s+/g, '_');
+    if (normalized === 'ACTIVE' || normalized === 'LIVE' || normalized === 'IN_PROGRESS') return 'ACTIVE';
+    if (normalized === 'RESOLVED') return 'RESOLVED';
+    if (normalized === 'CANCELLED' || normalized === 'CANCELED') return 'CANCELLED';
+    return 'ACTIVE';
 }
 
 function normalizeLatestMessage(raw: Incident['latestMessage'], fallbackAt: string) {
@@ -76,31 +83,14 @@ function normalizeLatestMessage(raw: Incident['latestMessage'], fallbackAt: stri
     return raw ?? null;
 }
 
-function incidentActivityTime(incident: VolunteerIncident): number {
-    const latest = normalizeLatestMessage(incident.latestMessage, incident.createdAt);
-    const timestamp = incident.lastMessage?.createdAt ?? latest?.timestamp ?? incident.updatedAt ?? incident.acceptedAt ?? incident.createdAt;
-    const time = new Date(timestamp).getTime();
-    return Number.isFinite(time) ? time : 0;
-}
-
-function incidentNumber(incident: VolunteerIncident): number {
-    const id = Number(String(incident.id).replace(/\D/g, ''));
-    return Number.isFinite(id) ? id : 0;
-}
-
 function compareIncidentsForMessages(a: VolunteerIncident, b: VolunteerIncident): number {
-    const aLive = isActiveStatus(a.status);
-    const bLive = isActiveStatus(b.status);
-    if (aLive !== bLive) return aLive ? -1 : 1;
-    const byIncidentNumber = incidentNumber(b) - incidentNumber(a);
-    if (byIncidentNumber !== 0) return byIncidentNumber;
-    return incidentActivityTime(b) - incidentActivityTime(a);
+    return compareIncidentChatsByNewestIncident(a, b);
 }
 
 function myIncidentToChatIncident(raw: any): VolunteerIncident {
     const status = normalizeStatus(String(raw.status));
     const createdAt = String(raw.createdAt ?? raw.occurredAt ?? raw.created_at ?? new Date().toISOString());
-    const updatedAt = String(raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
+    const updatedAt = String(raw.latestActivityAt ?? raw.latest_activity_at ?? raw.lastMessageAt ?? raw.last_message_at ?? raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
     return {
         ...raw,
         id: String(raw.id),
@@ -128,7 +118,7 @@ function myIncidentToChatIncident(raw: any): VolunteerIncident {
 
 function assistedIncidentToChatIncident(raw: any): VolunteerIncident {
     const createdAt = String(raw.createdAt ?? raw.created_at ?? new Date().toISOString());
-    const updatedAt = String(raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
+    const updatedAt = String(raw.latestActivityAt ?? raw.latest_activity_at ?? raw.lastMessageAt ?? raw.last_message_at ?? raw.updatedAt ?? raw.updated_at ?? raw.lastMessage?.createdAt ?? createdAt);
     return {
         ...raw,
         id: String(raw.id),
@@ -207,7 +197,7 @@ function IncidentCard({
         ? ''
         : incident.lastMessage?.senderName ?? latestMessage?.sender.name ?? incident.reporter ?? '';
     const activeBorderColor = T.violet;
-    const activityAt = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
+    const activityAt = getIncidentChatCreatedTimestamp(incident);
     const responderCount = incident.responderCount ?? Math.max((incident.participantCount ?? 1) - 1, 0);
     const maxResponders = incident.maxResponders ?? 3;
 
@@ -299,8 +289,9 @@ export default function VolunteerMessages() {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
     const [deleting, setDeleting] = useState(false);
-    const indicator = useRef(new Animated.Value(0)).current;
+    const [indicator] = useState(() => new Animated.Value(0));
     const navigationGuardRef = useRef(false);
+    const focusedRef = useRef(false);
 
     const navigateSafely = useCallback((path: string) => {
         if (navigationGuardRef.current) return;
@@ -359,14 +350,43 @@ export default function VolunteerMessages() {
         ]);
     }, [debouncedSearch, segment]);
 
-    useEffect(() => {
+    useFocusEffect(useCallback(() => {
+        let active = true;
+        focusedRef.current = true;
         setLoading(true);
         loadIncidents()
             .catch(error => {
+                if (!active) return;
                 console.warn('[VolunteerMessages] Failed to load incidents:', error);
                 setError(error?.message || 'Unable to load incidents.');
             })
-            .finally(() => setLoading(false));
+            .finally(() => {
+                if (active) setLoading(false);
+            });
+        const interval = setInterval(() => {
+            if (!focusedRef.current) return;
+            loadIncidents().catch(error => {
+                console.warn('[VolunteerMessages] Failed to refresh incidents:', error);
+                setError(error?.message || 'Unable to refresh incidents.');
+            });
+        }, 15000);
+        return () => {
+            active = false;
+            focusedRef.current = false;
+            clearInterval(interval);
+        };
+    }, [loadIncidents]));
+
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active' && focusedRef.current) {
+                loadIncidents().catch(error => {
+                    console.warn('[VolunteerMessages] Failed to refresh incidents:', error);
+                    setError(error?.message || 'Unable to refresh incidents.');
+                });
+            }
+        });
+        return () => sub.remove();
     }, [loadIncidents]);
 
     const onRefresh = useCallback(async () => {

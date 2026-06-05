@@ -221,6 +221,14 @@ async function lawEnforcementRequests(req, res, next) {
   }
 }
 
+async function lawEnforcementRequest(req, res, next) {
+  try {
+    send(res, 'request', await service.getLawEnforcementRequest(req.user.id, req.params.requestId));
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function approvedPolice(req, res, next) {
   try {
     send(res, 'police', await service.listApprovedPolice());
@@ -292,6 +300,7 @@ module.exports = {
   notifications,
   auditLogs,
   lawEnforcementRequests,
+  lawEnforcementRequest,
   approvedPolice,
   assignLawEnforcementRequest,
   cancelLawEnforcementRequest,

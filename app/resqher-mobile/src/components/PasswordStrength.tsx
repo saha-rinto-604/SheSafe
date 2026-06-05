@@ -5,10 +5,10 @@
  * Designed for the SheSafe dark theme with smooth animations.
  */
 
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { T, R, S } from '../../src/constants/theme';
+import { T, S } from '../../src/constants/theme';
 
 // ── Validation Rules ───────────────────────────────────────────────────────────
 export type PasswordRule = {
@@ -49,8 +49,8 @@ const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 
 // ── Animated Check Item ────────────────────────────────────────────────────────
 function CheckItem({ label, passed }: { label: string; passed: boolean }) {
-  const scale = useRef(new Animated.Value(passed ? 1 : 0.9)).current;
-  const opacity = useRef(new Animated.Value(passed ? 1 : 0.45)).current;
+  const [scale] = useState(() => new Animated.Value(passed ? 1 : 0.9));
+  const [opacity] = useState(() => new Animated.Value(passed ? 1 : 0.45));
 
   useEffect(() => {
     Animated.parallel([
@@ -66,7 +66,7 @@ function CheckItem({ label, passed }: { label: string; passed: boolean }) {
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
     ]).start();
-  }, [passed]);
+  }, [opacity, passed, scale]);
 
   return (
     <Animated.View style={[st.checkRow, { opacity, transform: [{ scale }] }]}>
@@ -86,7 +86,7 @@ function CheckItem({ label, passed }: { label: string; passed: boolean }) {
 
 // ── Strength Bar ───────────────────────────────────────────────────────────────
 function StrengthBar({ score }: { score: number }) {
-  const widthAnim = useRef(new Animated.Value(0)).current;
+  const [widthAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     Animated.timing(widthAnim, {
@@ -95,7 +95,7 @@ function StrengthBar({ score }: { score: number }) {
       easing: Easing.out(Easing.ease),
       useNativeDriver: false,
     }).start();
-  }, [score]);
+  }, [score, widthAnim]);
 
   const level = STRENGTH_LEVELS[score] ?? STRENGTH_LEVELS[0];
 

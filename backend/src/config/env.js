@@ -19,9 +19,11 @@ for (const key of required) {
 
 const port = Number(process.env.PORT || 4000);
 const corsOrigin = (process.env.CORS_ORIGIN || '*').trim();
+const nodeEnv = (process.env.NODE_ENV || 'development').trim();
 
 module.exports = {
   port,
+  nodeEnv,
   baseUrl: normalizeUrl(process.env.BASE_URL),
   corsOrigin,
   corsOrigins: corsOrigin.split(',').map(origin => origin.trim()).filter(Boolean),
@@ -40,5 +42,11 @@ module.exports = {
   admin: {
     phoneNumber: (process.env.ADMIN_PHONE_NUMBER || '').trim(),
     passwordHash: (process.env.ADMIN_PASSWORD_HASH || '').trim(),
+  },
+  auth: {
+    returnOtpInResponse:
+      parseBoolean(process.env.AUTH_RETURN_OTP_IN_RESPONSE)
+      || nodeEnv === 'development'
+      || nodeEnv === 'test',
   },
 };

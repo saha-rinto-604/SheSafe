@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,22 +9,25 @@ import {
     Modal,
     ScrollView,
     StatusBar,
-    Image,
     Switch,
+    Image,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as SecureStore from 'expo-secure-store';
 import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
-import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
+import { getUserProfile, updateAcceptSosRequests, displayName, UserProfile } from '../../../../src/services/profile';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
+import AICopilotSheet from '../../../../components/AICopilotSheet';
+
+const AI_COPILOT_LABEL = 'SheSafe AI Safety Copilot';
+const AI_COPILOT_SUBTITLE = 'Incident summaries, route checks, guidance, and first-aid support.';
+const COPILOT_ICON = require('../../../../assets/images/aicopiloticon.png');
 
 type MenuItem = {
     label: string;
@@ -32,6 +35,7 @@ type MenuItem = {
     icon: React.ComponentProps<typeof Feather>['name'];
     danger?: boolean;
     isToggle?: boolean;
+    isAiCopilot?: boolean;
 };
 
 type MenuSection = {
@@ -72,6 +76,12 @@ const MENU_SECTIONS: MenuSection[] = [
     {
         title: 'App',
         items: [
+            {
+                icon: 'cpu',
+                label: AI_COPILOT_LABEL,
+                subtitle: AI_COPILOT_SUBTITLE,
+                isAiCopilot: true,
+            },
             { icon: 'settings', label: 'Settings' },
             { icon: 'help-circle', label: 'Help & Support' },
         ],
@@ -83,33 +93,55 @@ const LOGOUT_ITEM: MenuItem = { icon: 'log-out', label: 'Logout', danger: true }
 export default function ProfileMenuScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { signOut } = useAuth();
+    const { signOut, refreshIdentity, isSosLive } = useAuth();
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [receiveSosAlerts, setReceiveSosAlerts] = useState(true);
+    const [savingSosPreference, setSavingSosPreference] = useState(false);
+    const [isAiSheetOpen, setAiSheetOpen] = useState(false);
     const [logoutConfirmVisible, setLogoutConfirmVisible] = useState(false);
+    const [sosBlockModalVisible, setSosBlockModalVisible] = useState(false);
 
     // Reload profile whenever this screen is focused
     useFocusEffect(
         useCallback(() => {
-            getUserProfile().then(setProfile);
-            import('./safety-settings').then(({ loadSafetySettings }) => {
-                loadSafetySettings().then(s => setReceiveSosAlerts(s.receiveSosAlerts));
+            getUserProfile().then(nextProfile => {
+                setProfile(nextProfile);
+                setReceiveSosAlerts(nextProfile.acceptSosRequests !== false);
             });
         }, []),
     );
 
     const toggleSosAlerts = async (val: boolean) => {
+        if (savingSosPreference) return;
+        const previous = receiveSosAlerts;
         setReceiveSosAlerts(val);
-        const { loadSafetySettings, SAFETY_SETTINGS_KEY } = await import('./safety-settings');
-        const settings = await loadSafetySettings();
-        settings.receiveSosAlerts = val;
-        await SecureStore.setItemAsync(SAFETY_SETTINGS_KEY, JSON.stringify(settings));
+        setSavingSosPreference(true);
+        try {
+            const updated = await updateAcceptSosRequests(val);
+            setProfile(updated);
+            setReceiveSosAlerts(updated.acceptSosRequests !== false);
+            await refreshIdentity();
+        } catch (error: any) {
+            setReceiveSosAlerts(previous);
+            Alert.alert('Unable to update preference', error?.message || 'Please try again.');
+        } finally {
+            setSavingSosPreference(false);
+        }
     };
 
     const onPressItem = async (item: MenuItem) => {
         if (item.danger) {
-            setLogoutConfirmVisible(true);
+            if (isSosLive) {
+                setSosBlockModalVisible(true);
+            } else {
+                setLogoutConfirmVisible(true);
+            }
+            return;
+        }
+
+        if (item.label === AI_COPILOT_LABEL) {
+            setAiSheetOpen(true);
             return;
         }
 
@@ -147,8 +179,10 @@ export default function ProfileMenuScreen() {
 
     const handleLogout = useCallback(async () => {
         setLogoutConfirmVisible(false);
-        await signOut();
-        router.replace('/(auth)/login');
+        const signedOut = await signOut(() => setSosBlockModalVisible(true));
+        if (signedOut) {
+            router.replace('/(auth)/login');
+        }
     }, [router, signOut]);
 
     return (
@@ -175,7 +209,7 @@ export default function ProfileMenuScreen() {
                             <Text style={s.logoutConfirmMessage}>Are you sure you want to logout?</Text>
                             <View style={s.logoutConfirmActions}>
                                 <TouchableOpacity style={s.logoutConfirmSecondaryBtn} onPress={closeLogoutConfirm} activeOpacity={0.85}>
-                                    <Text style={s.logoutConfirmSecondaryTxt}>Cancel</Text>
+                                    <Text style={s.logoutConfirmSecondaryTxt} numberOfLines={1}>Cancel</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={s.logoutConfirmPrimaryBtn} onPress={handleLogout} activeOpacity={0.9}>
                                     <LinearGradient
@@ -184,7 +218,52 @@ export default function ProfileMenuScreen() {
                                         end={{ x: 1, y: 1 }}
                                         style={s.logoutConfirmPrimaryFill}
                                     >
-                                        <Text style={s.logoutConfirmPrimaryTxt}>Logout</Text>
+                                        <Text style={s.logoutConfirmPrimaryTxt} numberOfLines={1}>Logout</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={sosBlockModalVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={() => setSosBlockModalVisible(false)}
+                >
+                    <View style={s.logoutConfirmOverlay}>
+                        <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.logoutConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSosBlockModalVisible(false)} />
+                        <View style={s.logoutConfirmCard}>
+                            <View style={s.sosBlockIconWrap}>
+                                <Feather name="alert-triangle" size={24} color={T.accent} />
+                            </View>
+                            <Text style={s.logoutConfirmTitle}>Cannot Logout</Text>
+                            <Text style={s.logoutConfirmMessage}>
+                                You have an active SOS emergency. Please stop or resolve the SOS before logging out.
+                            </Text>
+                            <View style={s.logoutConfirmActions}>
+                                <TouchableOpacity style={s.logoutConfirmSecondaryBtn} onPress={() => setSosBlockModalVisible(false)} activeOpacity={0.85}>
+                                    <Text style={s.logoutConfirmSecondaryTxt} numberOfLines={1}>Stay in SOS</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={s.logoutConfirmPrimaryBtn}
+                                    onPress={() => {
+                                        setSosBlockModalVisible(false);
+                                        router.replace('/(tabs)/users/volunteer' as any);
+                                    }}
+                                    activeOpacity={0.9}
+                                >
+                                    <LinearGradient
+                                        colors={[T.violet, T.violetDark]}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.logoutConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.logoutConfirmPrimaryTxt} numberOfLines={1}>Go to SOS Screen</Text>
                                     </LinearGradient>
                                 </TouchableOpacity>
                             </View>
@@ -232,7 +311,7 @@ export default function ProfileMenuScreen() {
                             {profile ? displayName(profile) : 'Your Name'}
                         </Text>
                         <Text style={s.profilePhone} numberOfLines={1}>
-                            {profile?.phone || '+880 1XXX-XXXXXX'}
+                            {profile?.username ? `@${profile.username}` : '@username'}
                         </Text>
                         <View style={s.roleBadge}>
                             <Text style={s.roleBadgeText}>Volunteer</Text>
@@ -264,6 +343,7 @@ export default function ProfileMenuScreen() {
                                         <Switch
                                             value={receiveSosAlerts}
                                             onValueChange={toggleSosAlerts}
+                                            disabled={savingSosPreference}
                                             trackColor={{ false: T.surfaceMid, true: `${T.violet}80` }}
                                             thumbColor={receiveSosAlerts ? T.violet : T.ink4}
                                             ios_backgroundColor={T.surfaceMid}
@@ -276,7 +356,11 @@ export default function ProfileMenuScreen() {
                                         activeOpacity={0.75}
                                     >
                                         <View style={s.iconBox}>
-                                            <Feather name={item.icon} size={18} color={T.violet} />
+                                            {item.isAiCopilot ? (
+                                                <Image source={COPILOT_ICON} style={s.aiIcon} resizeMode="contain" />
+                                            ) : (
+                                                <Feather name={item.icon} size={18} color={T.violet} />
+                                            )}
                                         </View>
                                         <View style={s.rowText}>
                                             <Text style={[s.rowLabel, item.subtitle ? s.rowLabelStacked : null]}>
@@ -309,6 +393,12 @@ export default function ProfileMenuScreen() {
                 </View>
                 </ScrollView>
             </View>
+            <AICopilotSheet
+                visible={isAiSheetOpen}
+                onClose={() => setAiSheetOpen(false)}
+                role="volunteer"
+                incidentId={null}
+            />
         </AtmosphericShell>
     );
 }
@@ -455,6 +545,10 @@ const s = StyleSheet.create({
         marginRight: 12,
         backgroundColor: T.violetDim,
     },
+    aiIcon: {
+        width: 22,
+        height: 22,
+    },
     rowText: {
         flex: 1,
         paddingRight: 10,
@@ -542,6 +636,17 @@ const s = StyleSheet.create({
         borderColor: 'rgba(217,45,32,0.28)',
         marginBottom: 14,
     },
+    sosBlockIconWrap: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(245,158,11,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(245,158,11,0.30)',
+        marginBottom: 14,
+    },
     logoutConfirmTitle: {
         fontSize: 20,
         fontWeight: '800',
@@ -557,11 +662,13 @@ const s = StyleSheet.create({
     },
     logoutConfirmActions: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 10,
         marginTop: 22,
     },
     logoutConfirmSecondaryBtn: {
-        flex: 1,
+        flexGrow: 1,
+        flexBasis: 132,
         minHeight: 48,
         borderRadius: R.pill,
         backgroundColor: T.surfaceBulky,
@@ -569,15 +676,17 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.12)',
         alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: 14,
     },
     logoutConfirmSecondaryTxt: {
         color: T.ink3,
         fontSize: 14,
         fontWeight: '800',
-        letterSpacing: 0.5,
+        textAlign: 'center',
     },
     logoutConfirmPrimaryBtn: {
-        flex: 1,
+        flexGrow: 1,
+        flexBasis: 132,
         borderRadius: R.pill,
         overflow: 'hidden',
         minHeight: 48,
@@ -586,12 +695,12 @@ const s = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: 14,
     },
     logoutConfirmPrimaryTxt: {
         color: T.onPrimary,
         fontSize: 14,
         fontWeight: '900',
-        letterSpacing: 0.6,
-        textTransform: 'uppercase',
+        textAlign: 'center',
     },
 });

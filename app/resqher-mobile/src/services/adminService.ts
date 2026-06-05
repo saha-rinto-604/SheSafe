@@ -383,6 +383,11 @@ export const adminService = {
     return data.requests || [];
   },
 
+  async getLawEnforcementRequest(requestId: Id) {
+    const data = await request<{ request: any }>(`/api/admin/law-enforcement/requests/${requestId}`);
+    return data.request;
+  },
+
   async assignLawEnforcementRequest(requestId: Id, policeId?: Id | null, assignToAll = false) {
     const data = await request<{ request: any }>(
       `/api/admin/law-enforcement/requests/${requestId}/assign`,

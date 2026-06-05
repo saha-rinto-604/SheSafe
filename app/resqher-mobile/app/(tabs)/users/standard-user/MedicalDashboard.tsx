@@ -25,8 +25,7 @@ import Animated, {
     FadeOutUp,
     LinearTransition,
 } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -34,7 +33,6 @@ import * as Haptics from 'expo-haptics';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { T, R, S } from '../../../../src/constants/theme';
-import { G } from '../../../../src/constants/gradients';
 import { CATEGORIES } from '../../../../src/data/medicalMockData';
 import type { MedicalCategory, ShiftFilter, CategoryItem } from '../../../../src/types/medical';
 
@@ -81,12 +79,12 @@ const CategoryCard = memo(function CategoryCard({
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
         // Snappy scale-down then spring back up organically
-        scale.value = withSequence(
+        scale.set(withSequence(
             withTiming(0.94, { duration: 70 }),
             withSpring(1, { damping: 12, stiffness: 280 })
-        );
+        ));
         onPress();
-    }, [onPress]);
+    }, [onPress, scale]);
 
     return (
         <TouchableOpacity

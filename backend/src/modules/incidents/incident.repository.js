@@ -64,6 +64,13 @@ async function ensureVolunteerDispatchSchema() {
     );
   }
 
+  if (!(await hasColumn('incidents', 'final_location_snapshot'))) {
+    await query(
+      `ALTER TABLE incidents
+       ADD COLUMN final_location_snapshot JSON DEFAULT NULL AFTER user_case_details`
+    );
+  }
+
   if (!(await hasColumn('users', 'is_online'))) {
     await query(
       `ALTER TABLE users
@@ -75,6 +82,13 @@ async function ensureVolunteerDispatchSchema() {
     await query(
       `ALTER TABLE users
        ADD COLUMN last_seen_at TIMESTAMP NULL DEFAULT NULL`
+    );
+  }
+
+  if (!(await hasColumn('users', 'accept_sos_requests'))) {
+    await query(
+      `ALTER TABLE users
+       ADD COLUMN accept_sos_requests BOOLEAN NOT NULL DEFAULT TRUE AFTER last_seen_at`
     );
   }
 
@@ -250,7 +264,7 @@ async function getActiveIncidents() {
      JOIN users u ON i.user_id = u.id
      LEFT JOIN roles r ON u.role_id = r.id
      WHERE UPPER(TRIM(i.status)) IN ('ACTIVE', 'IN_PROGRESS', 'OPEN', 'LIVE')
-     ORDER BY i.created_at DESC`
+     ORDER BY i.id DESC`
   );
 }
 
@@ -387,6 +401,7 @@ async function findIncidentById(id) {
   const rows = await query(
     `SELECT i.id, i.user_id, i.volunteer_id, i.latitude, i.longitude, i.address,
             i.status, i.created_at, i.updated_at, i.accepted_at, i.volunteer_case_details, i.user_case_details,
+            i.final_location_snapshot,
             u.first_name, u.last_name, u.photo_url
      FROM incidents i
      JOIN users u ON i.user_id = u.id
@@ -402,6 +417,158 @@ async function updateIncidentStatus(id, status) {
     [status, id]
   );
   return findIncidentById(id);
+}
+
+function parseJsonColumn(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function isoValue(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function finiteNumber(value) {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : null;
+}
+
+function rowName(row, firstKey, lastKey, fallback) {
+  return [row[firstKey], row[lastKey]].filter(Boolean).join(' ').trim() || fallback;
+}
+
+function coordinatePayload(latitude, longitude) {
+  const lat = finiteNumber(latitude);
+  const lng = finiteNumber(longitude);
+  if (lat == null || lng == null) return null;
+  return { latitude: lat, longitude: lng };
+}
+
+async function buildIncidentLocationSnapshot(incidentId, statusOverride = null) {
+  await ensureVolunteerDispatchSchema();
+  const incidentRows = await query(
+    `SELECT
+       i.id,
+       i.status,
+       i.updated_at,
+       i.latitude AS incident_latitude,
+       i.longitude AS incident_longitude,
+       i.final_location_snapshot,
+       u.id AS victim_id,
+       u.first_name AS victim_first_name,
+       u.last_name AS victim_last_name,
+       u.photo_url AS victim_photo_url,
+       u.latest_latitude AS victim_latest_latitude,
+       u.latest_longitude AS victim_latest_longitude,
+       u.last_seen_at AS victim_last_seen_at
+     FROM incidents i
+     JOIN users u ON i.user_id = u.id
+     WHERE i.id = ?
+     LIMIT 1`,
+    [incidentId]
+  );
+  const incident = incidentRows[0];
+  if (!incident) return null;
+
+  const volunteerRows = await query(
+    `SELECT
+       u.id,
+       u.first_name,
+       u.last_name,
+       u.photo_url,
+       u.latest_latitude,
+       u.latest_longitude,
+       u.last_seen_at,
+       iv.accepted_at
+     FROM incident_volunteers iv
+     JOIN users u ON u.id = iv.volunteer_id
+     WHERE iv.incident_id = ?
+       AND iv.status = 'ACCEPTED'
+     ORDER BY iv.accepted_at ASC, iv.id ASC`,
+    [incidentId]
+  );
+
+  const victimCoordinate = coordinatePayload(
+    incident.victim_latest_latitude == null ? incident.incident_latitude : incident.victim_latest_latitude,
+    incident.victim_latest_longitude == null ? incident.incident_longitude : incident.victim_latest_longitude
+  );
+
+  return {
+    incidentId: Number(incident.id),
+    status: String(statusOverride || incident.status || '').toUpperCase(),
+    finalizedAt: isoValue(incident.updated_at) || new Date().toISOString(),
+    victimLocation: victimCoordinate ? {
+      userId: String(incident.victim_id),
+      id: String(incident.victim_id),
+      name: rowName(incident, 'victim_first_name', 'victim_last_name', 'Victim'),
+      photoUri: incident.victim_photo_url || null,
+      ...victimCoordinate,
+      updatedAt: isoValue(incident.victim_last_seen_at),
+    } : null,
+    volunteerLocations: volunteerRows
+      .map((volunteer) => {
+        const coordinate = coordinatePayload(volunteer.latest_latitude, volunteer.latest_longitude);
+        if (!coordinate) return null;
+        return {
+          userId: String(volunteer.id),
+          id: String(volunteer.id),
+          name: rowName(volunteer, 'first_name', 'last_name', 'Volunteer'),
+          photoUri: volunteer.photo_url || null,
+          ...coordinate,
+          acceptedAt: isoValue(volunteer.accepted_at),
+          updatedAt: isoValue(volunteer.last_seen_at),
+        };
+      })
+      .filter(Boolean),
+    polyline: null,
+  };
+}
+
+async function saveFinalLocationSnapshotIfMissing(incidentId, status) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT final_location_snapshot FROM incidents WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  if (!rows[0]) return null;
+  const existing = parseJsonColumn(rows[0].final_location_snapshot);
+  if (existing) return existing;
+
+  const snapshot = await buildIncidentLocationSnapshot(incidentId, status);
+  if (!snapshot) return null;
+  await query(
+    `UPDATE incidents
+     SET final_location_snapshot = ?
+     WHERE id = ?
+       AND final_location_snapshot IS NULL`,
+    [JSON.stringify(snapshot), incidentId]
+  );
+
+  const latestRows = await query(
+    `SELECT final_location_snapshot FROM incidents WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  return parseJsonColumn(latestRows[0]?.final_location_snapshot) || snapshot;
+}
+
+async function getFinalLocationSnapshot(incidentId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT status, final_location_snapshot FROM incidents WHERE id = ? LIMIT 1`,
+    [incidentId]
+  );
+  if (!rows[0]) return null;
+  const existing = parseJsonColumn(rows[0].final_location_snapshot);
+  if (existing) return existing;
+  return saveFinalLocationSnapshotIfMissing(incidentId, rows[0].status);
 }
 
 async function cancelAllByUser(userId) {
@@ -421,9 +588,24 @@ async function getMyIncidents(userId) {
             i.status, i.created_at
      FROM incidents i
      WHERE i.user_id = ?
-     ORDER BY i.created_at DESC`,
+     ORDER BY i.id DESC`,
     [userId]
   );
+}
+
+async function getMyActiveSos(userId) {
+  await ensureVolunteerDispatchSchema();
+  const rows = await query(
+    `SELECT i.id, i.user_id, i.latitude, i.longitude, i.address,
+            i.status, i.created_at, i.updated_at
+     FROM incidents i
+     WHERE i.user_id = ?
+       AND UPPER(TRIM(i.status)) IN ('ACTIVE', 'LIVE', 'IN_PROGRESS')
+     ORDER BY i.created_at DESC, i.id DESC
+     LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
 }
 
 // ── Volunteer Dispatch ─────────────────────────────────────────────────────
@@ -458,6 +640,7 @@ async function findNearbyVolunteers(incidentLat, incidentLng) {
     JOIN roles r ON u.role_id = r.id AND r.role_name = 'volunteer'
     JOIN volunteer_verifications vv ON vv.user_id = u.id AND vv.status = 'verified'
     WHERE u.is_online = TRUE
+      AND u.accept_sos_requests = TRUE
       AND u.latest_latitude IS NOT NULL
       AND u.latest_longitude IS NOT NULL
     HAVING distance_km <= ?
@@ -600,6 +783,7 @@ async function getAssistedByVolunteer(volunteerId) {
             lm.created_at AS latest_message_created_at,
             lu.id AS latest_sender_id, lu.first_name AS latest_sender_first_name,
             lu.last_name AS latest_sender_last_name, lu.photo_url AS latest_sender_photo_url,
+            lu.username AS latest_sender_username,
             lr.role_name AS latest_sender_role,
             COALESCE(lm.created_at, i.updated_at, i.created_at) AS latest_activity_at,
             (SELECT COUNT(*) FROM incident_volunteers ivc WHERE ivc.incident_id = i.id AND ivc.status = 'ACCEPTED') AS responder_count
@@ -621,9 +805,7 @@ async function getAssistedByVolunteer(volunteerId) {
      LEFT JOIN users lu ON lm.sender_id = lu.id
      LEFT JOIN roles lr ON lu.role_id = lr.id
      WHERE i.status IN ('ACTIVE', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED')
-     ORDER BY
-       CASE WHEN i.status IN ('ACTIVE', 'IN_PROGRESS') THEN 0 ELSE 1 END,
-       COALESCE(lm.created_at, i.updated_at, i.created_at) DESC`,
+     ORDER BY i.id DESC`,
     [volunteerId]
   );
 }
@@ -638,6 +820,7 @@ async function getChatsByUser(userId) {
             lm.created_at AS latest_message_created_at,
             lu.id AS latest_sender_id, lu.first_name AS latest_sender_first_name,
             lu.last_name AS latest_sender_last_name, lu.photo_url AS latest_sender_photo_url,
+            lu.username AS latest_sender_username,
             lr.role_name AS latest_sender_role,
             COALESCE(lm.created_at, i.updated_at, i.created_at) AS latest_activity_at,
             (SELECT COUNT(*) FROM incident_volunteers ivc WHERE ivc.incident_id = i.id AND ivc.status = 'ACCEPTED') AS responder_count
@@ -657,9 +840,7 @@ async function getChatsByUser(userId) {
      WHERE i.user_id = ?
        AND i.status IN ('ACTIVE', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED')
        AND (ip.id IS NULL OR (ip.archived_at IS NULL AND ip.deleted_for_user_at IS NULL))
-     ORDER BY
-       CASE WHEN i.status IN ('ACTIVE', 'IN_PROGRESS') THEN 0 ELSE 1 END,
-       COALESCE(lm.created_at, i.updated_at, i.created_at) DESC`,
+     ORDER BY i.id DESC`,
     [userId, userId]
   );
 }
@@ -1105,8 +1286,12 @@ module.exports = {
   getIncidentZones,
   findIncidentById,
   updateIncidentStatus,
+  saveFinalLocationSnapshotIfMissing,
+  getFinalLocationSnapshot,
+  buildIncidentLocationSnapshot,
   cancelAllByUser,
   getMyIncidents,
+  getMyActiveSos,
   findNearbyVolunteers,
   acceptIncidentAtomic,
   getAssistedByVolunteer,

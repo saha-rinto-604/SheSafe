@@ -9,7 +9,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
-    Platform, StatusBar, KeyboardAvoidingView, Keyboard, Image,
+    Platform, StatusBar, KeyboardAvoidingView, Keyboard,
     Modal, Pressable, Alert
 } from 'react-native';
 import MapView, { Marker, Polyline, type MapViewRef } from './MapViewCompat';
@@ -17,7 +17,6 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 
@@ -75,12 +74,6 @@ function formatTime(iso: string): string {
 }
 
 // unused — kept for parity with originals, clean up in a later pass
-function caseLabel(id: string, createdAt: string): string {
-    const year = new Date(createdAt).getFullYear();
-    const num = id.replace(/\D/g, '').padStart(3, '0');
-    return `CASE #${year}-${num}`;
-}
-
 // ─── RoleBadge ──────────────────────────────────────────────────────────────
 const RoleBadge = memo(function RoleBadge({ role }: { role: Role }) {
     const meta = ROLE_META[role];
@@ -116,8 +109,8 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     const alignRight = isOwn || isVictimMessage;
 
     const tailStyle = alignRight
-        ? { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 2, borderBottomLeftRadius: 16 }
-        : { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 2 };
+        ? { borderBottomRightRadius: 6 }
+        : { borderBottomLeftRadius: 6 };
 
     return (
         <View style={[st.bubbleRow, alignRight ? st.bubbleRowOwn : st.bubbleRowOther]}>
@@ -132,7 +125,6 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                     </View>
                 )}
                 <View style={[st.bubble, alignRight ? st.bubbleOwn : st.bubbleOther, tailStyle]}>
-                    {!alignRight && <View style={[StyleSheet.absoluteFill, st.bubbleOtherBg, tailStyle]} />}
                     {msg.type === 'AUDIO' ? (
                         <View style={st.audioWrap}>
                             <TouchableOpacity style={st.audioPlayBtn}>
@@ -220,7 +212,7 @@ function ArchivePill({ bottomInset }: { bottomInset: number }) {
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
                 <View style={st.archiveInner}>
                     <Feather name="lock" size={13} color={T.ink4} />
-                    <Text style={st.archiveText}>Incident Archived — Case Read-Only</Text>
+                    <Text style={st.archiveText}>Incident Archived • Case Read-Only</Text>
                 </View>
             </BlurView>
         </View>

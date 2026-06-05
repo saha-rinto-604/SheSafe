@@ -10,17 +10,17 @@
  *
  * Design: AtmosphericShell + Bulky Glass material + Tactical Dark Map.
  */
+/* eslint-disable react-hooks/set-state-in-effect */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, StatusBar,
     Platform, ScrollView, Image, Alert, Linking,
+    Animated as RNAnimated, Easing,
 } from 'react-native';
-import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
-import { Ionicons } from '@expo/vector-icons';
-import { Feather } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import * as Speech from 'expo-speech';
@@ -272,14 +272,33 @@ export default function MedicalMapView() {
     const [safeRoute, setSafeRoute] = useState<{ latitude: number; longitude: number }[] | null>(null);
     const [navInstructions, setNavInstructions] = useState<NavStep[]>([]);
     const [currentStepIdx, setCurrentStepIdx] = useState(0);
-    const [routeEta, setRouteEta] = useState<string | null>(null);
-    const [routeDistanceKm, setRouteDistanceKm] = useState<number | null>(null);
+    const [, setRouteEta] = useState<string | null>(null);
+    const [, setRouteDistanceKm] = useState<number | null>(null);
     const [isRouting, setIsRouting] = useState(false);
     const [isLiveNav, setIsLiveNav] = useState(false);
 
     // Animations
-    const calloutY = useRef(new RNAnimated.Value(400)).current;
-    const calloutOpacity = useRef(new RNAnimated.Value(0)).current;
+    const [calloutY] = useState(() => new RNAnimated.Value(400));
+    const [calloutOpacity] = useState(() => new RNAnimated.Value(0));
+    const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
+    const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
+    const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
+    const [locationPermitted, setLocationPermitted] = useState(false);
+    const [showRouteOverview, setShowRouteOverview] = useState(false);
+    const [profile, setProfile] = useState<UserProfile | null>(null);
+    const locationSubRef = useRef<Location.LocationSubscription | null>(null);
+    const routeRequestIdRef = useRef(0);
+    const mountedRef = useRef(true);
+    const lastRerouteOriginRef = useRef<LatLng | null>(null);
+    const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastRerouteAtRef = useRef(0);
+    const [routeOverlaySlideY] = useState(() => new RNAnimated.Value(0));
+
+    // ── Live Nav & Review Mode States ──
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [isAudioMuted, setIsAudioMuted] = useState(false);
+    const [liveHeaderY] = useState(() => new RNAnimated.Value(-150));
+    const [liveFooterY] = useState(() => new RNAnimated.Value(150));
 
     // Reset UI state when filter chips or categories change to avoid mapping dead nodes
     useEffect(() => {
@@ -302,7 +321,7 @@ export default function MedicalMapView() {
         setIsReviewMode(false);
         calloutY.setValue(400);
         calloutOpacity.setValue(0);
-    }, [category]);
+    }, [calloutOpacity, calloutY, category]);
 
     useEffect(() => {
         routeRequestIdRef.current += 1;
@@ -323,27 +342,7 @@ export default function MedicalMapView() {
         setIsReviewMode(false);
         calloutY.setValue(400);
         calloutOpacity.setValue(0);
-    }, [selectedChip]);
-
-    const [travelMode, setTravelMode] = useState<'walking' | 'driving' | 'motorcycle' | 'transit'>('walking');
-    const [completedRouteCoords, setCompletedRouteCoords] = useState<LatLng[]>([]);
-    const [remainingRouteCoords, setRemainingRouteCoords] = useState<LatLng[]>([]);
-    const [locationPermitted, setLocationPermitted] = useState(false);
-    const [showRouteOverview, setShowRouteOverview] = useState(false);
-    const [profile, setProfile] = useState<UserProfile | null>(null);
-    const locationSubRef = useRef<Location.LocationSubscription | null>(null);
-    const routeRequestIdRef = useRef(0);
-    const mountedRef = useRef(true);
-    const lastRerouteOriginRef = useRef<LatLng | null>(null);
-    const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const lastRerouteAtRef = useRef(0);
-    const routeOverlaySlideY = useRef(new RNAnimated.Value(0)).current;
-
-    // ── Live Nav & Review Mode States ──
-    const [isReviewMode, setIsReviewMode] = useState(false);
-    const [isAudioMuted, setIsAudioMuted] = useState(false);
-    const liveHeaderY = useRef(new RNAnimated.Value(-150)).current;
-    const liveFooterY = useRef(new RNAnimated.Value(150)).current;
+    }, [calloutOpacity, calloutY, selectedChip]);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -423,7 +422,7 @@ export default function MedicalMapView() {
     const [liveHospitals, setLiveHospitals] = useState<any[]>([]);
     const [livePharmacies, setLivePharmacies] = useState<any[]>([]);
     const [liveAmbulances, setLiveAmbulances] = useState<any[]>([]);
-    const [providersLoading, setProvidersLoading] = useState(true);
+    const [, setProvidersLoading] = useState(true);
 
     // Fetch all providers from backend on mount
     useEffect(() => {
@@ -451,7 +450,68 @@ export default function MedicalMapView() {
         return () => { cancelled = true; };
     }, []);
 
-    // Load profile picture on screen focus
+    const refreshCurrentGpsLocation = useCallback(async ({
+        showFallbackAlert = false,
+        fitMap = false,
+    }: { showFallbackAlert?: boolean; fitMap?: boolean } = {}) => {
+        try {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                if (mountedRef.current) setLocationPermitted(false);
+                if (showFallbackAlert) {
+                    Alert.alert('Location required', 'Enable location access to use your current location.');
+                }
+                return null;
+            }
+
+            if (mountedRef.current) setLocationPermitted(true);
+            const position = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.BestForNavigation,
+            });
+            const next = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                heading: position.coords.heading ?? undefined,
+            };
+            if (mountedRef.current) {
+                setUserLoc(next);
+                if (fitMap && !isLiveNav) {
+                    mapRef.current?.animateToRegion({ ...next, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 600);
+                }
+            }
+            return next;
+        } catch (err) {
+            console.warn('[MedicalMapView] Unable to get fresh GPS location:', err);
+            try {
+                const lastKnown = await Location.getLastKnownPositionAsync();
+                if (lastKnown) {
+                    const fallback = {
+                        latitude: lastKnown.coords.latitude,
+                        longitude: lastKnown.coords.longitude,
+                        heading: lastKnown.coords.heading ?? undefined,
+                    };
+                    if (mountedRef.current) {
+                        setUserLoc(fallback);
+                        if (fitMap && !isLiveNav) {
+                            mapRef.current?.animateToRegion({ ...fallback, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 600);
+                        }
+                    }
+                    if (showFallbackAlert) {
+                        Alert.alert('Location fallback', 'Unable to refresh GPS right now. Using your last known location.');
+                    }
+                    return fallback;
+                }
+            } catch {
+                // No last-known fallback available.
+            }
+            if (showFallbackAlert) {
+                Alert.alert('Location unavailable', 'Unable to get your current location right now.');
+            }
+            return null;
+        }
+    }, [isLiveNav]);
+
+    // Load profile picture and latest GPS location on screen focus.
     useFocusEffect(
         useCallback(() => {
             let active = true;
@@ -460,10 +520,11 @@ export default function MedicalMapView() {
                     if (active) setProfile(nextProfile);
                 })
                 .catch(() => { });
+            refreshCurrentGpsLocation({ fitMap: true }).catch(() => undefined);
             return () => {
                 active = false;
             };
-        }, []),
+        }, [refreshCurrentGpsLocation]),
     );
 
     // ── Contextual chips ────────────────────────────────────────────────────
@@ -501,8 +562,8 @@ export default function MedicalMapView() {
                     });
                 }
 
-                return docs.map((doctor: any) => ({
-                    id: String(doctor?.id ?? `doc-${Math.random()}`),
+                return docs.map((doctor: any, index: number) => ({
+                    id: String(doctor?.id ?? `doc-${index}`),
                     name: doctor?.name ?? 'Doctor',
                     latitude: Number(doctor?.latitude) || JAMUNA_FUTURE_PARK.latitude,
                     longitude: Number(doctor?.longitude) || JAMUNA_FUTURE_PARK.longitude,
@@ -518,8 +579,8 @@ export default function MedicalMapView() {
             }
             case 'hospital': {
                 const hosps = liveHospitals.length > 0 ? liveHospitals : [];
-                return hosps.map((hospital: any) => ({
-                    id: String(hospital?.id ?? `hosp-${Math.random()}`),
+                return hosps.map((hospital: any, index: number) => ({
+                    id: String(hospital?.id ?? `hosp-${index}`),
                     name: hospital?.name ?? 'Hospital',
                     latitude: Number(hospital?.latitude) || JAMUNA_FUTURE_PARK.latitude,
                     longitude: Number(hospital?.longitude) || JAMUNA_FUTURE_PARK.longitude,
@@ -531,8 +592,8 @@ export default function MedicalMapView() {
             }
             case 'ambulance': {
                 let ambs = liveAmbulances.length > 0 ? [...liveAmbulances] : [];
-                return ambs.map((a: any) => ({
-                    id: String(a?.id ?? `amb-${Math.random()}`),
+                return ambs.map((a: any, index: number) => ({
+                    id: String(a?.id ?? `amb-${index}`),
                     name: a?.affiliation ?? a?.name ?? 'Ambulance',
                     latitude: Number(a?.latitude) || JAMUNA_FUTURE_PARK.latitude,
                     longitude: Number(a?.longitude) || JAMUNA_FUTURE_PARK.longitude,
@@ -545,8 +606,8 @@ export default function MedicalMapView() {
             }
             case 'pharmacy': {
                 const pharms = livePharmacies.length > 0 ? livePharmacies : [];
-                return pharms.map((pharmacy: any) => ({
-                    id: String(pharmacy?.id ?? `pharm-${Math.random()}`),
+                return pharms.map((pharmacy: any, index: number) => ({
+                    id: String(pharmacy?.id ?? `pharm-${index}`),
                     name: pharmacy?.name ?? 'Pharmacy',
                     latitude: Number(pharmacy?.latitude) || JAMUNA_FUTURE_PARK.latitude,
                     longitude: Number(pharmacy?.longitude) || JAMUNA_FUTURE_PARK.longitude,
@@ -577,42 +638,6 @@ export default function MedicalMapView() {
             default: return 'Medical';
         }
     }, [category]);
-
-    // ── Get user location ───────────────────────────────────────────────────
-    useEffect(() => {
-        setTimeout(() => {
-            mapRef.current?.animateToRegion(
-                { ...KHILKHET_ORIGIN, latitudeDelta: 0.02, longitudeDelta: 0.02 }, 800
-            );
-        }, 600);
-    }, []);
-
-    // Request permission and get a quick initial fix so the pin appears immediately.
-    useEffect(() => {
-        let mounted = true;
-
-        (async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (!mounted) return;
-            if (status !== 'granted') {
-                setLocationPermitted(false);
-                return;
-            }
-            setLocationPermitted(true);
-            // Balanced accuracy — fast enough for a first fix, with a natural short delay.
-            const position = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.Balanced,
-            });
-            if (!mounted) return;
-            setUserLoc({
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                heading: position.coords.heading ?? undefined,
-            });
-        })();
-
-        return () => { mounted = false; };
-    }, []);
 
     // Continuous watch — always active once permission is granted.
     // Balanced accuracy while browsing, BestForNavigation during live turn-by-turn.
@@ -656,12 +681,16 @@ export default function MedicalMapView() {
 
     useEffect(() => {
         if (!mapReady || !providers.length) return;
-        const coords = [KHILKHET_ORIGIN, ...providers.map(p => ({ latitude: p.latitude, longitude: p.longitude }))];
+        const coords = [
+            ...(userLoc ? [{ latitude: userLoc.latitude, longitude: userLoc.longitude }] : []),
+            ...providers.map(p => ({ latitude: p.latitude, longitude: p.longitude })),
+        ];
+        if (!coords.length) return;
         mapRef.current?.fitToCoordinates(coords, {
             edgePadding: { top: 140, right: 80, bottom: 360, left: 80 },
             animated: true,
         });
-    }, [mapReady, providers]);
+    }, [mapReady, providers, userLoc]);
 
     const buildLiveRoute = useCallback(async (
         origin: LatLng,
@@ -798,11 +827,12 @@ export default function MedicalMapView() {
 
     const selectedDistanceKm = useMemo(() => {
         if (!selectedProvider) return null;
-        return getDistanceKm(KHILKHET_ORIGIN, {
+        if (!userLoc) return null;
+        return getDistanceKm(userLoc, {
             latitude: selectedProvider.latitude,
             longitude: selectedProvider.longitude,
         });
-    }, [getDistanceKm, selectedProvider]);
+    }, [getDistanceKm, selectedProvider, userLoc]);
 
     // ── Book Now → Route Preview ──────────────────────────────────────────────
     const handleDirections = useCallback(async () => {
@@ -813,21 +843,8 @@ export default function MedicalMapView() {
             latitude: selectedProvider.latitude,
             longitude: selectedProvider.longitude,
         };
-        let origin: { latitude: number; longitude: number; heading?: number } = userLoc ?? KHILKHET_ORIGIN;
-        try {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status === 'granted') {
-                const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
-                origin = {
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    heading: position.coords.heading ?? undefined,
-                };
-                if (mountedRef.current) setUserLoc(origin);
-            }
-        } catch (err) {
-            console.warn('[MedicalMapView] Unable to refresh route origin:', err);
-        }
+        const origin = await refreshCurrentGpsLocation({ showFallbackAlert: true });
+        if (!origin) return;
 
         clearRouteState({ keepProvider: true });
         hideCalloutKeepRoute();
@@ -843,7 +860,7 @@ export default function MedicalMapView() {
         }).start();
 
         buildLiveRoute(origin, destination, true);
-    }, [buildLiveRoute, clearRouteState, hideCalloutKeepRoute, selectedProvider, routeOverlaySlideY, userLoc]);
+    }, [buildLiveRoute, clearRouteState, hideCalloutKeepRoute, refreshCurrentGpsLocation, selectedProvider, routeOverlaySlideY]);
 
     const handleCallHotline = useCallback(async () => {
         if (!selectedProvider?.hotline) return;
@@ -871,20 +888,20 @@ export default function MedicalMapView() {
         }).start();
     }, [clearRouteState, routeOverlaySlideY]);
 
-    const handleStartLive = useCallback(() => {
+    const handleStartLive = useCallback(async () => {
         if (!selectedProvider) return;
-        if (!locationPermitted || !userLoc) {
-            Alert.alert('Location required', 'Enable location access to use Live Mode.');
+        const origin = await refreshCurrentGpsLocation({ showFallbackAlert: true });
+        if (!origin) {
             return;
         }
 
         setIsLiveNav(true);
         buildLiveRoute(
-            { latitude: userLoc.latitude, longitude: userLoc.longitude },
+            { latitude: origin.latitude, longitude: origin.longitude },
             { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
             false,
         );
-    }, [buildLiveRoute, locationPermitted, selectedProvider, userLoc]);
+    }, [buildLiveRoute, refreshCurrentGpsLocation, selectedProvider]);
 
     const handleExitLive = useCallback(() => {
         clearRouteState({ keepProvider: true });
@@ -983,14 +1000,19 @@ export default function MedicalMapView() {
 
     // Re-fetch route when travel mode changes
     useEffect(() => {
-        if (showRouteOverview && selectedProvider) {
+        if (!showRouteOverview || !selectedProvider || isLiveNav) return;
+        let cancelled = false;
+        (async () => {
+            const origin = await refreshCurrentGpsLocation();
+            if (cancelled || !origin) return;
             buildLiveRoute(
-                KHILKHET_ORIGIN,
+                { latitude: origin.latitude, longitude: origin.longitude },
                 { latitude: selectedProvider.latitude, longitude: selectedProvider.longitude },
                 true
             );
-        }
-    }, [travelMode, buildLiveRoute, selectedProvider, showRouteOverview]);
+        })();
+        return () => { cancelled = true; };
+    }, [travelMode, buildLiveRoute, isLiveNav, refreshCurrentGpsLocation, selectedProvider, showRouteOverview]);
 
     const fullRouteCoords = useMemo(() => (safeRoute ?? []).filter(isValidLatLng), [safeRoute]);
     const completedRoutePreviewCoords = useMemo(() => completedRouteCoords.filter(isValidLatLng), [completedRouteCoords]);
@@ -1018,13 +1040,15 @@ export default function MedicalMapView() {
                     }}
                 >
                     {/* User Origin Marker */}
-                    <Marker
-                        coordinate={KHILKHET_ORIGIN}
-                        pinColor={T.violet}
-                        title="You"
-                        description="Current location"
-                        zIndex={998}
-                    />
+                    {!isLiveNav && userLoc && (
+                        <Marker
+                            coordinate={{ latitude: userLoc.latitude, longitude: userLoc.longitude }}
+                            pinColor={T.violet}
+                            title="You"
+                            description="Current location"
+                            zIndex={998}
+                        />
+                    )}
 
                     {/* Live User Marker */}
                     {isLiveNav && userLoc && (

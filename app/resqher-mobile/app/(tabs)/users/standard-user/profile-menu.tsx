@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -13,8 +13,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { T, R, S } from '../../../../src/constants/theme';
 import { useAuth } from '../../../../src/context/AuthContext';
@@ -22,11 +21,18 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import { getUserProfile, displayName, UserProfile } from '../../../../src/services/profile';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import api from '../../../../src/services/api';
+import AICopilotSheet from '../../../../components/AICopilotSheet';
+
+const AI_COPILOT_LABEL = 'SheSafe AI Safety Copilot';
+const AI_COPILOT_SUBTITLE = 'Incident summaries, route checks, guidance, and first-aid support.';
+const COPILOT_ICON = require('../../../../assets/images/aicopiloticon.png');
 
 type MenuItem = {
     label: string;
+    subtitle?: string;
     icon: React.ComponentProps<typeof Feather>['name'];
     danger?: boolean;
+    isAiCopilot?: boolean;
 };
 
 type MenuSection = {
@@ -57,6 +63,12 @@ const MENU_SECTIONS: MenuSection[] = [
     {
         title: 'App',
         items: [
+            {
+                icon: 'cpu',
+                label: AI_COPILOT_LABEL,
+                subtitle: AI_COPILOT_SUBTITLE,
+                isAiCopilot: true,
+            },
             { icon: 'settings', label: 'Settings' },
             { icon: 'help-circle', label: 'Help & Support' },
         ],
@@ -72,6 +84,7 @@ export default function ProfileMenuScreen() {
 
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [isVerifiedVolunteer, setIsVerifiedVolunteer] = useState(false);
+    const [isAiSheetOpen, setAiSheetOpen] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     const [sosBlockModalVisible, setSosBlockModalVisible] = useState(false);
 
@@ -97,6 +110,11 @@ export default function ProfileMenuScreen() {
             } else {
                 setLogoutModalVisible(true);
             }
+            return;
+        }
+
+        if (item.label === AI_COPILOT_LABEL) {
+            setAiSheetOpen(true);
             return;
         }
 
@@ -174,7 +192,7 @@ export default function ProfileMenuScreen() {
                             {profile ? displayName(profile) : 'Your Name'}
                         </Text>
                         <Text style={s.profilePhone} numberOfLines={1}>
-                            {profile?.phone || '+880 1XXX-XXXXXX'}
+                            {profile?.username ? `@${profile.username}` : '@username'}
                         </Text>
                         <View style={s.roleBadge}>
                             <Text style={s.roleBadgeText}>Standard User</Text>
@@ -208,9 +226,20 @@ export default function ProfileMenuScreen() {
                                 activeOpacity={0.75}
                             >
                                 <View style={s.iconBox}>
-                                    <Feather name={item.icon} size={18} color={T.violet} />
+                                    {item.isAiCopilot ? (
+                                        <Image source={COPILOT_ICON} style={s.aiIcon} resizeMode="contain" />
+                                    ) : (
+                                        <Feather name={item.icon} size={18} color={T.violet} />
+                                    )}
                                 </View>
-                                <Text style={s.rowLabel}>{item.label}</Text>
+                                <View style={s.rowText}>
+                                    <Text style={[s.rowLabel, item.subtitle ? s.rowLabelStacked : null]}>
+                                        {item.label}
+                                    </Text>
+                                    {item.subtitle ? (
+                                        <Text style={s.rowSubtitle}>{item.subtitle}</Text>
+                                    ) : null}
+                                </View>
                                 <Feather name="chevron-right" size={15} color={T.ink4} />
                             </TouchableOpacity>
                         ))}
@@ -234,6 +263,13 @@ export default function ProfileMenuScreen() {
             </View>
         </AtmosphericShell>
 
+        <AICopilotSheet
+            visible={isAiSheetOpen}
+            onClose={() => setAiSheetOpen(false)}
+            role="standard"
+            incidentId={null}
+        />
+
         {/* ── Logout Confirmation Modal ─────────────────────────────── */}
         <Modal visible={logoutModalVisible} transparent animationType="fade" onRequestClose={() => setLogoutModalVisible(false)}>
             <View style={s.modalOverlay}>
@@ -254,8 +290,10 @@ export default function ProfileMenuScreen() {
                         style={s.modalBtnSecondary}
                         onPress={async () => {
                             setLogoutModalVisible(false);
-                            await signOut();
-                            router.replace('/(auth)/login');
+                            const signedOut = await signOut(() => setSosBlockModalVisible(true));
+                            if (signedOut) {
+                                router.replace('/(auth)/login');
+                            }
                         }}
                         activeOpacity={0.75}
                     >
@@ -274,22 +312,27 @@ export default function ProfileMenuScreen() {
                     </View>
                     <Text style={s.modalTitle}>Cannot Logout</Text>
                     <Text style={s.modalBody}>
-                        You have an active SOS emergency. Please resolve your incident from the SOS screen before logging out.
+                        You have an active SOS emergency. Please stop or resolve the SOS before logging out.
                     </Text>
-                    <TouchableOpacity
-                        style={s.modalBtnPrimary}
-                        onPress={() => setSosBlockModalVisible(false)}
-                        activeOpacity={0.82}
-                    >
-                        <Text style={s.modalBtnPrimaryText}>Keep SOS Active</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={s.modalBtnSecondary}
-                        onPress={() => { setSosBlockModalVisible(false); router.back(); }}
-                        activeOpacity={0.75}
-                    >
-                        <Text style={s.modalBtnSecondaryText}>Go Back to SOS</Text>
-                    </TouchableOpacity>
+                    <View style={s.sosModalActions}>
+                        <TouchableOpacity
+                            style={[s.sosModalActionBtn, s.sosModalSecondaryBtn]}
+                            onPress={() => setSosBlockModalVisible(false)}
+                            activeOpacity={0.82}
+                        >
+                            <Text style={s.sosModalSecondaryText} numberOfLines={1}>Stay in SOS</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[s.sosModalActionBtn, s.sosModalPrimaryBtn]}
+                            onPress={() => {
+                                setSosBlockModalVisible(false);
+                                router.replace('/(tabs)/users/standard-user/sos_screen' as any);
+                            }}
+                            activeOpacity={0.75}
+                        >
+                            <Text style={s.sosModalPrimaryText} numberOfLines={1}>Go to SOS Screen</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </View>
         </Modal>
@@ -439,6 +482,14 @@ const s = StyleSheet.create({
         marginRight: 12,
         backgroundColor: T.violetDim,
     },
+    aiIcon: {
+        width: 22,
+        height: 22,
+    },
+    rowText: {
+        flex: 1,
+        paddingRight: 10,
+    },
     iconBoxDanger: {
         backgroundColor: `${T.danger}18`,
     },
@@ -447,6 +498,16 @@ const s = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: T.ink,
+    },
+    rowLabelStacked: {
+        flex: 0,
+    },
+    rowSubtitle: {
+        marginTop: 3,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '500',
+        color: T.ink3,
     },
     rowLabelDanger: {
         color: T.danger,
@@ -534,5 +595,45 @@ const s = StyleSheet.create({
     },
     modalBtnSecondaryText: {
         fontSize: 15, fontWeight: '600' as const, color: T.ink4,
+    },
+    sosModalActions: {
+        width: '100%',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginTop: 2,
+    },
+    sosModalActionBtn: {
+        flexGrow: 1,
+        flexBasis: 132,
+        minHeight: 50,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 14,
+    },
+    sosModalSecondaryBtn: {
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.14)',
+    },
+    sosModalPrimaryBtn: {
+        backgroundColor: T.violet,
+        ...Platform.select({
+            ios: { shadowColor: T.violet, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+            android: { elevation: 6 },
+        }),
+    },
+    sosModalPrimaryText: {
+        fontSize: 14,
+        fontWeight: '800' as const,
+        color: T.onPrimary,
+        textAlign: 'center' as const,
+    },
+    sosModalSecondaryText: {
+        fontSize: 14,
+        fontWeight: '700' as const,
+        color: T.ink3,
+        textAlign: 'center' as const,
     },
 });

@@ -10,6 +10,11 @@ const REFRESH_KEY = 'resqher_refresh_token';
 const IDENTITY_KEY = 'resqher_identity_v1';
 
 type StoredIdentity = { role: string; userId: string };
+type FriendlyError = Error & { code?: string; status?: number; maxResponders?: number };
+
+const isDevelopment = process.env.NODE_ENV !== 'production';
+const AUTH_REQUEST_TIMEOUT_MS = 30000;
+let apiBaseUrlError = '';
 
 const canUseWebStorage = () => (
   Platform.OS === 'web'
@@ -54,16 +59,19 @@ function normalizeBaseUrl(url: string) {
 function resolveApiBaseUrl() {
   const raw = process.env.EXPO_PUBLIC_API_URL?.trim();
   if (!raw) {
-    console.warn('[api] Missing EXPO_PUBLIC_API_URL. API calls will fail until it is configured.');
+    apiBaseUrlError = 'Missing EXPO_PUBLIC_API_URL. Set the backend URL before signing in.';
+    if (isDevelopment) console.warn(`[api] ${apiBaseUrlError}`);
     return '';
   }
 
   const normalized = normalizeBaseUrl(raw);
   if (!/^https?:\/\//i.test(normalized)) {
-    console.warn('[api] EXPO_PUBLIC_API_URL must start with http:// or https://. API calls will fail until it is fixed.');
+    apiBaseUrlError = 'EXPO_PUBLIC_API_URL must start with http:// or https://.';
+    if (isDevelopment) console.warn(`[api] ${apiBaseUrlError}`);
     return '';
   }
 
+  apiBaseUrlError = '';
   return normalized;
 }
 
@@ -78,6 +86,18 @@ function toWebSocketBaseUrl(apiBaseUrl: string) {
 export const API_BASE_URL = resolveApiBaseUrl();
 export const WS_BASE_URL = toWebSocketBaseUrl(API_BASE_URL);
 export const NGROK_SKIP_BROWSER_WARNING_HEADER = 'ngrok-skip-browser-warning';
+
+export function getApiBaseUrlError() {
+  return apiBaseUrlError;
+}
+
+function assertApiConfigured() {
+  if (!API_BASE_URL || apiBaseUrlError) {
+    const error = new Error(apiBaseUrlError || 'Backend API URL is not configured.') as FriendlyError;
+    error.code = 'API_CONFIG_ERROR';
+    throw error;
+  }
+}
 
 export function getWebSocketUrl(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -94,17 +114,18 @@ const api = axios.create({
 });
 
 export async function setTokens(access: string, refresh: string) {
+  const decoded = jwtDecode<{ sub?: string; role?: string }>(access);
+  if (!decoded.sub || !decoded.role) {
+    throw new Error('Invalid token response');
+  }
+  const identity: StoredIdentity = {
+    userId: decoded.sub,
+    role: DB_ROLE_MAP[decoded.role] ?? 'USER',
+  };
   await setStoredItem(ACCESS_KEY, access);
   await setStoredItem(REFRESH_KEY, refresh);
-  // Decode JWT to extract role and userId for the app
-  try {
-    const decoded = jwtDecode<{ sub: string; role: string }>(access);
-    const identity: StoredIdentity = {
-      userId: decoded.sub,
-      role: DB_ROLE_MAP[decoded.role] ?? 'USER',
-    };
-    await setStoredItem(IDENTITY_KEY, JSON.stringify(identity));
-  } catch { /* token malformed — identity stays stale */ }
+  await setStoredItem(IDENTITY_KEY, JSON.stringify(identity));
+  return identity;
 }
 
 export async function clearTokens() {
@@ -131,48 +152,108 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
 api.interceptors.request.use(async (config) => {
   config.headers = config.headers ?? {};
   config.headers[NGROK_SKIP_BROWSER_WARNING_HEADER] = 'true';
-  const token = await getAccessToken();
+  const path = String(config.url || '');
+  const isPublicAuthRequest = /^\/api\/auth\/(login|admin-login|signup|forgot-password|reset-password)\b/.test(path);
+  const token = isPublicAuthRequest ? null : await getAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  } else if (isPublicAuthRequest && 'Authorization' in config.headers) {
+    delete config.headers.Authorization;
+  }
+  if (isDevelopment) {
+    const method = (config.method || 'get').toUpperCase();
+    console.log('[api] request', method, `${config.baseURL || ''}${config.url || ''}`);
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => {
+    if (isDevelopment) {
+      const method = (response.config.method || 'get').toUpperCase();
+      console.log('[api] response', method, response.config.url, response.status);
+    }
+    return response;
+  },
+  (error) => {
+    if (isDevelopment && isAxiosError(error)) {
+      const method = (error.config?.method || 'get').toUpperCase();
+      console.log('[api] error', method, error.config?.url, error.response?.status ?? 'no-response', error.code ?? 'no-code');
+    }
+    return Promise.reject(error);
+  }
+);
+
+function createFriendlyError(message: string, code?: string, status?: number, extra?: Partial<FriendlyError>) {
+  const error = new Error(message) as FriendlyError;
+  error.code = code;
+  error.status = status;
+  if (extra?.maxResponders) error.maxResponders = extra.maxResponders;
+  return error;
+}
+
+function collectBackendMessages(data: any) {
+  const messages: string[] = [];
+  if (!data || typeof data !== 'object') return messages;
+
+  if (typeof data.message === 'string') messages.push(data.message);
+  if (typeof data.detail === 'string') messages.push(data.detail);
+  if (typeof data.error === 'string') messages.push(data.error);
+  if (typeof data.error?.message === 'string') messages.push(data.error.message);
+  if (Array.isArray(data.errors)) {
+    for (const item of data.errors) {
+      if (typeof item === 'string') {
+        messages.push(item);
+      } else if (typeof item?.message === 'string') {
+        messages.push(item.field ? `${item.field}: ${item.message}` : item.message);
+      }
+    }
+  }
+
+  for (const key in data) {
+    if (['message', 'detail', 'error', 'errors', 'code', 'maxResponders'].includes(key)) continue;
+    if (Array.isArray(data[key])) {
+      messages.push(`${key}: ${data[key].join(', ')}`);
+    } else if (typeof data[key] === 'string') {
+      messages.push(data[key]);
+    }
+  }
+
+  return [...new Set(messages)].filter(Boolean);
+}
 
 function friendlyError(err: unknown) {
   if (isAxiosError(err)) {
     const ax = err as AxiosError<any>;
     const data = ax.response?.data;
+    const status = ax.response?.status;
 
-    if (data && typeof data === 'object') {
-      // DRF returns errors in an object { fieldName: ["error string"] }
-      const messages = [];
-      for (const key in data) {
-        if (Array.isArray(data[key])) {
-          messages.push(`${key}: ${data[key].join(', ')}`);
-        } else if (typeof data[key] === 'string') {
-          messages.push(data[key]);
-        }
-      }
-      if (messages.length > 0) {
-        const error = new Error(messages.join('\n')) as Error & { code?: string; status?: number; maxResponders?: number };
-        error.code = data.code;
-        error.status = ax.response?.status;
-        error.maxResponders = data.maxResponders;
-        return error;
-      }
+    if (ax.code === 'ECONNABORTED' || /timeout/i.test(ax.message || '')) {
+      return createFriendlyError('Server timed out. Please check backend/tunnel and try again.', 'TIMEOUT', status);
+    }
+    if (!ax.response) {
+      return createFriendlyError('Cannot reach the server. Check backend URL, internet connection, or restart tunnel.', 'NETWORK_ERROR');
+    }
+    if (status && status >= 500) {
+      return createFriendlyError('Server error. Please try again after checking backend logs.', 'SERVER_ERROR', status);
     }
 
-    const msg =
-      data?.error?.message ||
-      data?.detail ||
-      ax.message ||
-      'Request failed';
-    const error = new Error(msg) as Error & { code?: string; status?: number; maxResponders?: number };
-    error.code = data?.code;
-    error.status = ax.response?.status;
-    error.maxResponders = data?.maxResponders;
-    return error;
+    const messages = collectBackendMessages(data);
+    const fallbackByStatus: Record<number, string> = {
+      401: 'Invalid credentials.',
+      403: 'You do not have access to this resource.',
+      409: 'Phone number is already registered.',
+      429: 'Too many requests. Please try again later.',
+    };
+
+    return createFriendlyError(
+      messages.join('\n') || (status ? fallbackByStatus[status] : '') || ax.message || 'Request failed',
+      data?.code,
+      status,
+      { maxResponders: data?.maxResponders }
+    );
   }
+  if (err instanceof Error) return err;
   return new Error('Request failed');
 }
 
@@ -183,6 +264,46 @@ const ROLE_MAP: Record<'USER' | 'VOLUNTEER' | 'POLICE', string> = {
 };
 
 export const authService = {
+  async requestSignupOtp(
+    phone: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+    role: 'USER' | 'VOLUNTEER' | 'POLICE' | 'ADMIN' = 'USER',
+    policeDetails?: { policeStationOrUnit?: string; badgeNumber?: string; jobIdCardUrl?: string }
+  ) {
+    if (role === 'ADMIN') {
+      throw new Error('Admin accounts cannot be created through public signup.');
+    }
+    try {
+      assertApiConfigured();
+      const res = await api.post('/api/auth/signup/request-otp', {
+        phoneNumber: phone,
+        password,
+        firstName,
+        lastName,
+        role: ROLE_MAP[role],
+        ...(role === 'POLICE' ? policeDetails : {}),
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      return res.data as { message?: string };
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
+  async verifySignupOtp(phoneNumber: string, otpCode: string) {
+    try {
+      assertApiConfigured();
+      const res = await api.post('/api/auth/signup/verify-otp', { phoneNumber, otpCode }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      const { accessToken } = res.data || {};
+      if (!accessToken) throw new Error('Invalid token response');
+      await setTokens(accessToken, accessToken);
+      return res.data as { accessToken: string; user?: any; role?: string; verificationStatus?: string | null };
+    } catch (e) {
+      throw friendlyError(e);
+    }
+  },
+
   async register(
     phone: string,
     password: string,
@@ -195,6 +316,7 @@ export const authService = {
       throw new Error('Admin accounts cannot be created through public signup.');
     }
     try {
+      assertApiConfigured();
       const res = await api.post('/api/auth/signup', {
         phoneNumber: phone,
         password,
@@ -202,11 +324,10 @@ export const authService = {
         lastName,
         role: ROLE_MAP[role],
         ...(role === 'POLICE' ? policeDetails : {}),
-      });
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
       const { accessToken } = res.data || {};
-      if (accessToken) {
-        await setTokens(accessToken, accessToken);
-      }
+      if (!accessToken) throw new Error('Invalid token response');
+      await setTokens(accessToken, accessToken);
       return res.data;
     } catch (e) {
       throw friendlyError(e);
@@ -215,7 +336,8 @@ export const authService = {
 
   async login(username: string, password: string) {
     try {
-      const res = await api.post('/api/auth/login', { phoneNumber: username, password });
+      assertApiConfigured();
+      const res = await api.post('/api/auth/login', { phoneNumber: username, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
@@ -227,7 +349,8 @@ export const authService = {
 
   async adminLogin(phone: string, password: string) {
     try {
-      const res = await api.post('/api/auth/admin-login', { phoneNumber: phone, password });
+      assertApiConfigured();
+      const res = await api.post('/api/auth/admin-login', { phoneNumber: phone, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
@@ -243,8 +366,9 @@ export const authService = {
 
   async forgotPassword(phoneNumber: string) {
     try {
-      const res = await api.post('/api/auth/forgot-password', { phoneNumber });
-      return res.data as { otpCode: string };
+      assertApiConfigured();
+      const res = await api.post('/api/auth/forgot-password', { phoneNumber }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      return res.data as { message?: string };
     } catch (e) {
       throw friendlyError(e);
     }
@@ -252,7 +376,8 @@ export const authService = {
 
   async resetPassword(phoneNumber: string, otpCode: string, newPassword: string) {
     try {
-      await api.post('/api/auth/reset-password', { phoneNumber, otpCode, newPassword });
+      assertApiConfigured();
+      await api.post('/api/auth/reset-password', { phoneNumber, otpCode, newPassword }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
     } catch (e) {
       throw friendlyError(e);
     }

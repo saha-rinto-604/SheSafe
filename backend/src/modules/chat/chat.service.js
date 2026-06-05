@@ -3,6 +3,7 @@ const { findIncidentById, isIncidentMember, getIncidentParticipantState } = requ
 const {
   joinIncident,
   getParticipants,
+  ensureChatSchema,
   insertMessage,
   getMessages,
   getActiveIncidents,
@@ -19,6 +20,7 @@ function formatMessage(row) {
     sender: {
       id: isSystem ? 'system' : String(row.sender_id),
       name: isSystem ? '' : `${row.first_name} ${row.last_name}`.trim(),
+      username: isSystem ? undefined : row.username || undefined,
       role: isSystem ? 'USER' : normalizeRole(row.role_name),
       photoUrl: isSystem ? undefined : row.photo_url || undefined,
     },
@@ -37,6 +39,15 @@ function normalizeRole(dbRole) {
 }
 
 function formatIncident(r) {
+  const latestActivityAt = r.latest_activity_at
+    ? (r.latest_activity_at instanceof Date ? r.latest_activity_at.toISOString() : String(r.latest_activity_at))
+    : null;
+  const lastMessageAt = r.latest_message_created_at
+    ? (r.latest_message_created_at instanceof Date ? r.latest_message_created_at.toISOString() : String(r.latest_message_created_at))
+    : null;
+  const updatedAt = r.updated_at
+    ? (r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at))
+    : null;
   return {
     id: String(r.id),
     type: 'SOS Alert',
@@ -44,13 +55,16 @@ function formatIncident(r) {
     location: {
       latitude: Number(r.latitude),
       longitude: Number(r.longitude),
-      updatedAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      updatedAt: latestActivityAt || updatedAt || (r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at)),
     },
     address: r.address || null,
     reporter: `${r.first_name} ${r.last_name}`.trim(),
     reporterPhotoUrl: r.photo_url || null,
     participantCount: Number(r.participant_count),
     latestMessage: r.latest_message || null,
+    lastMessageAt,
+    latestActivityAt,
+    updatedAt,
     acceptedAt: r.accepted_at
       ? (r.accepted_at instanceof Date ? r.accepted_at.toISOString() : String(r.accepted_at))
       : null,
@@ -69,7 +83,7 @@ async function ensureAccess(userId, incidentId, role) {
 
 async function fetchMessages(incidentId, userId, role) {
   await ensureAccess(userId, incidentId, role);
-  const rows = await getMessages(incidentId);
+  const rows = await getMessages(incidentId, 100, userId);
   return rows.map(formatMessage);
 }
 
@@ -79,7 +93,7 @@ async function sendMessage(userId, incidentId, payload, role) {
   if (incident.status === 'CANCELLED') throw httpError(400, 'Cannot send messages to a cancelled incident.');
   await ensureAccess(userId, incidentId, role);
 
-  const content = String(payload.content || '').trim();
+  const content = String(payload.content ?? payload.text ?? '').trim();
   if (!content) throw httpError(400, 'Message content is required.');
 
   const messageType = ['TEXT', 'IMAGE', 'AUDIO', 'SYSTEM'].includes(payload.type)
@@ -109,6 +123,7 @@ async function join(userId, incidentId) {
   return participants.map((p) => ({
     id: String(p.id),
     name: `${p.first_name} ${p.last_name}`.trim(),
+    username: p.username || undefined,
     role: normalizeRole(p.role_name),
     photoUrl: p.photo_url || null,
   }));
@@ -148,6 +163,7 @@ async function leave(userId, incidentId) {
 
 module.exports = {
   fetchMessages,
+  ensureChatSchema,
   sendMessage,
   join,
   listActiveIncidents,

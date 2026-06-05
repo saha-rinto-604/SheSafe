@@ -49,7 +49,10 @@ export default function VolunteerCertificateScreen() {
     }, []);
 
     useEffect(() => {
-        loadCertificateData();
+        const timer = setTimeout(() => {
+            loadCertificateData();
+        }, 0);
+        return () => clearTimeout(timer);
     }, [loadCertificateData]);
 
     const html = useMemo(() => (

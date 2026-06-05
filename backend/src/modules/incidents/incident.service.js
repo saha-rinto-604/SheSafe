@@ -6,6 +6,7 @@ const {
   updateIncidentStatus,
   cancelAllByUser,
   getMyIncidents: getMyIncidentsRepo,
+  getMyActiveSos: getMyActiveSosRepo,
   findNearbyVolunteers,
   acceptIncidentAtomic,
   getAssistedByVolunteer,
@@ -13,6 +14,9 @@ const {
   getIncidentResponders,
   getIncidentRouteContext,
   getUserRouteLocation,
+  saveFinalLocationSnapshotIfMissing,
+  getFinalLocationSnapshot,
+  buildIncidentLocationSnapshot,
   isIncidentMember,
   getVolunteerCaseDetails: getVolunteerCaseDetailsRepo,
   updateVolunteerCaseDetails: updateVolunteerCaseDetailsRepo,
@@ -30,6 +34,7 @@ const {
   leaveActiveAssistedIncidentsForVolunteer,
 } = require('./incident.repository');
 const chatService = require('../chat/chat.service');
+const { getParticipants } = require('../chat/chat.repository');
 
 /**
  * Report a new incident (triggered by SOS).
@@ -47,6 +52,14 @@ async function reportIncident(userId, payload) {
   }
   if (longitude < -180 || longitude > 180) {
     throw httpError(400, 'Longitude must be between -180 and 180.');
+  }
+
+  const existingActiveSos = await getMyActiveSosRepo(userId);
+  if (existingActiveSos) {
+    throw httpError(409, 'You already have an active SOS.', {
+      code: 'ACTIVE_SOS_EXISTS',
+      incidentId: String(existingActiveSos.id),
+    });
   }
 
   const incident = await createIncident({ userId, latitude, longitude, address });
@@ -76,8 +89,13 @@ async function cancelIncident(userId, incidentId) {
   if (Number(incident.user_id) !== Number(userId)) {
     throw httpError(403, 'You can only cancel your own incidents.');
   }
-  if (incident.status === 'CANCELLED') return incident;
-  return updateIncidentStatus(incidentId, 'CANCELLED');
+  if (incident.status === 'CANCELLED') {
+    await saveFinalLocationSnapshotIfMissing(incidentId, 'CANCELLED');
+    return findIncidentById(incidentId);
+  }
+  const updated = await updateIncidentStatus(incidentId, 'CANCELLED');
+  await saveFinalLocationSnapshotIfMissing(incidentId, 'CANCELLED');
+  return updated;
 }
 
 async function resolveIncident(userId, incidentId) {
@@ -90,8 +108,13 @@ async function resolveIncident(userId, incidentId) {
   if (!isVictim && !isVolunteer) {
     throw httpError(403, 'Only the victim or assigned volunteer can resolve this incident.');
   }
-  if (incident.status === 'RESOLVED') return incident;
-  return updateIncidentStatus(incidentId, 'RESOLVED');
+  if (incident.status === 'RESOLVED') {
+    await saveFinalLocationSnapshotIfMissing(incidentId, 'RESOLVED');
+    return findIncidentById(incidentId);
+  }
+  const updated = await updateIncidentStatus(incidentId, 'RESOLVED');
+  await saveFinalLocationSnapshotIfMissing(incidentId, 'RESOLVED');
+  return updated;
 }
 
 async function clearMyHistory(userId) {
@@ -140,12 +163,20 @@ async function getMyIncidents(userId) {
  * Get ACTIVE incidents within 5km of a volunteer's current position.
  */
 async function getNearbyIncidents(volunteerId, currentLocation = {}) {
+  const { query: dbQuery } = require('../../config/db');
+  const preferenceRows = await dbQuery(
+    `SELECT accept_sos_requests FROM users WHERE id = ? LIMIT 1`,
+    [volunteerId]
+  );
+  if (preferenceRows[0]?.accept_sos_requests === 0 || preferenceRows[0]?.accept_sos_requests === false) {
+    return [];
+  }
+
   let userLat = Number(currentLocation.latitude);
   let userLng = Number(currentLocation.longitude);
 
   if (!isFinite(userLat) || !isFinite(userLng)) {
     // Get volunteer's latest cached position from users table
-    const { query: dbQuery } = require('../../config/db');
     const userRows = await dbQuery(
       `SELECT latest_latitude, latest_longitude FROM users WHERE id = ? LIMIT 1`,
       [volunteerId]
@@ -276,7 +307,7 @@ async function getVolunteerNotifications(userId, currentLocation = {}) {
         id: `message-${incident.id}-${lastMessage.id || lastMessage.createdAt}`,
         type: 'MESSAGE',
         title: `New message in ${incident.incidentCode}`,
-        body: `${lastMessage.senderName}: ${lastMessage.text}`,
+        body: `${lastMessage.senderNotificationName || lastMessage.senderName || 'Someone'} sent you a message`,
         relatedIncidentId: String(incident.id),
         relatedChatId: String(incident.id),
         createdAt: lastMessage.createdAt,
@@ -397,14 +428,54 @@ function formatLatestMessage(row) {
     id: String(row.latest_message_id),
     senderId: isSystem ? 'system' : String(row.latest_sender_id),
     senderName: isSystem ? '' : userName(row, 'latest_sender_first_name', 'latest_sender_last_name'),
+    senderUsername: isSystem ? '' : (row.latest_sender_username || ''),
+    senderNotificationName: isSystem ? '' : notificationIdentityFromRow(row, {
+      usernameKey: 'latest_sender_username',
+      firstKey: 'latest_sender_first_name',
+      lastKey: 'latest_sender_last_name',
+      roleKey: 'latest_sender_role',
+    }),
     senderRole: isSystem ? 'system' : normalizeRole(row.latest_sender_role),
     text: row.latest_message,
     createdAt: iso(row.latest_message_created_at),
   };
 }
 
+function mapOwnActiveSos(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    incidentId: String(row.id),
+    incidentNumber: Number(row.id),
+    incidentCode: `#${row.id}`,
+    status: row.status,
+    isLive: ['ACTIVE', 'IN_PROGRESS', 'LIVE'].includes(String(row.status || '').toUpperCase()),
+    latitude: row.latitude == null ? null : Number(row.latitude),
+    longitude: row.longitude == null ? null : Number(row.longitude),
+    address: row.address || null,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at || row.created_at),
+  };
+}
+
+async function getMyActiveSos(userId) {
+  return mapOwnActiveSos(await getMyActiveSosRepo(userId));
+}
+
 function userName(row, firstKey = 'first_name', lastKey = 'last_name') {
   return [row[firstKey], row[lastKey]].filter(Boolean).join(' ').trim() || 'Unknown User';
+}
+
+function notificationIdentityFromRow(row, { usernameKey = 'username', firstKey = 'first_name', lastKey = 'last_name', roleKey = 'role_name' } = {}) {
+  const username = String(row?.[usernameKey] || '').trim().toLowerCase();
+  if (/^[a-z0-9_]{3,30}$/.test(username)) return `@${username}`;
+  const fullName = [row?.[firstKey], row?.[lastKey]].filter(Boolean).join(' ').trim();
+  if (fullName) return fullName;
+  const role = String(row?.[roleKey] || '').toLowerCase();
+  if (role === 'volunteer') return 'A responder';
+  if (role === 'law_enforcement') return 'An officer';
+  if (role === 'standard_user') return 'A SheSafe user';
+  return 'Someone';
 }
 
 function formatResponder(row) {
@@ -525,7 +596,9 @@ async function getAssistedIncidents(volunteerId, search = '') {
   const incidents = await Promise.all(rows.map(async (r) => {
     const responders = await getResponders(r.id);
     const createdAt = iso(r.created_at);
-    const updatedAt = iso(r.latest_activity_at || r.updated_at || r.created_at);
+    const updatedAt = iso(r.updated_at || r.created_at);
+    const lastMessageAt = iso(r.latest_message_created_at);
+    const latestActivityAt = iso(r.latest_activity_at || r.updated_at || r.created_at);
     const latestMessage = formatLatestMessage(r);
 
     return {
@@ -536,10 +609,12 @@ async function getAssistedIncidents(volunteerId, search = '') {
       priority: ['ACTIVE', 'IN_PROGRESS'].includes(r.status) ? 'HIGH' : 'NORMAL',
       createdAt,
       updatedAt,
+      lastMessageAt,
+      latestActivityAt,
       location: {
         latitude: Number(r.latitude),
         longitude: Number(r.longitude),
-        updatedAt,
+        updatedAt: latestActivityAt,
       },
       address: r.address || null,
       reporter: userName(r),
@@ -586,7 +661,9 @@ async function getUserIncidentChats(userId, search = '', role) {
   const incidents = await Promise.all(rows.map(async (r) => {
     const responders = await getResponders(r.id, userId, role);
     const createdAt = iso(r.created_at);
-    const updatedAt = iso(r.latest_activity_at || r.updated_at || r.created_at);
+    const updatedAt = iso(r.updated_at || r.created_at);
+    const lastMessageAt = iso(r.latest_message_created_at);
+    const latestActivityAt = iso(r.latest_activity_at || r.updated_at || r.created_at);
     const latestMessage = formatLatestMessage(r);
 
     return {
@@ -596,6 +673,8 @@ async function getUserIncidentChats(userId, search = '', role) {
       priority: ['ACTIVE', 'IN_PROGRESS'].includes(r.status) ? 'HIGH' : 'NORMAL',
       createdAt,
       updatedAt,
+      lastMessageAt,
+      latestActivityAt,
       lastMessage: latestMessage,
       sosUser: responders.sosUser,
       responders: responders.volunteers,
@@ -636,6 +715,7 @@ async function ensureChatAccess(userId, incidentId, role) {
 
 async function getIncidentMessages(userId, incidentId, role) {
   await ensureChatAccess(userId, incidentId, role);
+  await chatService.ensureChatSchema();
   await ensureDefaultIncidentMessages(incidentId);
   const messages = await chatService.fetchMessages(incidentId, userId, role);
   return messages.map((message) => ({
@@ -643,6 +723,10 @@ async function getIncidentMessages(userId, incidentId, role) {
     incidentId: Number(message.incidentId),
     senderId: message.type === 'SYSTEM' ? 'system' : message.sender.id,
     senderName: message.type === 'SYSTEM' ? '' : message.sender.name,
+    senderUsername: message.type === 'SYSTEM' ? '' : (message.sender.username || ''),
+    senderNotificationName: message.type === 'SYSTEM' ? '' : (
+      message.sender.username ? `@${message.sender.username}` : message.sender.name || ''
+    ),
     senderRole: message.type === 'SYSTEM'
       ? 'system'
       : message.sender.role === 'VOLUNTEER'
@@ -652,6 +736,8 @@ async function getIncidentMessages(userId, incidentId, role) {
         : 'standard_user',
     senderPhotoUri: message.type === 'SYSTEM' ? null : (message.sender.photoUrl || null),
     text: message.content,
+    type: message.type,
+    mediaUrl: message.mediaUrl || null,
     createdAt: message.timestamp,
   }));
 }
@@ -665,6 +751,8 @@ async function sendIncidentMessage(userId, incidentId, payload, role) {
     incidentId: Number(message.incidentId),
     senderId: message.sender.id,
     senderName: message.sender.name,
+    senderUsername: message.sender.username || '',
+    senderNotificationName: message.sender.username ? `@${message.sender.username}` : message.sender.name || '',
     senderRole: message.sender.role === 'VOLUNTEER'
       ? 'volunteer'
       : message.sender.role === 'POLICE'
@@ -672,7 +760,75 @@ async function sendIncidentMessage(userId, incidentId, payload, role) {
         : 'standard_user',
     senderPhotoUri: message.sender.photoUrl || null,
     text: message.content,
+    type: message.type,
+    mediaUrl: message.mediaUrl || null,
     createdAt: message.timestamp,
+  };
+}
+
+async function getNotificationRecipients(incidentId, { excludeUserId = null } = {}) {
+  const incident = await findIncidentById(incidentId);
+  if (!incident) return [];
+  const participants = await getParticipants(incidentId);
+  const seen = new Set();
+  const recipients = [];
+
+  const add = (userId, role = null) => {
+    const id = String(userId || '');
+    if (!id || (excludeUserId && id === String(excludeUserId)) || seen.has(id)) return;
+    seen.add(id);
+    recipients.push({ userId: id, role });
+  };
+
+  add(incident.user_id, 'standard_user');
+  participants.forEach((participant) => add(participant.id, participant.role_name));
+  return recipients;
+}
+
+function isFinalIncidentStatus(status) {
+  const normalized = String(status || '').toUpperCase();
+  return normalized === 'RESOLVED' || normalized === 'CANCELLED';
+}
+
+function snapshotResponse(snapshot, fallbackStatus) {
+  const status = String(snapshot?.status || fallbackStatus || '').toUpperCase();
+  return {
+    incidentId: Number(snapshot?.incidentId),
+    status,
+    mode: 'snapshot',
+    isFinal: true,
+    victimLocation: snapshot?.victimLocation || null,
+    volunteerLocations: Array.isArray(snapshot?.volunteerLocations) ? snapshot.volunteerLocations : [],
+    polyline: Array.isArray(snapshot?.polyline) ? snapshot.polyline : null,
+    finalizedAt: snapshot?.finalizedAt || null,
+  };
+}
+
+async function getMapSnapshot(incidentId, userId, role) {
+  if (role !== 'admin') {
+    const allowed = await isIncidentMember(incidentId, userId);
+    if (!allowed) throw httpError(403, 'You are not a member of this incident map.');
+  }
+
+  const incident = await findIncidentById(incidentId);
+  if (!incident) throw httpError(404, 'Incident not found.');
+  const status = String(incident.status || '').toUpperCase();
+
+  if (isFinalIncidentStatus(status)) {
+    const snapshot = await getFinalLocationSnapshot(incidentId);
+    return snapshotResponse(snapshot, status);
+  }
+
+  const liveSnapshot = await buildIncidentLocationSnapshot(incidentId, status);
+  return {
+    incidentId: Number(incidentId),
+    status,
+    mode: 'live',
+    isFinal: false,
+    victimLocation: liveSnapshot?.victimLocation || null,
+    volunteerLocations: Array.isArray(liveSnapshot?.volunteerLocations) ? liveSnapshot.volunteerLocations : [],
+    polyline: null,
+    finalizedAt: null,
   };
 }
 
@@ -903,6 +1059,7 @@ module.exports = {
   resolveIncident,
   clearMyHistory,
   getMyIncidents,
+  getMyActiveSos,
   getNearbyIncidents,
   acceptIncident,
   rejectIncident,
@@ -911,8 +1068,10 @@ module.exports = {
   getUserIncidentChats,
   getResponders,
   getRouteContext,
+  getMapSnapshot,
   getIncidentMessages,
   sendIncidentMessage,
+  getNotificationRecipients,
   getUserCaseDetails,
   updateUserCaseDetails,
   getVolunteerCaseDetails,

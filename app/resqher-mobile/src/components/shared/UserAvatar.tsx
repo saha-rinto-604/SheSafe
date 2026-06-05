@@ -31,7 +31,10 @@ export default function UserAvatar({
     }, [uri]);
 
     React.useEffect(() => {
-        setFailed(false);
+        const timer = setTimeout(() => {
+            setFailed(false);
+        }, 0);
+        return () => clearTimeout(timer);
     }, [resolvedUri]);
 
     return (

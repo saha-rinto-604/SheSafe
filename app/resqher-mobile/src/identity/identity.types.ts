@@ -17,6 +17,7 @@ export type Identity = {
   id: string | null;
   firstName: string;
   lastName: string;
+  username: string;
   phone: string;
   /** ISO date string, e.g. "1995-06-15" */
   dobISO: string;

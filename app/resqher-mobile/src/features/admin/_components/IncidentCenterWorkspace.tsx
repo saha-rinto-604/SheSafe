@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, useWindowDimensions , Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T } from '../../../constants/theme';
 import { type MockIncident } from '../_data/adminMockData';
 import { IncidentCard } from './AdminDashboardCards';
 import UserAvatar from '../../../components/shared/UserAvatar';
-import { Animated } from 'react-native';
 import { AnimatedListItem } from './AnimatedListItem';
 import adminService from '../../../services/adminService';
 
@@ -17,7 +16,7 @@ export function IncidentCenterWorkspace({ insetsBottom }: { insetsBottom: number
   const [incidents, setIncidents] = useState<MockIncident[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const fadeAnim = React.useRef(new Animated.Value(1)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(1));
 
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -52,7 +51,10 @@ export function IncidentCenterWorkspace({ insetsBottom }: { insetsBottom: number
   }, [activeTab]);
 
   useEffect(() => {
-    loadIncidents(activeTab);
+    const timer = setTimeout(() => {
+      loadIncidents(activeTab);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [activeTab, loadIncidents]);
 
   // Filter logic

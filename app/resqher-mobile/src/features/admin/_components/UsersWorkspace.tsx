@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, useWindowDimensions , Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T } from '../../../constants/theme';
 import UserAvatar from '../../../components/shared/UserAvatar';
@@ -9,7 +9,6 @@ import {
   type MockVolunteer,
   type MockIncident
 } from '../_data/adminMockData';
-import { Animated } from 'react-native';
 import { AnimatedListItem } from './AnimatedListItem';
 import { useToast } from '../../../components/Toast';
 import adminService from '../../../services/adminService';
@@ -28,7 +27,7 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
   const [moderationReason, setModerationReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const fadeAnim = React.useRef(new Animated.Value(1)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(1));
   const { showToast } = useToast();
 
   const isStandard = (user: any): user is MockStandardUser => 'sosRequests' in user && !('rank' in user);
@@ -61,7 +60,10 @@ export function UsersWorkspace({ insetsBottom }: { insetsBottom: number }) {
   }, []);
 
   useEffect(() => {
-    loadUsers();
+    const timer = setTimeout(() => {
+      loadUsers();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadUsers]);
 
   const handleUserPress = async (user: AdminUser) => {

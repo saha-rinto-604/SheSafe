@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, ScrollView,
@@ -14,20 +14,30 @@ import { useAuth } from '../../src/context/AuthContext';
 import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
+import SecureTextField from '../../components/auth/SecureTextField';
+import { getApiBaseUrlError } from '../../src/services/api';
 
 type FormData = { phone: string; password: string };
 
 export default function AdminLogin() {
   const router = useRouter();
-  const { signInAdmin, signOut } = useAuth();
+  const { signInAdmin, signOut, isLoading: authLoading } = useAuth();
   const { showToast } = useToast();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState<'phone' | 'password' | null>(null);
+  const submittingRef = useRef(false);
 
   const onSubmit = async (data: FormData) => {
+    if (submittingRef.current || submitting || authLoading) return;
+    const apiError = getApiBaseUrlError();
+    if (apiError) {
+      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      return;
+    }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const phone = data.phone.trim();
@@ -47,6 +57,7 @@ export default function AdminLogin() {
       router.replace(ROLE_DEFAULT_ROUTE.ADMIN as any);
     } catch (e: any) {
       const msg = e?.message ?? '';
+      const code = e?.code;
       if (msg.toLowerCase().includes('sign up')) {
         showToast({
           type: 'warning',
@@ -54,16 +65,20 @@ export default function AdminLogin() {
           message: 'No admin account exists with this phone number.',
         });
       } else {
+        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
         showToast({
           type: 'error',
-          title: 'Authentication Failed',
-          message: 'Please check your phone number and password, then try again.',
+          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Authentication Failed',
+          message: msg || 'Please check your phone number and password, then try again.',
         });
       }
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
+
+  const busy = submitting || authLoading;
 
   return (
     <AuthShell>
@@ -122,29 +137,21 @@ export default function AdminLogin() {
               rules={{ required: 'Password is required' }}
               render={({ field: { onChange, value } }) => (
                 <>
-                  <View style={[
-                    st.inputWrap,
-                    focused === 'password' && st.inputFocused,
-                    errors.password && st.inputError,
-                  ]}>
-                    <Feather
-                      name="lock"
-                      size={18}
-                      color={focused === 'password' ? T.violet : T.inputIconDefault}
-                      style={st.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="Password"
-                      placeholderTextColor={T.ink5}
-                      value={value}
-                      onChangeText={onChange}
-                      secureTextEntry
-                      style={st.input}
-                      onFocus={() => setFocused('password')}
-                      onBlur={() => setFocused(null)}
-                      accessibilityLabel="Password"
-                    />
-                  </View>
+                  <SecureTextField
+                    placeholder="Password"
+                    value={value}
+                    onChangeText={onChange}
+                    focused={focused === 'password'}
+                    hasError={!!errors.password}
+                    containerStyle={st.inputWrap}
+                    focusedStyle={st.inputFocused}
+                    errorStyle={st.inputError}
+                    inputStyle={st.input}
+                    iconStyle={st.inputIcon}
+                    onFocus={() => setFocused('password')}
+                    onBlur={() => setFocused(null)}
+                    accessibilityLabel="Password"
+                  />
                   {!!errors.password && <Text style={st.errTxt}>{errors.password.message}</Text>}
                 </>
               )}
@@ -160,9 +167,9 @@ export default function AdminLogin() {
           </View>
 
           <TouchableOpacity
-            disabled={submitting}
+            disabled={busy}
             style={st.primaryBtn}
-            onPress={handleSubmit(onSubmit)}
+            onPress={() => handleSubmit(onSubmit)()}
             activeOpacity={0.82}
             accessibilityRole="button"
             accessibilityLabel="Login"
@@ -173,7 +180,7 @@ export default function AdminLogin() {
               end={G.navActive.end}
               style={st.gradientBtn}
             >
-              {submitting
+              {busy
                 ? <ActivityIndicator color={T.onPrimary} />
                 : <Text style={st.btnTxt}>Login</Text>
               }

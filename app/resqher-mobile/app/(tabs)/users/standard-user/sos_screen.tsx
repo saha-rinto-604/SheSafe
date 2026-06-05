@@ -1,34 +1,31 @@
 /**
  * app/(tabs)/users/standard-user/sos_screen.tsx
- * Premium Tactical Command Center â€” SOS Screen
+ * Premium Tactical Command Center - SOS Screen
  *
  * Features:
  * - Reanimated-powered heartbeat aura (double-pulse rhythm + haptic sync)
  * - Enhanced 24-rule "Encrypted Professional" map style
  * - Custom Electric Violet glow markers (no default Google pins)
- * - LIVE button heartbeat scale sync (1.0 â†” 1.05)
+ * - LIVE button heartbeat scale sync (1.0 <-> 1.05)
  * - High-contrast GPS/recenter for low-light accessibility
  * - 60fps native-thread animations throughout
  */
 
-import React, { useRef, useState, useEffect, useCallback, memo } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
-    Modal, ScrollView, ViewStyle, Image, TextInput, ActivityIndicator,
-} from 'react-native';
+    Modal, ScrollView, ViewStyle, TextInput, ActivityIndicator,
+ Animated as RNAnimated, Easing } from 'react-native';
 import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSequence,
-    withDelay, withRepeat, Easing as REasing, runOnJS,
-    interpolate, Extrapolation,
+    withRepeat, Easing as REasing, runOnJS,
 } from 'react-native-reanimated';
-import { Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather , Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
@@ -40,14 +37,14 @@ import SheSafeLogo from '../../../../src/components/SheSafeLogo';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService } from '../../../../src/services/incidentService';
-import { getConfirmedSafePlaces, type SafePlace } from '../../../../src/services/safePlaceService';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { incidentHistory } from '../../../../src/services/incidentHistory';
 import { notificationStore, subscribeUnread } from '../../../../src/services/notificationStore';
+import AICopilotFloatingButton from '../../../../components/AICopilotFloatingButton';
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// PremiumBar â€” dark glassmorphism surface for header + navbar
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// PremiumBar - dark glassmorphism surface for header + navbar
+// -----------------------------------------------------------------------------
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
 }: {
@@ -66,7 +63,7 @@ const PremiumBar = memo(function PremiumBar({
 
 const pb = StyleSheet.create({
     bar: {
-        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% â€” lets blur show through
+        backgroundColor: 'rgba(30,21,58,0.65)',  // T.surfaceBulky at 65% - lets blur show through
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',     // Global 1px white translucent stroke
         overflow: 'hidden',
@@ -81,9 +78,9 @@ const pb = StyleSheet.create({
     },
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
 // Layout constants
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
 const { width, height } = Dimensions.get('window');
 
 const SOS_BTN_SIZE = 156;
@@ -111,9 +108,9 @@ const DEFAULT_REGION = {
     latitudeDelta: 0.014, longitudeDelta: 0.014,
 };
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Nav tab definitions â€” Ionicons
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Nav tab definitions - Ionicons
+// -----------------------------------------------------------------------------
 const NAV_TABS: {
     id: string;
     label: string;
@@ -129,14 +126,14 @@ const NAV_TABS: {
 const ACTIVE_COLOR = T.violet;
 const INACTIVE_COLOR = T.navIconInactive;  // Global high-contrast token for all pages
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Pulse Radar (idle state â€” locating)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Pulse Radar (idle state - locating)
+// -----------------------------------------------------------------------------
 const PulseRadar = memo(function PulseRadar() {
-    const a0 = useRef(new RNAnimated.Value(0)).current;
-    const a1 = useRef(new RNAnimated.Value(0)).current;
-    const a2 = useRef(new RNAnimated.Value(0)).current;
-    const anims = [a0, a1, a2];
+    const [a0] = useState(() => new RNAnimated.Value(0));
+    const [a1] = useState(() => new RNAnimated.Value(0));
+    const [a2] = useState(() => new RNAnimated.Value(0));
+    const anims = useMemo(() => [a0, a1, a2], [a0, a1, a2]);
 
     useEffect(() => {
         anims.forEach((a, i) => {
@@ -150,7 +147,7 @@ const PulseRadar = memo(function PulseRadar() {
             };
             loop();
         });
-    }, []);
+    }, [anims]);
 
     return (
         <View style={rdr.wrap} pointerEvents="none">
@@ -161,7 +158,7 @@ const PulseRadar = memo(function PulseRadar() {
                 }]} />
             ))}
             <View style={rdr.dot} />
-            <Text style={rdr.label}>Locatingâ€¦</Text>
+            <Text style={rdr.label}>Locating...</Text>
         </View>
     );
 });
@@ -172,9 +169,10 @@ const rdr = StyleSheet.create({
     label: { marginTop: 14, fontSize: 11, fontWeight: '600', color: T.violet, letterSpacing: 0.3 },
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Emergency Border Overlay â€” Reanimated (native thread, 60fps)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Emergency Border Overlay - Reanimated (native thread, 60fps)
+// -----------------------------------------------------------------------------
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const EmergencyOverlay = memo(function EmergencyOverlay() {
     const opacity = useSharedValue(0.3);
 
@@ -186,7 +184,7 @@ const EmergencyOverlay = memo(function EmergencyOverlay() {
             ),
             -1, // infinite
         );
-    }, []);
+    }, [opacity]);
 
     const animStyle = useAnimatedStyle(() => ({
         opacity: opacity.value,
@@ -202,32 +200,33 @@ const EmergencyOverlay = memo(function EmergencyOverlay() {
     );
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Emergency Heartbeat Aura â€” Reanimated double-pulse + haptic sync
-// Rhythm: lub (0.02â†’0.12) â€” dub (0.04â†’0.12) â€” rest (â†’0.02)
+// -----------------------------------------------------------------------------
+// Emergency Heartbeat Aura - Reanimated double-pulse + haptic sync
+// Rhythm: lub (0.02->0.12) - dub (0.04->0.12) - rest (->0.02)
 // Haptics fire on each peak via runOnJS for NFR-006 reliability
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
 const fireHapticLight = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const HeartbeatAura = memo(function HeartbeatAura() {
     const pulse = useSharedValue(0.02);
 
     useEffect(() => {
         pulse.value = withRepeat(
             withSequence(
-                // Lub â€” first peak
+                // Lub - first peak
                 withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
                 withTiming(0.04, { duration: 150, easing: REasing.in(REasing.quad) }),
-                // Dub â€” second peak
+                // Dub - second peak
                 withTiming(0.12, { duration: 250, easing: REasing.out(REasing.quad) }),
                 // Rest
                 withTiming(0.02, { duration: 800, easing: REasing.inOut(REasing.ease) }),
             ),
             -1, // infinite
         );
-    }, []);
+    }, [pulse]);
 
     const animStyle = useAnimatedStyle(() => {
         // Fire haptics at peaks (opacity > 0.10)
@@ -251,10 +250,10 @@ const HeartbeatAura = memo(function HeartbeatAura() {
     );
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Custom Marker â€” Electric Violet Glow (idle state)
+// -----------------------------------------------------------------------------
+// Custom Marker - Electric Violet Glow (idle state)
 // Replaces default Google pin with branded glow marker
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
 const VioletGlowMarker = memo(function VioletGlowMarker() {
     return (
         <View style={mkr.container}>
@@ -293,9 +292,9 @@ const mkr = StyleSheet.create({
     },
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Hold SOS Button â€” two-semicircle arc progress ring (RN Animated for arc)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Hold SOS Button - two-semicircle arc progress ring (RN Animated for arc)
+// -----------------------------------------------------------------------------
 const HoldSosButton = memo(function HoldSosButton({
     onTrigger,
     onPhaseChange,
@@ -303,8 +302,8 @@ const HoldSosButton = memo(function HoldSosButton({
     onTrigger: () => void;
     onPhaseChange?: (phase: 'idle' | 'holding' | 'armed') => void;
 }) {
-    const progress = useRef(new RNAnimated.Value(0)).current;
-    const scale = useRef(new RNAnimated.Value(1)).current;
+    const [progress] = useState(() => new RNAnimated.Value(0));
+    const [scale] = useState(() => new RNAnimated.Value(1));
     const holdRef = useRef<RNAnimated.CompositeAnimation | null>(null);
 
     const phaseRef = useRef<'idle' | 'holding' | 'armed'>('idle');
@@ -371,7 +370,7 @@ const HoldSosButton = memo(function HoldSosButton({
                 </View>
             </RNAnimated.View>
 
-            {/* SOS button â€” Electric Violet gradient with glow */}
+            {/* SOS button - Electric Violet gradient with glow */}
             <TouchableOpacity onPressIn={startHold} onPressOut={endHold} activeOpacity={1}>
                 <LinearGradient
                     colors={G.sosIdle.colors}
@@ -396,9 +395,9 @@ const hs = StyleSheet.create({
     leftFill: { left: 0 },
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// LIVE SOS Button â€” Heartbeat scale sync (1.0 â†” 1.05) via Reanimated
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// LIVE SOS Button - Heartbeat scale sync (1.0 <-> 1.05) via Reanimated
+// -----------------------------------------------------------------------------
 const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => void }) {
     return (
         <TouchableOpacity onPress={onPress} activeOpacity={0.82}>
@@ -413,9 +412,9 @@ const LiveSOSButton = memo(function LiveSOSButton({ onPress }: { onPress: () => 
     );
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Side Drawer â€” Feather icons
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Side Drawer - Feather icons
+// -----------------------------------------------------------------------------
 const DRAWER_ITEMS: { icon: React.ComponentProps<typeof Feather>['name']; label: string; danger?: boolean }[] = [
     { icon: 'user', label: 'Edit Profile' },
     { icon: 'phone-call', label: 'Emergency Contacts' },
@@ -436,13 +435,13 @@ const Drawer = memo(function Drawer({
     onLogoutRequest: () => void;
     onNavigate: (label: string) => void;
 }) {
-    const slideX = useRef(new RNAnimated.Value(-width * 0.76)).current;
+    const [slideX] = useState(() => new RNAnimated.Value(-width * 0.76));
     useEffect(() => {
         RNAnimated.spring(slideX, {
             toValue: visible ? 0 : -width * 0.76,
             useNativeDriver: true, tension: 62, friction: 13,
         }).start();
-    }, [visible]);
+    }, [slideX, visible]);
 
     const handleItem = useCallback((item: typeof DRAWER_ITEMS[number]) => {
         if (item.danger) {
@@ -482,13 +481,13 @@ const Drawer = memo(function Drawer({
     );
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// NavTab â€” icon + underline active indicator
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// NavTab - icon + underline active indicator
+// -----------------------------------------------------------------------------
 const NavTab = memo(function NavTab({
     tab, isActive, onPress,
 }: { tab: typeof NAV_TABS[number]; isActive: boolean; onPress: () => void }) {
-    const scale = useRef(new RNAnimated.Value(1)).current;
+    const [scale] = useState(() => new RNAnimated.Value(1));
 
     const handlePress = useCallback(() => {
         RNAnimated.sequence([
@@ -496,7 +495,7 @@ const NavTab = memo(function NavTab({
             RNAnimated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 300, friction: 14 }),
         ]).start();
         onPress();
-    }, [onPress]);
+    }, [onPress, scale]);
 
     return (
         <TouchableOpacity
@@ -521,12 +520,12 @@ const NavTab = memo(function NavTab({
     );
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Live Beacon Marker (emergency state â€” pulsing red rings)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Live Beacon Marker (emergency state - pulsing red rings)
+// -----------------------------------------------------------------------------
 const LiveBeacon = memo(function LiveBeacon() {
-    const ring1 = useRef(new RNAnimated.Value(0)).current;
-    const ring2 = useRef(new RNAnimated.Value(0)).current;
+    const [ring1] = useState(() => new RNAnimated.Value(0));
+    const [ring2] = useState(() => new RNAnimated.Value(0));
     useEffect(() => {
         const pulse = (a: RNAnimated.Value, delay: number) => {
             const loop = () => {
@@ -539,7 +538,7 @@ const LiveBeacon = memo(function LiveBeacon() {
             loop();
         };
         pulse(ring1, 0); pulse(ring2, 700);
-    }, []);
+    }, [ring1, ring2]);
     const ringStyle = (a: RNAnimated.Value) => ({
         transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [1, 2.8] }) }],
         opacity: a.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 0.18, 0] }),
@@ -561,9 +560,9 @@ const lb = StyleSheet.create({
     label: { marginTop: 3, fontSize: 8, fontWeight: '800', color: T.danger, letterSpacing: 1.1 },
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Main Screen â€” Premium Tactical Command Center
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Main Screen - Premium Tactical Command Center
+// -----------------------------------------------------------------------------
 export default function SOSScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -579,7 +578,6 @@ export default function SOSScreen() {
     const [cancelDuration, setCancelDuration] = useState(CANCEL_DURATION_DEFAULT);
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number } | null>(null);
-    const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
     const [address, setAddress] = useState('');
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
@@ -592,8 +590,6 @@ export default function SOSScreen() {
     const [logoutBlockModalVisible, setLogoutBlockModalVisible] = useState(false);
     const [deactivateSheetVisible, setDeactivateSheetVisible] = useState(false);
     const [stopConfirmMode, setStopConfirmMode] = useState<'cancel' | 'resolve'>('cancel');
-    const [searchActive, setSearchActive] = useState(false);
-    const [startSearchActive, setStartSearchActive] = useState(false);
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -609,7 +605,7 @@ export default function SOSScreen() {
     const [reviewRating, setReviewRating] = useState(5);
     const [reviewRemovingId, setReviewRemovingId] = useState<string | null>(null);
     const [reviewSubmitting, setReviewSubmitting] = useState(false);
-    const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
+    const [reviewExitAnim] = useState(() => new RNAnimated.Value(0));
 
     // Load profile picture on screen focus
     useFocusEffect(
@@ -646,71 +642,73 @@ export default function SOSScreen() {
         });
     }, []);
 
-    const handleNavigation = useCallback((tabId: string) => {
-        if (tabId === activeTab && tabId === 'Home') {
-            refreshAndRecenterMap();
-            return;
-        }
-        setActiveTab(tabId);
-        if (tabId === 'Chat') {
-            router.push('/(tabs)/users/standard-user/chat_home');
-        } else if (tabId === 'Explore') {
-            router.push('/(tabs)/users/standard-user/ExploreScreen');
-        } else if (tabId === 'Medical') {
-            router.push('/(tabs)/users/standard-user/MedicalDashboard');
-        }
-    }, [activeTab, router]);
-
     // Reset active tab and restore SOS state when screen regains focus
     useFocusEffect(
         useCallback(() => {
+            let isFocused = true;
             setActiveTab('Home');
-            import('expo-secure-store').then(SecureStore => {
-                SecureStore.getItemAsync('resqher_active_sos_v1').then(raw => {
-                    if (raw) {
-                        try {
-                            const parsed = JSON.parse(raw);
-                            if (parsed?.incidentId) {
-                                navigatedRef.current = true; // Prevent auto-redirect when restoring state
-                                setActiveIncidentId(parsed.incidentId);
-                                setSosActive(true);
-                                setCancelCountdown(0);
-                                setSosLive(true);
+            (async () => {
+                const SecureStore = await import('expo-secure-store');
+                const clearRestoredSos = async () => {
+                    await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+                    await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+                    if (!isFocused) return;
+                    setSosActive(false);
+                    setSosLive(false);
+                    setActiveIncidentId(null);
+                };
+
+                const raw = await SecureStore.getItemAsync('resqher_active_sos_v1');
+                if (!isFocused) return;
+
+                if (raw) {
+                    try {
+                        const parsed = JSON.parse(raw);
+                        const restoredIncidentId = String(parsed?.incidentId || '');
+                        const isBackendIncidentId = /^\d+$/.test(restoredIncidentId);
+                        if (isBackendIncidentId) {
+                            const incident = await incidentService.getOne(restoredIncidentId);
+                            if (!isFocused) return;
+                            const status = String(incident?.status || '').toUpperCase();
+                            if (status !== 'ACTIVE' && status !== 'IN_PROGRESS') {
+                                await clearRestoredSos();
+                                return;
                             }
-                        } catch { }
-                    } else {
-                        setSosActive(false);
-                        setSosLive(false);
-                        setActiveIncidentId(null);
+                            navigatedRef.current = true; // Prevent auto-redirect when restoring state
+                            setActiveIncidentId(restoredIncidentId);
+                            setSosActive(true);
+                            setCancelCountdown(0);
+                            setSosLive(true);
+                            return;
+                        }
+                    } catch {
+                        // Corrupt or stale local SOS state should not reopen an old chat.
                     }
-                });
-            });
-        }, [])
+                    await clearRestoredSos();
+                    return;
+                }
+
+                setSosActive(false);
+                setSosLive(false);
+                setActiveIncidentId(null);
+            })();
+
+            return () => { isFocused = false; };
+        }, [setSosLive])
     );
 
-    // Pulse ring anims (SOS active state â€” RN Animated for compatibility)
-    const p0s = useRef(new RNAnimated.Value(1)).current; const p0o = useRef(new RNAnimated.Value(0)).current;
-    const p1s = useRef(new RNAnimated.Value(1)).current; const p1o = useRef(new RNAnimated.Value(0)).current;
-    const p2s = useRef(new RNAnimated.Value(1)).current; const p2o = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnims = [
+    // Pulse ring anims (SOS active state - RN Animated for compatibility)
+    const [p0s] = useState(() => new RNAnimated.Value(1)); const [p0o] = useState(() => new RNAnimated.Value(0));
+    const [p1s] = useState(() => new RNAnimated.Value(1)); const [p1o] = useState(() => new RNAnimated.Value(0));
+    const [p2s] = useState(() => new RNAnimated.Value(1)); const [p2o] = useState(() => new RNAnimated.Value(0));
+    const pulseAnims = useMemo(() => [
         { scale: p0s, op: p0o },
         { scale: p1s, op: p1o },
         { scale: p2s, op: p2o },
-    ];
+    ], [p0o, p0s, p1o, p1s, p2o, p2s]);
 
     // Location
-    const loadConfirmedSafePlaces = useCallback(async () => {
-        try {
-            const places = await getConfirmedSafePlaces();
-            if (isMountedRef.current) setConfirmedSafePlaces(places);
-        } catch (err) {
-            console.warn('[SOS] Unable to load confirmed safe places:', err);
-            if (isMountedRef.current) setConfirmedSafePlaces([]);
-        }
-    }, []);
-
     const refreshAndRecenterMap = useCallback(async () => {
-        loadConfirmedSafePlaces();
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
@@ -730,7 +728,22 @@ export default function SOSScreen() {
             console.warn('[SOS] Unable to refresh map location:', err);
             if (isMountedRef.current) mapRef.current?.animateToRegion(DEFAULT_REGION, 600);
         }
-    }, [loadConfirmedSafePlaces]);
+    }, []);
+
+    const handleNavigation = useCallback((tabId: string) => {
+        if (tabId === activeTab && tabId === 'Home') {
+            refreshAndRecenterMap();
+            return;
+        }
+        setActiveTab(tabId);
+        if (tabId === 'Chat') {
+            router.push('/(tabs)/users/standard-user/chat_home');
+        } else if (tabId === 'Explore') {
+            router.push('/(tabs)/users/standard-user/ExploreScreen');
+        } else if (tabId === 'Medical') {
+            router.push('/(tabs)/users/standard-user/MedicalDashboard');
+        }
+    }, [activeTab, refreshAndRecenterMap, router]);
 
     useFocusEffect(
         useCallback(() => {
@@ -769,9 +782,9 @@ export default function SOSScreen() {
             };
             setTimeout(loop, i * 700);
         });
-    }, []);
+    }, [pulseAnims]);
 
-    // SOS logic â€” create incident and start cancel countdown
+    // SOS logic - create incident and start cancel countdown
     const completeSOSCountdown = useCallback(async (createSeq: number) => {
         let lat = userLoc?.latitude;
         let lng = userLoc?.longitude;
@@ -799,13 +812,15 @@ export default function SOSScreen() {
             }
 
             const id = String(incident.id);
+            const displayNumber = Number(incident.id);
+            if (!id || !Number.isFinite(displayNumber)) {
+                throw new Error('Incident response did not include a valid backend incident ID.');
+            }
             setActiveIncidentId(id);
             setSosLive(true);
 
             const SecureStore = await import('expo-secure-store');
-            const raw = await SecureStore.getItemAsync('resqher_sos_count_v1');
-            const displayNumber = raw ? parseInt(raw, 10) + 1 : 1;
-            await SecureStore.setItemAsync('resqher_sos_count_v1', String(displayNumber));
+            await SecureStore.deleteItemAsync('resqher_sos_count_v1');
             const createdAt = new Date().toISOString();
             await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
                 incidentId: id, displayNumber, lat, lng, address: address || '', createdAt,
@@ -936,6 +951,13 @@ export default function SOSScreen() {
     const openReviewPopup = useCallback(async (incidentId: string | null) => {
         if (!incidentId || incidentId.startsWith('temp-') || incidentId === 'sos-new') return;
         // Show the card immediately so there is no perceived delay.
+        setReviewIncidentId(incidentId);
+        setReviewQueue([]);
+        setReviewFeedback('');
+        setReviewRating(5);
+        setReviewRemovingId(null);
+        setReviewSubmitting(false);
+        reviewExitAnim.setValue(0);
         setReviewVisible(true);
         setReviewLoading(true);
         try {
@@ -946,7 +968,6 @@ export default function SOSScreen() {
                 setReviewLoading(false);
                 return;
             }
-            setReviewIncidentId(incidentId);
             setReviewQueue(volunteers);
         } catch (error) {
             console.warn('[SOS] Unable to load responders for review:', error);
@@ -954,7 +975,7 @@ export default function SOSScreen() {
         } finally {
             if (isMountedRef.current) setReviewLoading(false);
         }
-    }, [loadReviewVolunteers]);
+    }, [loadReviewVolunteers, reviewExitAnim]);
 
     const closeReviewPopup = useCallback(() => {
         setReviewVisible(false);
@@ -1014,30 +1035,32 @@ export default function SOSScreen() {
         setSosLive(false);
         navigatedRef.current = false;
         const incId = activeIncidentId;
-        setActiveIncidentId(null);
-        try {
-            await import('expo-secure-store').then(ss => {
-                ss.deleteItemAsync('resqher_active_sos_v1');
-                ss.deleteItemAsync('resqher_sos_autosent_v1');
-            });
-            if (incId && !incId.startsWith('temp-') && incId !== 'sos-new') {
-                await incidentService.resolveIncident(incId);
-            }
-            if (incId) {
-                const { incidentHistory } = await import('../../../../src/services/incidentHistory');
-                await incidentHistory.updateStatus(incId, 'RESOLVED');
-                const { notificationStore } = await import('../../../../src/services/notificationStore');
-                await notificationStore.add({
-                    type: 'incident_resolved',
-                    title: 'SOS Resolved',
-                    body: 'Your emergency has been marked as resolved.',
-                    incidentId: incId,
-                    createdAt: new Date().toISOString(),
-                });
-            }
-        } catch { /* best-effort */ }
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         openReviewPopup(incId);
+        setActiveIncidentId(null);
+        void (async () => {
+            try {
+                await import('expo-secure-store').then(ss => {
+                    ss.deleteItemAsync('resqher_active_sos_v1');
+                    ss.deleteItemAsync('resqher_sos_autosent_v1');
+                });
+                if (incId && !incId.startsWith('temp-') && incId !== 'sos-new') {
+                    await incidentService.resolveIncident(incId);
+                }
+                if (incId) {
+                    const { incidentHistory } = await import('../../../../src/services/incidentHistory');
+                    await incidentHistory.updateStatus(incId, 'RESOLVED');
+                    const { notificationStore } = await import('../../../../src/services/notificationStore');
+                    await notificationStore.add({
+                        type: 'incident_resolved',
+                        title: 'SOS Resolved',
+                        body: 'Your emergency has been marked as resolved.',
+                        incidentId: incId,
+                        createdAt: new Date().toISOString(),
+                    });
+                }
+            } catch { /* best-effort */ }
+        })();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }, [activeIncidentId, setSosLive, openReviewPopup]);
 
     const confirmStop = useCallback(() => {
@@ -1053,12 +1076,14 @@ export default function SOSScreen() {
         else if (label === 'Privacy & Security') router.push('/(tabs)/users/standard-user/privacy-security');
     }, [router]);
 
-    const handleLogoutRequest = useCallback(() => {
+    const handleLogoutRequest = useCallback(async () => {
         if (isSosLive) {
             setLogoutBlockModalVisible(true);
         } else {
-            // No active SOS — sign out immediately
-            signOut().then(() => router.replace('/(auth)/login'));
+            const signedOut = await signOut(() => setLogoutBlockModalVisible(true));
+            if (signedOut) {
+                router.replace('/(auth)/login');
+            }
         }
     }, [isSosLive, signOut, router]);
 
@@ -1198,7 +1223,7 @@ export default function SOSScreen() {
                             </View>
                             <Text style={s.modalTitle}>Cannot Logout</Text>
                             <Text style={s.modalBody}>
-                                You have an active SOS emergency in progress. Please resolve your incident before logging out.
+                                You have an active SOS emergency. Please stop or resolve the SOS before logging out.
                             </Text>
 
                             <TouchableOpacity
@@ -1313,7 +1338,7 @@ export default function SOSScreen() {
                     </View>
                 </Modal>
 
-                {/* Map â€” Encrypted Professional Dark Tactical Style */}
+                {/* Map - Encrypted Professional Dark Tactical Style */}
                 <MapView
                     ref={mapRef}
                     style={StyleSheet.absoluteFill}
@@ -1325,18 +1350,6 @@ export default function SOSScreen() {
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
                 >
-                    {confirmedSafePlaces.map((place) => (
-                        <Marker
-                            key={`confirmed-safe-place-${place.id}`}
-                            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
-                            tracksViewChanges={true}
-                            pinColor={T.violet}
-                            title="Safe Place"
-                            description={place.description || place.address || place.name}
-                            zIndex={700}
-                        />
-                    ))}
-
                     {userLoc && !isEmergencyLive && (
                         <Marker coordinate={userLoc} tracksViewChanges={false}>
                             <VioletGlowMarker />
@@ -1351,7 +1364,7 @@ export default function SOSScreen() {
 
                 {locationStatus === 'idle' && <PulseRadar />}
 
-                {/* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- Header --------------------------------------------------- */}
                 <PremiumBar
                     style={[s.header, { top: insets.top + 8 }]}
                     contentStyle={s.headerContent}
@@ -1384,10 +1397,10 @@ export default function SOSScreen() {
                     </View>
                 </PremiumBar>
 
-                {/* â”€â”€ 12px Breathing Space Spacer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- 12px Breathing Space Spacer -------------------------------- */}
                 <View style={{ marginTop: 12 }} />
 
-                {/* â”€â”€ Map controls â€” High contrast GPS/Recenter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- Map controls - High contrast GPS/Recenter ----------------- */}
                 <View style={[s.mapControls, { bottom: insets.bottom + SOS_BOTTOM + SOS_WRAP_SIZE - 10 }]}>
                     <View style={[s.gpsPill, isEmergencyLive && s.gpsPillEmg]}>
                         <View style={[s.gpsDot, {
@@ -1396,7 +1409,7 @@ export default function SOSScreen() {
                                     locationStatus === 'ready' ? T.success : T.ink4,
                         }]} />
                         <Text style={[s.gpsTxt, isEmergencyLive && s.gpsTxtEmg]}>
-                            {locationStatus !== 'idle' ? 'GPS' : 'â€¦'}
+                            {locationStatus !== 'idle' ? 'GPS' : '...'}
                         </Text>
                     </View>
                     <TouchableOpacity style={s.ctrlBtn} onPress={goToMyLoc} accessibilityLabel="Recenter map" accessibilityRole="button">
@@ -1404,7 +1417,7 @@ export default function SOSScreen() {
                     </TouchableOpacity>
                 </View>
 
-                {/* â”€â”€ SOS Section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- SOS Section ----------------------------------------------- */}
                 <View
                     pointerEvents="box-none"
                     style={[s.sosSection, { top: sosTop }]}
@@ -1449,7 +1462,7 @@ export default function SOSScreen() {
                             <View style={[s.pillDot, { backgroundColor: T.danger }]} />
                             <Text style={[s.pillTxt, isEmergencyLive && s.pillTxtLive]}>
                                 {cancelCountdown > 0
-                                    ? `Alert triggered Â· Cancel in ${cancelCountdown}s`
+                                    ? `Alert triggered - Cancel in ${cancelCountdown}s`
                                     : 'Sharing your location'
                                 }
                             </Text>
@@ -1457,7 +1470,21 @@ export default function SOSScreen() {
                     )}
                 </View>
 
-                {/* â”€â”€ Bottom Navbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- Bottom Navbar ------------------------------------------- */}
+                <AICopilotFloatingButton
+                    role="standard"
+                    storageKey="standard-home"
+                    bottom={NAV_BOT_OFFSET + NAV_HEIGHT + 22}
+                    hidden={
+                        sosActive
+                        || drawerOpen
+                        || reviewVisible
+                        || deactivateSheetVisible
+                        || endSosModalVisible
+                        || logoutBlockModalVisible
+                    }
+                />
+
                 <View style={[s.navWrap, { bottom: navBottom }]} pointerEvents="box-none">
                     <PremiumBar style={s.navBar} contentStyle={s.navBarContent}>
                         {NAV_TABS.map(tab => (
@@ -1475,9 +1502,9 @@ export default function SOSScreen() {
     );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Tactical Map Style â€” dark blue-charcoal base, visible hierarchy
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// Tactical Map Style - dark blue-charcoal base, visible hierarchy
+// -----------------------------------------------------------------------------
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -1501,15 +1528,15 @@ const TACTICAL_MAP_STYLE = [
     { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#6a7a90' }] },
 ];
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// StyleSheet â€” Premium Tactical Command Center
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -----------------------------------------------------------------------------
+// StyleSheet - Premium Tactical Command Center
+// -----------------------------------------------------------------------------
 const s = StyleSheet.create({
     root: { flex: 1, backgroundColor: '#090514' },  // Matches AtmosphericShell gradient end
 
     header: {
         position: 'absolute', left: 14, right: 14,
-        borderRadius: 28,  // Bulky Glass Mandate â€” matches Hub cards
+        borderRadius: 28,  // Bulky Glass Mandate - matches Hub cards
         zIndex: 300,
         ...Platform.select({
             ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
@@ -1719,7 +1746,7 @@ const s = StyleSheet.create({
     drawerLabelDanger: { color: T.danger },
     drawerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid, marginHorizontal: 18, marginVertical: 6 },
 
-    // â”€â”€ Themed Confirmation Modals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Themed Confirmation Modals -------------------------------------------
     modalOverlay: {
         ...StyleSheet.absoluteFill,
         alignItems: 'center',

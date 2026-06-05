@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
@@ -473,6 +473,56 @@ export default function PoliceLiveMap() {
     }
   }, [handleIncidentEnded, incidentId, refreshVictimFromIncident, requestId]);
 
+  const refreshPoliceGpsLocation = useCallback(async ({ showFallbackAlert = false } = {}) => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        if (showFallbackAlert) {
+          Alert.alert('Location required', 'Enable location access to use your current police location.');
+        }
+        return null;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
+      const next = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        heading: pos.coords.heading,
+      };
+      setPoliceLoc(next);
+      return next;
+    } catch (err) {
+      if (isDev) console.warn('[PoliceLiveMap] Unable to refresh GPS location:', err);
+      try {
+        const lastKnown = await Location.getLastKnownPositionAsync();
+        if (lastKnown) {
+          const fallback = {
+            latitude: lastKnown.coords.latitude,
+            longitude: lastKnown.coords.longitude,
+            heading: lastKnown.coords.heading,
+          };
+          setPoliceLoc(fallback);
+          if (showFallbackAlert) {
+            Alert.alert('Location fallback', 'Unable to refresh GPS right now. Using your last known location.');
+          }
+          return fallback;
+        }
+      } catch {
+        // No last-known fallback available.
+      }
+      if (showFallbackAlert) {
+        Alert.alert('Location unavailable', 'Unable to get your current location right now.');
+      }
+      return null;
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshPoliceGpsLocation().catch(() => undefined);
+    }, [refreshPoliceGpsLocation])
+  );
+
   useEffect(() => {
     let mounted = true;
 
@@ -480,14 +530,9 @@ export default function PoliceLiveMap() {
       .then(async ({ status }) => {
         if (status !== 'granted') return;
 
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        const initial = await refreshPoliceGpsLocation();
         if (!mounted) return;
-
-        setPoliceLoc({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          heading: pos.coords.heading,
-        });
+        if (!initial) return;
 
         watcherRef.current = await Location.watchPositionAsync(
           {
@@ -511,7 +556,7 @@ export default function PoliceLiveMap() {
       watcherRef.current?.remove();
       watcherRef.current = null;
     };
-  }, []);
+  }, [refreshPoliceGpsLocation]);
 
   useEffect(() => {
     const initialTimer = setTimeout(() => {
@@ -819,10 +864,15 @@ export default function PoliceLiveMap() {
         onPrevious={() => setCurrentStepIdx((prev) => Math.max(prev - 1, 0))}
         onNext={() => setCurrentStepIdx((prev) => Math.min(prev + 1, navInstructions.length - 1))}
         onGoLive={() => {
-          if (!canGoLive) return;
-          setShowReview(false);
-          setIsLive(true);
-          setAudioEnabled(true);
+          void (async () => {
+            if (!canGoLive || !victimLoc) return;
+            const origin = await refreshPoliceGpsLocation({ showFallbackAlert: true });
+            if (!origin) return;
+            setShowReview(false);
+            await loadRoute(origin, victimLoc);
+            setIsLive(true);
+            setAudioEnabled(true);
+          })();
         }}
         onToggleReview={() => setShowReview((prev) => !prev)}
         onExitLive={() => {

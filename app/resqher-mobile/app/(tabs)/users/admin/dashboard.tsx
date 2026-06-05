@@ -65,6 +65,7 @@ function LawRequestPreviewCard({ item, onPress }: { item: any; onPress: () => vo
   const inactiveStatus = INACTIVE_LAW_STATUSES.has(incidentStatus) ? incidentStatus : INACTIVE_LAW_STATUSES.has(requestStatus) ? requestStatus : null;
   const assigned = !inactiveStatus && ['ASSIGNED_TO_POLICE', 'ACCEPTED_BY_POLICE'].includes(requestStatus);
   const badgeText = inactiveStatus ? statusLabel(inactiveStatus) : assigned ? 'Assigned' : statusLabel(requestStatus || 'Pending');
+  const severity = String(item.severity || 'LOW').toUpperCase();
 
   return (
     <TouchableOpacity style={ds.lawQuickItem} activeOpacity={0.82} onPress={onPress}>
@@ -79,8 +80,16 @@ function LawRequestPreviewCard({ item, onPress }: { item: any; onPress: () => vo
           {badgeText}
         </Text>
       </View>
+      <Text style={[
+        ds.lawSeverity,
+        severity === 'CRITICAL' && ds.lawSeverityCritical,
+        severity === 'HIGH' && ds.lawSeverityHigh,
+        severity === 'MEDIUM' && ds.lawSeverityMedium,
+      ]}>
+        {severity}
+      </Text>
       <Text style={ds.quickSub} numberOfLines={1}>{item.victimName || item.requesterName || 'SOS requester'}</Text>
-      <Text style={ds.quickSub} numberOfLines={2}>{item.address || 'Location unavailable'}</Text>
+      <Text style={ds.quickSub} numberOfLines={2}>{item.summaryPreview || item.address || 'Location unavailable'}</Text>
       <View style={ds.lawQuickFooter}>
         <Text style={ds.quickSub}>{shortTime(item.createdAt)}</Text>
         <Text style={ds.quickSub}>{item.assignedToAll ? 'All approved police' : item.assignedPoliceName || item.assignedPolice?.name || 'Unassigned'}</Text>
@@ -759,6 +768,10 @@ const ds = StyleSheet.create({
   lawBadgeAssigned: { backgroundColor: T.safeLight, color: T.success },
   lawBadgeResolved: { backgroundColor: T.safeLight, color: T.success },
   lawBadgeCancelled: { backgroundColor: T.dangerLight, color: T.dangerText },
+  lawSeverity: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.06)', color: T.ink3, fontSize: 10, fontWeight: '900', marginBottom: 5 },
+  lawSeverityMedium: { backgroundColor: T.accentLight, color: T.accent },
+  lawSeverityHigh: { backgroundColor: 'rgba(245,158,11,0.16)', color: T.gold },
+  lawSeverityCritical: { backgroundColor: T.dangerLight, color: T.dangerText },
   emptyQuickText: { fontSize: 13, color: T.ink4, paddingVertical: 18, textAlign: 'center' },
 
   /* Column layouts */

@@ -14,6 +14,11 @@ const userController = require('./user.controller');
 // All user routes require authentication
 router.use(authenticate);
 
+router.get('/connected-users', userController.getConnectedUsers);
+router.get('/blocked-users', userController.getBlockedUsers);
+router.post('/block', requireActiveAccount, userController.blockUser);
+router.delete('/block/:blockedUserId', requireActiveAccount, userController.unblockUser);
+
 /**
  * GET /api/users/me — Fetch authenticated user's profile
  * Returns: { user: { id, role, firstName, lastName, phoneNumber, photoUrl, ... } }

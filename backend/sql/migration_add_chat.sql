@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_chat_incident_id (incident_id),
+  KEY idx_chat_incident_created (incident_id, created_at, id),
   KEY idx_chat_sender_id (sender_id),
   CONSTRAINT fk_chat_incident FOREIGN KEY (incident_id)
     REFERENCES incidents (id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -34,6 +35,21 @@ CREATE TABLE IF NOT EXISTS incident_participants (
   CONSTRAINT fk_part_user FOREIGN KEY (user_id)
     REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
 );
+
+SET @has_chat_incident_created := (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'chat_messages'
+    AND INDEX_NAME = 'idx_chat_incident_created'
+);
+SET @sql := IF(@has_chat_incident_created = 0,
+  'ALTER TABLE chat_messages ADD KEY idx_chat_incident_created (incident_id, created_at, id)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+ALTER TABLE chat_messages
+  MODIFY COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT';
 
 SET @has_archived_at := (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS

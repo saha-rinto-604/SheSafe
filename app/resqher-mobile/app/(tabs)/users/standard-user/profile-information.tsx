@@ -14,9 +14,8 @@ import {
     ScrollView,
     TouchableOpacity,
     StatusBar,
-    Image,
 } from 'react-native';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { T, R, S } from '../../../../src/constants/theme';

@@ -8,17 +8,15 @@ import React, { useRef, useState, useEffect, useCallback, useMemo, memo } from '
 import {
     View, Text, TouchableOpacity, StyleSheet, Alert,
     Dimensions, StatusBar, Platform, ViewStyle,
-    TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, Image, PanResponder,
-    BackHandler, AppState,
-} from 'react-native';
-import { Animated as RNAnimated, Easing } from 'react-native';
+    TextInput, Keyboard, KeyboardAvoidingView, Pressable, Modal, ScrollView, PanResponder, ActivityIndicator,
+    AppState,
+ Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import Svg, { Path, Circle as SvgCircle, Rect, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
-import { Ionicons } from '@expo/vector-icons';
-import { Feather } from '@expo/vector-icons';
+import { Ionicons , Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,10 +25,11 @@ import { G } from '../../../../src/constants/gradients';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import VolunteerNavbar from '../../../../src/components/VolunteerBottomNav';
+import AICopilotFloatingButton from '../../../../components/AICopilotFloatingButton';
 
 import { useAuth } from '../../../../src/context/AuthContext';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
-import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone, type NearbyIncident } from '../../../../src/services/incidentService';
+import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone, type MyActiveSosIncident, type NearbyIncident } from '../../../../src/services/incidentService';
 import { getConfirmedSafePlaces, mapSafePlaceToDestination, type SafePlace } from '../../../../src/services/safePlaceService';
 import api from '../../../../src/services/api';
 import { useDispatchSocket } from '../../../../src/hooks/useDispatchSocket';
@@ -101,7 +100,8 @@ type PlaceIncident = {
 };
 
 function isLiveSosStatus(status?: string): boolean {
-    return String(status || '').toUpperCase() === 'ACTIVE';
+    const normalized = String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
+    return normalized === 'ACTIVE' || normalized === 'LIVE' || normalized === 'IN_PROGRESS';
 }
 
 function formatIncidentTime(value?: string | Date | null): string {
@@ -116,94 +116,6 @@ function formatIncidentTime(value?: string | Date | null): string {
     if (hours < 24) return `${hours} hr ago`;
     const days = Math.floor(hours / 24);
     return days === 1 ? 'Yesterday' : `${days} days ago`;
-}
-
-function isRedIncidentZone(zone: any): boolean {
-    const incidentCount = Number(zone?.incidentCount ?? zone?.incident_count ?? zone?.count ?? zone?.incidents?.length ?? 0);
-    return incidentCount >= 5;
-}
-
-/** Returns an object indicating safety and the name of the avoided zone if applicable. */
-function checkRouteSafety(coordinates: LatLng[], zones: any[]): { isSafe: boolean; blockedZoneName?: string } {
-    if (coordinates.length === 0) return { isSafe: true };
-
-    for (let i = 0; i < coordinates.length - 1; i++) {
-        const p1 = coordinates[i];
-        const p2 = coordinates[i + 1];
-
-        for (const zone of zones) {
-            if (!isRedIncidentZone(zone)) continue;
-            if (haversineDistance(p1, zone) <= zone.radius) {
-                return { isSafe: false, blockedZoneName: zone.name };
-            }
-        }
-
-        const dist = haversineDistance(p1, p2);
-        const SEGMENT_CHECK_INTERVAL_M = 20;
-
-        if (dist > SEGMENT_CHECK_INTERVAL_M) {
-            const steps = Math.ceil(dist / SEGMENT_CHECK_INTERVAL_M);
-            for (let j = 1; j < steps; j++) {
-                const fraction = j / steps;
-                const interpPoint = {
-                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
-                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
-                };
-
-                for (const zone of zones) {
-                    if (!isRedIncidentZone(zone)) continue;
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
-                        return { isSafe: false, blockedZoneName: zone.name };
-                    }
-                }
-            }
-        }
-    }
-
-    const lastPoint = coordinates[coordinates.length - 1];
-    for (const zone of zones) {
-        if (!isRedIncidentZone(zone)) continue;
-        if (haversineDistance(lastPoint, zone) <= zone.radius) {
-            return { isSafe: false, blockedZoneName: zone.name };
-        }
-    }
-
-    return { isSafe: true };
-}
-
-/** Computes route risk dynamically — heavily penalizes Red blocks while tracking Yellow cells gently */
-function getRouteRiskScore(coordinates: LatLng[], zones: any[]): number {
-    let score = 0;
-    if (coordinates.length === 0) return 0;
-
-    for (let i = 0; i < coordinates.length - 1; i++) {
-        const p1 = coordinates[i];
-        const p2 = coordinates[i + 1];
-
-        for (const zone of zones) {
-            if (haversineDistance(p1, zone) <= zone.radius) {
-                score += isRedIncidentZone(zone) ? 25 : 1;
-            }
-        }
-
-        const dist = haversineDistance(p1, p2);
-        if (dist > 20) {
-            const steps = Math.ceil(dist / 20);
-            for (let j = 1; j < steps; j++) {
-                const fraction = j / steps;
-                const interpPoint = {
-                    latitude: p1.latitude + (p2.latitude - p1.latitude) * fraction,
-                    longitude: p1.longitude + (p2.longitude - p1.longitude) * fraction
-                };
-                for (const zone of zones) {
-                    if (haversineDistance(interpPoint, zone) <= zone.radius) {
-                        score += isRedIncidentZone(zone) ? 25 : 1;
-                    }
-                }
-            }
-        }
-    }
-    return score;
 }
 
 const stripHtml = (html: string): string => html.replace(/<[^>]*>/g, '');
@@ -328,10 +240,10 @@ function decodePolyline(encoded: string): LatLng[] {
 }
 
 const PulseRadar = memo(function PulseRadar() {
-    const a0 = useRef(new RNAnimated.Value(0)).current;
-    const a1 = useRef(new RNAnimated.Value(0)).current;
-    const a2 = useRef(new RNAnimated.Value(0)).current;
-    const anims = [a0, a1, a2];
+    const [a0] = useState(() => new RNAnimated.Value(0));
+    const [a1] = useState(() => new RNAnimated.Value(0));
+    const [a2] = useState(() => new RNAnimated.Value(0));
+    const anims = useMemo(() => [a0, a1, a2], [a0, a1, a2]);
 
     useEffect(() => {
         anims.forEach((a, i) => {
@@ -345,7 +257,7 @@ const PulseRadar = memo(function PulseRadar() {
             };
             loop();
         });
-    }, []);
+    }, [anims]);
 
     return (
         <View style={rdr.wrap} pointerEvents="none">
@@ -559,8 +471,8 @@ const HoldSosButton = memo(function HoldSosButton({
     onTrigger: () => void;
     onPhaseChange?: (phase: 'idle' | 'holding' | 'armed') => void;
 }) {
-    const progress = useRef(new RNAnimated.Value(0)).current;
-    const scale = useRef(new RNAnimated.Value(1)).current;
+    const [progress] = useState(() => new RNAnimated.Value(0));
+    const [scale] = useState(() => new RNAnimated.Value(1));
     const holdRef = useRef<RNAnimated.CompositeAnimation | null>(null);
 
     const phaseRef = useRef<'idle' | 'holding' | 'armed'>('idle');
@@ -669,13 +581,13 @@ export default function VolunteerHome() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const mapRef = useRef<MapViewRef>(null);
-    const { signOut } = useAuth();
+    const { signOut, setSosLive } = useAuth();
     const searchInputRef = useRef<TextInput>(null);
     const startInputRef = useRef<TextInput>(null);
-    const { playRouteAudio, stopRouteAudio } = useRouteAudio('VolunteerHome');
+    const { playRouteAudio, stopRouteAudio, routeAudioActiveRef } = useRouteAudio('VolunteerHome');
 
     const [locationStatus, setLocationStatus] = useState<'idle' | 'ready' | 'sharing'>('idle');
-    const [locationRetryKey, setLocationRetryKey] = useState(0);
+    const [, setLocationRetryKey] = useState(0);
     const [userLoc, setUserLoc] = useState<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const userLocRef = useRef<{ latitude: number; longitude: number; heading?: number } | null>(null);
     const [travelMode, setTravelMode] = useState<'driving' | 'walking' | 'motorcycle' | 'transit'>('walking');
@@ -692,6 +604,7 @@ export default function VolunteerHome() {
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [verificationRecord, setVerificationRecord] = useState<VerificationRecord | null>(null);
     const [verificationGateVisible, setVerificationGateVisible] = useState(false);
+    const [sosLogoutBlockedVisible, setSosLogoutBlockedVisible] = useState(false);
     const verificationNavRef = useRef(false);
     const [selectedPlace, setSelectedPlace] = useState<PlaceSuggestion | null>(null);
     const [recentPlaces, setRecentPlaces] = useState<PlaceSuggestion[]>([]);
@@ -708,9 +621,10 @@ export default function VolunteerHome() {
     const [activeIncidentId, setActiveIncidentId] = useState<string | null>(null);
     const [cancelCountdown, setCancelCountdown] = useState(CANCEL_DURATION_DEFAULT);
     const [isEmergencyLive, setIsEmergencyLive] = useState(false);
-    const [sosStage, setSosStage] = useState<'idle' | 'requesting' | 'responding'>('idle');
+    const [, setSosStage] = useState<'idle' | 'requesting' | 'responding'>('idle');
     const [stopConfirmVisible, setStopConfirmVisible] = useState(false);
     const [reviewVisible, setReviewVisible] = useState(false);
+    const [reviewLoading, setReviewLoading] = useState(false);
     const [reviewQueue, setReviewQueue] = useState<{ id: string; name: string; avatarUri: string | null }[]>([]);
     const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
@@ -724,9 +638,9 @@ export default function VolunteerHome() {
 
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const sosTransitionRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const sosTransitionAnim = useRef(new RNAnimated.Value(0)).current;
-    const reviewExitAnim = useRef(new RNAnimated.Value(0)).current;
-    const safePlaceSuccessAnim = useRef(new RNAnimated.Value(0)).current;
+    const [sosTransitionAnim] = useState(() => new RNAnimated.Value(0));
+    const [reviewExitAnim] = useState(() => new RNAnimated.Value(0));
+    const [safePlaceSuccessAnim] = useState(() => new RNAnimated.Value(0));
     const [directionsMode, setDirectionsMode] = useState(false);
     const [startLocation, setStartLocation] = useState<PlaceSuggestion | null>(null);
     const [endLocation, setEndLocation] = useState<PlaceSuggestion | null>(null);
@@ -752,6 +666,8 @@ export default function VolunteerHome() {
     const [showSafePlace, setShowSafePlace] = useState(false);
     const [locationErrorVisible, setLocationErrorVisible] = useState(false);
     const [locationErrorMessage, setLocationErrorMessage] = useState<string | null>(null);
+    const [sosNoticeVisible, setSosNoticeVisible] = useState(false);
+    const [sosNoticeMessage, setSosNoticeMessage] = useState<string | null>(null);
     const [safePlaceCoords, setSafePlaceCoords] = useState<LatLng[]>([]);
     const [activeSosView, setActiveSosView] = useState<SosRequest | null>(null);
     const [sosRequests, setSosRequests] = useState<SosRequest[]>([]);
@@ -773,6 +689,7 @@ export default function VolunteerHome() {
     const offRouteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastRerouteAtRef = useRef(0);
     const volunteerSosCreateSeqRef = useRef(0);
+    const activeSosHydrateSeqRef = useRef(0);
 
     const navigateSafely = useCallback((path: string, replace = false) => {
         if (navigationGuardRef.current) return;
@@ -811,7 +728,7 @@ export default function VolunteerHome() {
     }, [router, stopRouteAudio]);
 
     const [incidentZones, setIncidentZones] = useState<IncidentZone[]>([]);
-    const [zonesLoading, setZonesLoading] = useState(true);
+    const [, setZonesLoading] = useState(true);
     const [zonesError, setZonesError] = useState<string | null>(null);
     const [confirmedSafePlaces, setConfirmedSafePlaces] = useState<SafePlace[]>([]);
     const safePlaceTapRef = useRef<{ id: string; at: number } | null>(null);
@@ -821,6 +738,10 @@ export default function VolunteerHome() {
             .map(normalizeIncidentZone)
             .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
     }, [incidentZones]);
+    const normalizedIncidentZonesRef = useRef<IncidentZone[]>(normalizedIncidentZones);
+    useEffect(() => {
+        normalizedIncidentZonesRef.current = normalizedIncidentZones;
+    }, [normalizedIncidentZones]);
     const selectedPlaceZoneSeverity = useMemo(() => {
         if (!selectedPlace?.id.startsWith('zone-')) return selectedPlace?.zoneSeverity;
         const zone = normalizedIncidentZones.find(item => selectedPlace.id === `zone-${item.id}`);
@@ -902,14 +823,17 @@ export default function VolunteerHome() {
 
     useEffect(() => {
         isMountedRef.current = true;
-        fetchLiveZones();
-        fetchConfirmedSafePlaces();
+        const initialTimer = setTimeout(() => {
+            fetchLiveZones();
+            fetchConfirmedSafePlaces();
+        }, 0);
         const interval = setInterval(() => {
             fetchLiveZones();
             fetchConfirmedSafePlaces();
         }, 60_000);
         return () => {
             isMountedRef.current = false;
+            clearTimeout(initialTimer);
             clearInterval(interval);
             if (offRouteTimerRef.current) {
                 clearTimeout(offRouteTimerRef.current);
@@ -1013,25 +937,6 @@ export default function VolunteerHome() {
         }
     }, [navigateSafely]);
 
-    // Load profile picture and verification status from backend on screen focus.
-    useFocusEffect(
-        useCallback(() => {
-            refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification refresh failed:', err));
-            refreshAndRecenterMap();
-
-            return undefined;
-        }, [refreshVolunteerAccess, refreshAndRecenterMap]),
-    );
-
-    useEffect(() => {
-        const sub = AppState.addEventListener('change', (state) => {
-            if (state === 'active') {
-                refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification resume refresh failed:', err));
-            }
-        });
-        return () => sub.remove();
-    }, [refreshVolunteerAccess]);
-
     useEffect(() => {
         if (verificationRecord?.status !== 'pending') return;
         const interval = setInterval(() => {
@@ -1042,38 +947,132 @@ export default function VolunteerHome() {
 
     const handleVerificationLogout = useCallback(async () => {
         setVerificationGateVisible(false);
-        await signOut();
-        navigateSafely('/(auth)/login', true);
+        const signedOut = await signOut(() => setSosLogoutBlockedVisible(true));
+        if (signedOut) {
+            navigateSafely('/(auth)/login', true);
+        }
     }, [navigateSafely, signOut]);
 
     const needsVolunteerVerification = verificationRecord?.status !== 'verified';
 
     // Animation values
-    const searchProgress = useRef(new RNAnimated.Value(0)).current;
-    const locationCardY = useRef(new RNAnimated.Value(300)).current;
-    const locationCardOpacity = useRef(new RNAnimated.Value(0)).current;
-    const placeSheetY = useRef(new RNAnimated.Value(height)).current;
-    const placeSheetOpacity = useRef(new RNAnimated.Value(0)).current;
-    const placeSheetDragY = useRef(new RNAnimated.Value(0)).current;
-    const directionsProgress = useRef(new RNAnimated.Value(0)).current;
-    const scanAnim = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim0 = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim1 = useRef(new RNAnimated.Value(0)).current;
-    const radarAnim2 = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim0 = useRef(new RNAnimated.Value(1)).current;
-    const pulseAnim0Op = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim1 = useRef(new RNAnimated.Value(1)).current;
-    const pulseAnim1Op = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnim2 = useRef(new RNAnimated.Value(1)).current;
-    const pulseAnim2Op = useRef(new RNAnimated.Value(0)).current;
-    const pulseAnims = [
+    const [searchProgress] = useState(() => new RNAnimated.Value(0));
+    const [locationCardY] = useState(() => new RNAnimated.Value(300));
+    const [locationCardOpacity] = useState(() => new RNAnimated.Value(0));
+    const [placeSheetY] = useState(() => new RNAnimated.Value(height));
+    const [placeSheetOpacity] = useState(() => new RNAnimated.Value(0));
+    const [placeSheetDragY] = useState(() => new RNAnimated.Value(0));
+    const [directionsProgress] = useState(() => new RNAnimated.Value(0));
+    const [scanAnim] = useState(() => new RNAnimated.Value(0));
+    const [radarAnim0] = useState(() => new RNAnimated.Value(0));
+    const [radarAnim1] = useState(() => new RNAnimated.Value(0));
+    const [radarAnim2] = useState(() => new RNAnimated.Value(0));
+    const [pulseAnim0] = useState(() => new RNAnimated.Value(1));
+    const [pulseAnim0Op] = useState(() => new RNAnimated.Value(0));
+    const [pulseAnim1] = useState(() => new RNAnimated.Value(1));
+    const [pulseAnim1Op] = useState(() => new RNAnimated.Value(0));
+    const [pulseAnim2] = useState(() => new RNAnimated.Value(1));
+    const [pulseAnim2Op] = useState(() => new RNAnimated.Value(0));
+    const pulseAnims = useMemo(() => [
         { scale: pulseAnim0, op: pulseAnim0Op },
         { scale: pulseAnim1, op: pulseAnim1Op },
         { scale: pulseAnim2, op: pulseAnim2Op },
-    ];
+    ], [pulseAnim0, pulseAnim0Op, pulseAnim1, pulseAnim1Op, pulseAnim2, pulseAnim2Op]);
+
+    const showSosNotice = useCallback((message: string) => {
+        setSosNoticeMessage(message);
+        setSosNoticeVisible(true);
+    }, []);
+
+    const applyActiveVolunteerSos = useCallback((incident: MyActiveSosIncident, options?: { showNotice?: boolean }) => {
+        if (!isLiveSosStatus(incident.status)) return false;
+        const incidentId = String(incident.incidentId || incident.id);
+        volunteerSosCreateSeqRef.current += 1;
+        volunteerSosNavigatedRef.current = true;
+        if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
+        if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
+
+        setSosActive(true);
+        setActiveIncidentId(incidentId);
+        setCancelCountdown(0);
+        setLocationStatus('sharing');
+        setHoldPhase('idle');
+        setIsEmergencyLive(true);
+        setSosStage('responding');
+        setSosLive(true);
+        setIsSosButtonVisible(true);
+        sosTransitionAnim.setValue(1);
+
+        if (incident.latitude != null && incident.longitude != null) {
+            const nextLoc = sanitizeCoordinate(Number(incident.latitude), Number(incident.longitude));
+            if (nextLoc) {
+                userLocRef.current = nextLoc;
+                setUserLoc(prev => prev ?? nextLoc);
+            }
+        }
+        if (incident.address) {
+            setAddress(prev => prev || incident.address || '');
+        }
+        if (options?.showNotice) {
+            showSosNotice('You already have an active SOS.');
+        }
+        return true;
+    }, [setSosLive, showSosNotice, sosTransitionAnim]);
+
+    const hydrateActiveVolunteerSos = useCallback(async (options?: { showNotice?: boolean; clearWhenMissing?: boolean }) => {
+        const seq = ++activeSosHydrateSeqRef.current;
+        try {
+            const incident = await incidentService.getMyActiveSos();
+            if (!isMountedRef.current || seq !== activeSosHydrateSeqRef.current) return null;
+            if (incident && isLiveSosStatus(incident.status)) {
+                applyActiveVolunteerSos(incident, options);
+                return incident;
+            }
+            if (options?.clearWhenMissing && cancelCountdown <= 0 && !activeIncidentId) {
+                setSosActive(false);
+                setActiveIncidentId(null);
+                setIsEmergencyLive(false);
+                setSosStage('idle');
+                setSosLive(false);
+                sosTransitionAnim.setValue(0);
+            }
+            return null;
+        } catch (error) {
+            console.warn('[VolunteerHome] Unable to hydrate active volunteer SOS:', error);
+            return null;
+        }
+    }, [activeIncidentId, applyActiveVolunteerSos, cancelCountdown, setSosLive, sosTransitionAnim]);
+
+    // Keep the volunteer's own active SOS synced from backend whenever this screen returns.
+    useFocusEffect(
+        useCallback(() => {
+            refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification refresh failed:', err));
+            hydrateActiveVolunteerSos({ clearWhenMissing: true }).catch((err) => console.warn('[VolunteerHome] Active SOS focus refresh failed:', err));
+            refreshAndRecenterMap();
+
+            return undefined;
+        }, [hydrateActiveVolunteerSos, refreshVolunteerAccess, refreshAndRecenterMap]),
+    );
+
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active') {
+                refreshVolunteerAccess().catch((err) => console.warn('[VolunteerHome] Verification resume refresh failed:', err));
+                hydrateActiveVolunteerSos({ clearWhenMissing: true }).catch((err) => console.warn('[VolunteerHome] Active SOS resume refresh failed:', err));
+            }
+        });
+        return () => sub.remove();
+    }, [hydrateActiveVolunteerSos, refreshVolunteerAccess]);
 
     const completeVolunteerSOSCountdown = useCallback(async (createSeq: number) => {
         try {
+            const existingSos = await incidentService.getMyActiveSos();
+            if (existingSos && isLiveSosStatus(existingSos.status)) {
+                if (volunteerSosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
+                applyActiveVolunteerSos(existingSos, { showNotice: true });
+                return;
+            }
+
             let loc = userLocRef.current ?? userLoc;
             let safeLoc = loc ? sanitizeCoordinate(loc.latitude, loc.longitude) : null;
 
@@ -1108,6 +1107,7 @@ export default function VolunteerHome() {
             }
             if (!isMountedRef.current) return;
             setActiveIncidentId(String(incident.id));
+            setSosLive(true);
             setIsEmergencyLive(true);
             setSosStage('responding');
             RNAnimated.timing(sosTransitionAnim, {
@@ -1116,6 +1116,13 @@ export default function VolunteerHome() {
         } catch (error: any) {
             console.warn('[VolunteerHome] Unable to create volunteer SOS incident:', error);
             if (volunteerSosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
+            const duplicateStatus = Number(error?.status || error?.response?.status || 0);
+            const duplicateCode = error?.code || error?.response?.data?.code;
+            const duplicateMessage = String(error?.message || error?.response?.data?.message || '').toLowerCase();
+            if (duplicateStatus === 409 || duplicateCode === 'ACTIVE_SOS_EXISTS' || duplicateMessage.includes('active sos')) {
+                const existingSos = await hydrateActiveVolunteerSos({ showNotice: true });
+                if (existingSos) return;
+            }
             volunteerSosCreateSeqRef.current += 1;
             setSosActive(false);
             setActiveIncidentId(null);
@@ -1123,6 +1130,7 @@ export default function VolunteerHome() {
             setLocationStatus('ready');
             setHoldPhase('idle');
             setIsEmergencyLive(false);
+            setSosLive(false);
             setSosStage('idle');
             sosTransitionAnim.setValue(0);
             if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
@@ -1130,15 +1138,26 @@ export default function VolunteerHome() {
             setLocationErrorMessage(error?.message || 'Unable to send SOS. Please enable location services and try again.');
             setLocationErrorVisible(true);
         }
-    }, [address, sosTransitionAnim, userLoc]);
+    }, [address, applyActiveVolunteerSos, hydrateActiveVolunteerSos, setSosLive, sosTransitionAnim, userLoc]);
 
     const triggerSOS = useCallback(async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (activeIncidentId || isEmergencyLive) {
+            const existingSos = await hydrateActiveVolunteerSos({ showNotice: true });
+            if (!existingSos) {
+                showSosNotice('You already have an active SOS.');
+            }
+            return;
+        }
+        const existingSos = await hydrateActiveVolunteerSos({ showNotice: true });
+        if (existingSos) return;
+
         setHoldPhase('idle');
         setSosActive(true);
         setActiveIncidentId(null);
         setSosStage('requesting');
         setIsEmergencyLive(false);
+        setSosLive(true);
         sosTransitionAnim.setValue(0);
         setLocationStatus('sharing');
         setCancelCountdown(CANCEL_DURATION_DEFAULT);
@@ -1146,7 +1165,7 @@ export default function VolunteerHome() {
         volunteerSosNavigatedRef.current = false;
 
         if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
-    }, [sosTransitionAnim]);
+    }, [activeIncidentId, hydrateActiveVolunteerSos, isEmergencyLive, setSosLive, showSosNotice, sosTransitionAnim]);
 
     const resetLocalSOS = useCallback(() => {
         volunteerSosCreateSeqRef.current += 1;
@@ -1157,19 +1176,28 @@ export default function VolunteerHome() {
         setLocationStatus('ready');
         setHoldPhase('idle');
         setIsEmergencyLive(false);
+        setSosLive(false);
         setSosStage('idle');
         sosTransitionAnim.setValue(0);
         if (sosTransitionRef.current) clearTimeout(sosTransitionRef.current);
         if (cancelTimerRef.current) clearInterval(cancelTimerRef.current);
-    }, [sosTransitionAnim]);
+    }, [setSosLive, sosTransitionAnim]);
 
-    const cancelSOS = useCallback(() => {
+    const cancelSOS = useCallback(async () => {
         const incidentId = activeIncidentId;
-        resetLocalSOS();
         if (incidentId) {
-            incidentService.cancelIncident(incidentId).catch(() => undefined);
+            try {
+                await incidentService.cancelIncident(incidentId);
+                resetLocalSOS();
+            } catch (error) {
+                console.warn('[VolunteerHome] Unable to cancel active volunteer SOS:', error);
+                showSosNotice('Could not stop SOS. Please try again.');
+                hydrateActiveVolunteerSos({ clearWhenMissing: true }).catch(() => undefined);
+            }
+            return;
         }
-    }, [activeIncidentId, resetLocalSOS]);
+        resetLocalSOS();
+    }, [activeIncidentId, hydrateActiveVolunteerSos, resetLocalSOS, showSosNotice]);
 
     const confirmStop = useCallback((mode: 'cancel' | 'resolve') => {
         setStopConfirmMode(mode);
@@ -1182,6 +1210,7 @@ export default function VolunteerHome() {
 
     const resetReviewFlow = useCallback(() => {
         setReviewVisible(false);
+        setReviewLoading(false);
         setReviewQueue([]);
         setReviewIncidentId(null);
         setReviewFeedback('');
@@ -1205,36 +1234,53 @@ export default function VolunteerHome() {
             resetLocalSOS();
             return;
         }
+        setReviewIncidentId(incidentId);
+        setReviewQueue([]);
+        setReviewFeedback('');
+        setReviewRating(5);
+        setReviewRemovingId(null);
+        setReviewSubmitting(false);
+        reviewExitAnim.setValue(0);
+        setReviewVisible(true);
+        setReviewLoading(true);
         try {
             const volunteers = await loadReviewVolunteers(incidentId);
             if (!isMountedRef.current) return;
             if (!volunteers.length) {
+                resetReviewFlow();
                 resetLocalSOS();
                 return;
             }
-            setReviewIncidentId(incidentId);
             setReviewQueue(volunteers);
-            setReviewFeedback('');
-            setReviewRating(5);
-            setReviewVisible(true);
         } catch (error) {
             console.warn('[VolunteerHome] Unable to load responders for review:', error);
+            resetReviewFlow();
             resetLocalSOS();
+        } finally {
+            if (isMountedRef.current) setReviewLoading(false);
         }
-    }, [loadReviewVolunteers, resetLocalSOS]);
+    }, [loadReviewVolunteers, resetLocalSOS, resetReviewFlow, reviewExitAnim]);
 
     const handleStopAlert = useCallback(async () => {
         setStopConfirmVisible(false);
         if (stopConfirmMode === 'cancel') {
-            cancelSOS();
+            await cancelSOS();
         } else {
             const incidentId = activeIncidentId;
             if (incidentId) {
-                await incidentService.resolveIncident(incidentId).catch(() => undefined);
+                try {
+                    await incidentService.resolveIncident(incidentId);
+                    openReviewPopup(incidentId);
+                } catch (error) {
+                    console.warn('[VolunteerHome] Unable to resolve active volunteer SOS:', error);
+                    showSosNotice('Could not resolve SOS. Please try again.');
+                    hydrateActiveVolunteerSos({ clearWhenMissing: true }).catch(() => undefined);
+                }
+                return;
             }
             openReviewPopup(incidentId);
         }
-    }, [activeIncidentId, cancelSOS, openReviewPopup, stopConfirmMode]);
+    }, [activeIncidentId, cancelSOS, hydrateActiveVolunteerSos, openReviewPopup, showSosNotice, stopConfirmMode]);
 
     const closeReviewPopup = useCallback(() => {
         resetReviewFlow();
@@ -1281,8 +1327,12 @@ export default function VolunteerHome() {
         });
     }, [resetLocalSOS, resetReviewFlow, reviewExitAnim, reviewFeedback, reviewIncidentId, reviewQueue, reviewRating, reviewSubmitting]);
 
+    const shouldRunCancelCountdown = sosActive && cancelCountdown > 0;
+    const volunteerSosLatitude = userLoc?.latitude ?? null;
+    const volunteerSosLongitude = userLoc?.longitude ?? null;
+
     useEffect(() => {
-        if (!sosActive || cancelCountdown <= 0) return;
+        if (!shouldRunCancelCountdown) return;
         cancelTimerRef.current = setInterval(() => {
             setCancelCountdown(prev => {
                 if (prev <= 1) {
@@ -1294,15 +1344,15 @@ export default function VolunteerHome() {
             });
         }, 1000);
         return () => { if (cancelTimerRef.current) clearInterval(cancelTimerRef.current); };
-    }, [sosActive, cancelCountdown === CANCEL_DURATION_DEFAULT, completeVolunteerSOSCountdown]);
+    }, [completeVolunteerSOSCountdown, shouldRunCancelCountdown]);
 
     useEffect(() => {
         if (!isEmergencyLive || volunteerSosNavigatedRef.current) return;
         if (!activeIncidentId) return;
 
         volunteerSosNavigatedRef.current = true;
-        const lat = userLocRef.current?.latitude ?? userLoc?.latitude;
-        const lng = userLocRef.current?.longitude ?? userLoc?.longitude;
+        const lat = userLocRef.current?.latitude ?? volunteerSosLatitude;
+        const lng = userLocRef.current?.longitude ?? volunteerSosLongitude;
 
         router.push({
             pathname: '/(tabs)/users/volunteer/chat_room',
@@ -1314,7 +1364,7 @@ export default function VolunteerHome() {
                 userAddress: address || '',
             },
         } as any);
-    }, [activeIncidentId, address, isEmergencyLive, router, userLoc?.latitude, userLoc?.longitude]);
+    }, [activeIncidentId, address, isEmergencyLive, router, volunteerSosLatitude, volunteerSosLongitude]);
 
     useEffect(() => {
         pulseAnims.forEach(({ scale, op }, i) => {
@@ -1328,9 +1378,11 @@ export default function VolunteerHome() {
             };
             setTimeout(loop, i * 700);
         });
-    }, []);
+    }, [pulseAnims]);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
+    const searchOverlayOpen = searchActive || startSearchActive;
+    const routeOverlayBlocked = searchOverlayOpen;
 
     // Location
     useEffect(() => {
@@ -1445,7 +1497,9 @@ export default function VolunteerHome() {
             if (currentStep.endLocation) {
                 const dist = haversineDistance(userLoc, currentStep.endLocation);
                 if (dist <= 25) {
-                    setCurrentStepIdx(prev => prev + 1);
+                    setTimeout(() => {
+                        setCurrentStepIdx(prev => prev + 1);
+                    }, 0);
                 }
             }
         }
@@ -1453,8 +1507,10 @@ export default function VolunteerHome() {
         // Progress polyline update
         if (routeCoords.length > 0) {
             const progress = getForwardRouteProgress(userLoc, routeCoords);
-            setCompletedRouteCoords(progress.completedRouteCoords);
-            setRemainingRouteCoords(progress.remainingRouteCoords);
+            setTimeout(() => {
+                setCompletedRouteCoords(progress.completedRouteCoords);
+                setRemainingRouteCoords(progress.remainingRouteCoords);
+            }, 0);
 
             if (progress.nearestDistanceM > OFF_ROUTE_THRESHOLD_M) {
                 if (!offRouteTimerRef.current) {
@@ -1493,9 +1549,11 @@ export default function VolunteerHome() {
 
         if (currentStepIdx !== lastSpokenStepRef.current) {
             const instruction = navInstructions[currentStepIdx].instruction;
+            if (routeAudioActiveRef.current) return;
             // Stop any previous utterance before queueing the next to prevent TTS buildup
             Speech.stop();
             const tid = setTimeout(() => {
+                if (routeAudioActiveRef.current) return;
                 Speech.speak(instruction, {
                     language: 'en',
                     pitch: 1.0,
@@ -1505,7 +1563,7 @@ export default function VolunteerHome() {
             lastSpokenStepRef.current = currentStepIdx;
             return () => clearTimeout(tid);
         }
-    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions]);
+    }, [isLiveNav, audioEnabled, currentStepIdx, navInstructions, routeAudioActiveRef]);
 
     const activateSearch = useCallback(() => {
         if (searchActive) return;
@@ -1544,6 +1602,7 @@ export default function VolunteerHome() {
         setEndLocation(null);
 
         if (directionsMode) {
+            // eslint-disable-next-line react-hooks/immutability
             exitDirectionsMode();
         } else {
             setRouteCoords([]);
@@ -1557,7 +1616,9 @@ export default function VolunteerHome() {
             setUnsafeRouteCoords([]);
         }
 
+        // eslint-disable-next-line react-hooks/immutability
         if (placeSheetOpen) closePlaceSheet();
+        // eslint-disable-next-line react-hooks/immutability
         if (showLocationCard) closeLocationCard();
 
         if (userLoc) {
@@ -1568,6 +1629,7 @@ export default function VolunteerHome() {
         } else {
             mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [deactivateSearch, directionsMode, placeSheetOpen, showLocationCard, userLoc]);
 
     const query = searchText.trim();
@@ -1621,10 +1683,12 @@ export default function VolunteerHome() {
     useEffect(() => {
         if (!searchActive) return;
         if (query.length < 1) {
-            setSearchSuggestions([]);
-            setSearchStatus(null);
+            const handle = setTimeout(() => {
+                setSearchSuggestions([]);
+                setSearchStatus(null);
+            }, 0);
             searchSessionTokenRef.current = null;
-            return;
+            return () => clearTimeout(handle);
         }
         const requestId = ++searchRequestIdRef.current;
         if (!searchSessionTokenRef.current) searchSessionTokenRef.current = createSessionToken();
@@ -1643,10 +1707,12 @@ export default function VolunteerHome() {
     useEffect(() => {
         if (!startSearchActive) return;
         if (startQuery.length < 1) {
-            setStartSuggestions([]);
-            setStartStatus(null);
+            const handle = setTimeout(() => {
+                setStartSuggestions([]);
+                setStartStatus(null);
+            }, 0);
             startSessionTokenRef.current = null;
-            return;
+            return () => clearTimeout(handle);
         }
         const requestId = ++startRequestIdRef.current;
         if (!startSessionTokenRef.current) startSessionTokenRef.current = createSessionToken();
@@ -1703,7 +1769,7 @@ export default function VolunteerHome() {
                 const chosenRoute = data.routes[0];
                 const chosenCoords = decodePolyline(chosenRoute.overview_polyline?.points ?? '');
 
-                let latestZones = normalizedIncidentZones;
+                let latestZones = normalizedIncidentZonesRef.current;
                 try {
                     const fetchedZones = await incidentService.getZones();
                     if (!isMountedRef.current || routeRequestIdRef.current !== requestId) return;
@@ -2018,13 +2084,17 @@ export default function VolunteerHome() {
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
-    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, normalizedIncidentZones, blockedZoneName, playRouteAudio]);
+    }, [startLocation, endLocation, travelMode, startScanAnimation, stopScanAnimation, blockedZoneName, playRouteAudio]);
 
     useEffect(() => {
         if (!isLiveNav || !showSafePath || !routeUnsafe || scanState === 'SCANNING') return;
-        triggerSafetyRecalculation();
+        const timer = setTimeout(() => {
+            triggerSafetyRecalculation();
+        }, 0);
+        return () => clearTimeout(timer);
     }, [isLiveNav, routeUnsafe, scanState, showSafePath, triggerSafetyRecalculation]);
 
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     const closeLocationCard = useCallback(() => {
         RNAnimated.parallel([
             RNAnimated.timing(locationCardY, { toValue: 300, duration: 280, easing: Easing.in(Easing.ease), useNativeDriver: true }),
@@ -2102,6 +2172,7 @@ export default function VolunteerHome() {
         openPlaceSheet(place, true);
     }, [closeLocationCard, openPlaceSheet, showLocationCard]);
 
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     const closePlaceSheet = useCallback(() => {
         RNAnimated.parallel([
             RNAnimated.timing(placeSheetY, { toValue: height, duration: 260, easing: Easing.in(Easing.ease), useNativeDriver: true }),
@@ -2271,7 +2342,7 @@ export default function VolunteerHome() {
             setSosRouteDuration(`~${Math.max(1, Math.round(req.distanceKm / 0.4))} min`);
             showRoutePreview(fallbackRoute);
         }
-    }, [decodePolyline, userLoc]);
+    }, [userLoc]);
 
     const handleRejectSos = useCallback(async (req: SosRequest) => {
         try {
@@ -2285,7 +2356,7 @@ export default function VolunteerHome() {
             const msg = error?.response?.data?.message || error?.message || 'Please try again.';
             Alert.alert('Unable to reject SOS', msg);
         }
-    }, [activeSosView?.id, exitSosView, fetchNearbySosRequests]);
+    }, [activeSosView, exitSosView, fetchNearbySosRequests]);
 
     const handleAcceptSos = useCallback(async (req: SosRequest) => {
         setAcceptingSosId(req.id);
@@ -2424,6 +2495,7 @@ export default function VolunteerHome() {
         handleResolvedPlaceSelect(suggestion);
     }, [enterDirectionsMode, handleResolvedPlaceSelect, safePlaceToSuggestion]);
 
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization
     const exitDirectionsMode = useCallback(() => {
         clearRouteState();
         setSelectedPlace(null);
@@ -2489,7 +2561,7 @@ export default function VolunteerHome() {
         handleStartSelect(current);
     }, [address, handleStartSelect, userLoc]);
 
-    const sheetPanResponder = useRef(
+    const [sheetPanResponder] = useState(() => (
         PanResponder.create({
             onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 6,
             onPanResponderMove: (_, gesture) => {
@@ -2503,7 +2575,7 @@ export default function VolunteerHome() {
                 }
             },
         })
-    ).current;
+    ));
     const visibleSosRouteCoords = useMemo(() => {
         const path = sosPathCoords
             .map(point => sanitizeCoordinate(point.latitude, point.longitude))
@@ -3024,7 +3096,7 @@ export default function VolunteerHome() {
 
 
                 {/* ── Top Live Banner ────────────────────────────────────────── */}
-                {isLiveNav && navInstructions.length > 0 && !sosPanelOpen && (
+                {isLiveNav && navInstructions.length > 0 && !sosPanelOpen && !routeOverlayBlocked && (
                     <PremiumBar
                         style={[lb.bannerWrap, { top: insets.top + 8 }]}
                         contentStyle={lb.bannerBody}
@@ -3048,7 +3120,7 @@ export default function VolunteerHome() {
                             style={lb.audioBtn}
                             onPress={() => {
                                 setAudioEnabled(prev => {
-                                    if (prev) Speech.stop();
+                                    if (prev && !routeAudioActiveRef.current) Speech.stop();
                                     return !prev;
                                 });
                             }}
@@ -3237,7 +3309,15 @@ export default function VolunteerHome() {
                     <View style={s.mapControls}>
                         <TouchableOpacity
                             style={[s.ctrlBtn, { borderColor: '#A78BFA' }]}
-                            onPress={() => setIsSosButtonVisible(visible => !visible)}
+                            onPress={() => {
+                                setIsSosButtonVisible(visible => {
+                                    const nextVisible = !visible;
+                                    if (nextVisible) {
+                                        hydrateActiveVolunteerSos({ clearWhenMissing: true }).catch(() => undefined);
+                                    }
+                                    return nextVisible;
+                                });
+                            }}
                             accessibilityLabel="Emergency SOS"
                             accessibilityRole="button"
                         >
@@ -3420,7 +3500,7 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── Location Card — slides up from bottom ───────────────────── */}
-                {showLocationCard && (
+                {showLocationCard && !searchOverlayOpen && (
                     <View style={{ flex: 1, position: 'absolute', width: '100%', height: '100%', zIndex: 220 }}>
                         <RNAnimated.View style={[s.locationBackdrop, { opacity: locationCardOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closeLocationCard} />
@@ -3563,6 +3643,51 @@ export default function VolunteerHome() {
                     </View>
                 </Modal>
 
+                <Modal
+                    visible={sosLogoutBlockedVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={() => setSosLogoutBlockedVisible(false)}
+                >
+                    <View style={s.stopConfirmOverlay}>
+                        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.stopConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSosLogoutBlockedVisible(false)} />
+                        <View style={s.stopConfirmCard}>
+                            <View style={s.stopConfirmIconWrap}>
+                                <Ionicons name="warning-outline" size={26} color="#F59E0B" />
+                            </View>
+                            <Text style={s.stopConfirmTitle}>Cannot Logout</Text>
+                            <Text style={s.stopConfirmMessage}>
+                                You have an active SOS emergency. Please stop or resolve the SOS before logging out.
+                            </Text>
+                            <View style={s.stopConfirmActions}>
+                                <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={() => setSosLogoutBlockedVisible(false)} activeOpacity={0.85}>
+                                    <Text style={s.stopConfirmSecondaryTxt} numberOfLines={1}>Stay in SOS</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={s.stopConfirmPrimaryBtn}
+                                    onPress={() => {
+                                        setSosLogoutBlockedVisible(false);
+                                        navigateSafely('/(tabs)/users/volunteer', true);
+                                    }}
+                                    activeOpacity={0.9}
+                                >
+                                    <LinearGradient
+                                        colors={[T.violet, T.violetDark]}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.stopConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.stopConfirmPrimaryTxt} numberOfLines={1}>Go to SOS Screen</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
                 {/* ── STEP 1: GLASSMORPHIC STATUS UPDATE BOTTOM SHEET ── */}
                 <Modal
                     visible={responderSheetVisible}
@@ -3641,11 +3766,11 @@ export default function VolunteerHome() {
                             <View style={s.stopConfirmActions}>
                                 <TouchableOpacity style={[s.stopConfirmPrimaryBtn, { overflow: 'hidden' }]} onPress={closeStopConfirm} activeOpacity={0.85}>
                                     <View style={[s.stopConfirmPrimaryFill, { backgroundColor: T.violet }]}>
-                                        <Text style={s.stopConfirmPrimaryTxt}>No, Keep Active</Text>
+                                        <Text style={s.stopConfirmPrimaryTxt} numberOfLines={1}>No, Keep Active</Text>
                                     </View>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={handleStopAlert} activeOpacity={0.9}>
-                                    <Text style={[s.stopConfirmSecondaryTxt, { color: stopConfirmMode === 'resolve' ? T.success : T.danger }]}>
+                                    <Text style={[s.stopConfirmSecondaryTxt, { color: stopConfirmMode === 'resolve' ? T.success : T.danger }]} numberOfLines={1}>
                                         {stopConfirmMode === 'resolve' ? 'Yes, Resolve' : 'Yes, Stop'}
                                     </Text>
                                 </TouchableOpacity>
@@ -3673,7 +3798,7 @@ export default function VolunteerHome() {
                             <Text style={s.stopConfirmMessage}>{locationErrorMessage ?? 'Location services unavailable.'}</Text>
                             <View style={s.stopConfirmActions}>
                                 <TouchableOpacity style={s.stopConfirmSecondaryBtn} onPress={() => setLocationErrorVisible(false)} activeOpacity={0.85}>
-                                    <Text style={s.stopConfirmSecondaryTxt}>Dismiss</Text>
+                                    <Text style={s.stopConfirmSecondaryTxt} numberOfLines={1}>Dismiss</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={() => { setLocationErrorVisible(false); setLocationRetryKey(prev => prev + 1); }} activeOpacity={0.9}>
                                     <LinearGradient
@@ -3682,7 +3807,40 @@ export default function VolunteerHome() {
                                         end={{ x: 1, y: 1 }}
                                         style={s.stopConfirmPrimaryFill}
                                     >
-                                        <Text style={s.stopConfirmPrimaryTxt}>Retry</Text>
+                                        <Text style={s.stopConfirmPrimaryTxt} numberOfLines={1}>Retry</Text>
+                                    </LinearGradient>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <Modal
+                    visible={sosNoticeVisible}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={() => setSosNoticeVisible(false)}
+                >
+                    <View style={s.stopConfirmOverlay}>
+                        <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+                        <View style={s.stopConfirmScrim} pointerEvents="none" />
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSosNoticeVisible(false)} />
+                        <View style={s.stopConfirmCard}>
+                            <View style={s.stopConfirmIconWrap}>
+                                <Feather name="alert-triangle" size={22} color={T.violet} />
+                            </View>
+                            <Text style={s.stopConfirmTitle}>Active SOS</Text>
+                            <Text style={s.stopConfirmMessage}>{sosNoticeMessage ?? 'You already have an active SOS.'}</Text>
+                            <View style={s.stopConfirmActions}>
+                                <TouchableOpacity style={s.stopConfirmPrimaryBtn} onPress={() => setSosNoticeVisible(false)} activeOpacity={0.9}>
+                                    <LinearGradient
+                                        colors={[T.violet, '#8A38F6']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 1 }}
+                                        style={s.stopConfirmPrimaryFill}
+                                    >
+                                        <Text style={s.stopConfirmPrimaryTxt} numberOfLines={1}>Stay in SOS</Text>
                                     </LinearGradient>
                                 </TouchableOpacity>
                             </View>
@@ -3703,6 +3861,13 @@ export default function VolunteerHome() {
                         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeReviewPopup} />
                         <View style={s.reviewCard}>
                             <Text style={s.reviewEyebrow}>Volunteer Review</Text>
+                            {reviewLoading ? (
+                                <ActivityIndicator
+                                    color={T.violet}
+                                    size="large"
+                                    style={{ marginVertical: 40 }}
+                                />
+                            ) : (<>
                             <View style={s.reviewAvatarRow}>
                                 {reviewQueue.map((volunteer, index) => {
                                     const isCurrent = index === 0;
@@ -3769,12 +3934,13 @@ export default function VolunteerHome() {
                                     <Text style={s.reviewSubmitText}>Submit Review</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
+                            </>)}
                         </View>
                     </View>
                 </Modal>
 
                 {/* ── Place Detail Sheet — half screen ─────────────────────── */}
-                {placeSheetOpen && selectedPlace && (
+                {placeSheetOpen && selectedPlace && !searchOverlayOpen && (
                     <View style={{ flex: 1, position: 'absolute', width: '100%', height: '100%', zIndex: 230 }}>
                         <RNAnimated.View style={[s.placeSheetBackdrop, { opacity: placeSheetOpacity }]}>
                             <Pressable style={StyleSheet.absoluteFill} onPress={closePlaceSheet} />
@@ -3952,7 +4118,7 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── Step-by-Step Instruction Card ────────────────────────────── */}
-                {directionsMode && navInstructions.length > 0 && (
+                {directionsMode && navInstructions.length > 0 && !routeOverlayBlocked && (
                     <View style={[ns.cardWrap, { bottom: navBottom + NAV_HEIGHT + 16 }]}>
                         <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
                         <View style={ns.cardTint} pointerEvents="none" />
@@ -3979,6 +4145,35 @@ export default function VolunteerHome() {
                                 </Text>
                             </View>
                         </View>
+                        {isReviewMode && !isLiveNav && (
+                            <ScrollView
+                                style={{ maxHeight: 132 }}
+                                contentContainerStyle={{ paddingHorizontal: S.s4, paddingBottom: S.s2, gap: 6 }}
+                                showsVerticalScrollIndicator={false}
+                                nestedScrollEnabled
+                            >
+                                {navInstructions.map((step, index) => (
+                                    <TouchableOpacity
+                                        key={`${index}-${step.instruction}`}
+                                        style={[
+                                            s.searchRow,
+                                            { marginBottom: 0, paddingVertical: 8 },
+                                            index === currentStepIdx && { borderColor: `${T.violet}70` },
+                                        ]}
+                                        onPress={() => setCurrentStepIdx(index)}
+                                        activeOpacity={0.75}
+                                    >
+                                        <View style={s.searchIconWrap}>
+                                            <Text style={s.searchTitle}>{index + 1}</Text>
+                                        </View>
+                                        <View style={s.searchTextWrap}>
+                                            <Text style={s.searchTitle} numberOfLines={1}>{step.instruction}</Text>
+                                            <Text style={s.searchSubtitle}>{step.distance}</Text>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        )}
                         <View style={ns.cardFooter}>
                             <Text style={ns.stepCounter}>
                                 Step {currentStepIdx + 1} of {navInstructions.length}
@@ -4065,6 +4260,29 @@ export default function VolunteerHome() {
                 <MaxRespondersModal
                     visible={maxRespondersVisible}
                     onClose={() => setMaxRespondersVisible(false)}
+                />
+
+                <AICopilotFloatingButton
+                    role="volunteer"
+                    storageKey="volunteer-explore"
+                    bottom={NAV_BOT_OFFSET + NAV_HEIGHT + 86}
+                    hidden={
+                        searchActive
+                        || startSearchActive
+                        || directionsMode
+                        || !!selectedPlace
+                        || placeSheetOpen
+                        || showLocationCard
+                        || sosPanelOpen
+                        || !!activeSosView
+                        || isSosButtonVisible
+                        || showSafePlace
+                        || isLiveNav
+                        || reviewVisible
+                        || maxRespondersVisible
+                        || verificationGateVisible
+                        || needsVolunteerVerification
+                    }
                 />
 
                 <VolunteerNavbar activeTab="Home" onActiveTabPress={refreshAndRecenterMap} />
@@ -4770,11 +4988,13 @@ const s = StyleSheet.create({
     },
     stopConfirmActions: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 10,
         marginTop: 22,
     },
     stopConfirmSecondaryBtn: {
-        flex: 1,
+        flexGrow: 1,
+        flexBasis: 132,
         minHeight: 48,
         borderRadius: R.pill,
         backgroundColor: T.surfaceBulky,
@@ -4782,15 +5002,17 @@ const s = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.12)',
         alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: 14,
     },
     stopConfirmSecondaryTxt: {
         color: T.ink3,
         fontSize: 14,
         fontWeight: '800',
-        letterSpacing: 0.5,
+        textAlign: 'center',
     },
     stopConfirmPrimaryBtn: {
-        flex: 1,
+        flexGrow: 1,
+        flexBasis: 132,
         borderRadius: R.pill,
         overflow: 'hidden',
         minHeight: 48,
@@ -4799,13 +5021,13 @@ const s = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
+        paddingHorizontal: 14,
     },
     stopConfirmPrimaryTxt: {
         color: T.onPrimary,
         fontSize: 14,
         fontWeight: '900',
-        letterSpacing: 0.6,
-        textTransform: 'uppercase',
+        textAlign: 'center',
     },
 
     reviewOverlay: {

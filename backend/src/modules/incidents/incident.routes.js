@@ -9,6 +9,7 @@ router.use(authenticate);
 
 router.post('/', requireActiveAccount, controller.report);
 router.get('/zones', controller.getZones);
+router.get('/my-active-sos', controller.getMyActiveSos);
 router.get('/my', controller.getMyIncidents);
 router.get('/nearby', controller.nearby);
 router.get('/assisted', controller.assisted);
@@ -23,6 +24,7 @@ router.put('/:id/user-case-details', requireActiveAccount, controller.updateUser
 router.get('/:id/volunteer-case-details', controller.getVolunteerCaseDetails);
 router.put('/:id/volunteer-case-details', requireActiveAccount, controller.updateVolunteerCaseDetails);
 router.get('/:id/route-context', controller.routeContext);
+router.get('/:id/map-snapshot', controller.mapSnapshot);
 router.post('/:id/reviews', requireActiveAccount, controller.createReview);
 
 router.get('/:id', controller.getOne);

@@ -386,7 +386,7 @@ export default function EmergencyContactsScreen() {
 
                         {atMax && (
                             <Text style={s.maxHint}>
-                                You've reached the maximum of {MAX_CONTACTS} contacts.
+                                You{'\''}ve reached the maximum of {MAX_CONTACTS} contacts.
                             </Text>
                         )}
                     </View>

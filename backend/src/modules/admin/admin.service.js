@@ -316,6 +316,11 @@ async function listLawEnforcementRequests() {
   return lawService.listAdminRequests();
 }
 
+async function getLawEnforcementRequest(adminId, requestId) {
+  await ensureReady();
+  return lawService.getAdminRequest(positiveId(adminId, 'admin id'), requestId);
+}
+
 async function listApprovedPolice() {
   await ensureReady();
   return lawService.listApprovedPolice();
@@ -359,6 +364,7 @@ module.exports = {
   getNotifications,
   listAuditLogs,
   listLawEnforcementRequests,
+  getLawEnforcementRequest,
   listApprovedPolice,
   assignLawEnforcementRequest,
   cancelLawEnforcementRequest,

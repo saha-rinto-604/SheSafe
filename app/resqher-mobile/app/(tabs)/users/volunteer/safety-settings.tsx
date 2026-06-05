@@ -15,9 +15,8 @@ import {
     ScrollView,
     StatusBar,
     Switch,
-    Platform,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
@@ -161,7 +160,7 @@ export default function SafetySettingsScreen() {
     const router = useRouter();
 
     const [settings, setSettings] = useState<SafetySettings>(DEFAULT_SAFETY_SETTINGS);
-    const [loaded, setLoaded] = useState(false);
+    const [, setLoaded] = useState(false);
 
     // ── Load from SecureStore on mount ────────────────────────────────────
     useEffect(() => {

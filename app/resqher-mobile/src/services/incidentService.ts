@@ -200,6 +200,34 @@ export interface IncidentRouteContext {
   }>;
 }
 
+export interface IncidentMapSnapshot {
+  incidentId: number | string;
+  status: string;
+  mode: 'live' | 'snapshot';
+  isFinal: boolean;
+  victimLocation?: {
+    id?: string;
+    userId?: string;
+    name?: string;
+    photoUri?: string | null;
+    latitude: number;
+    longitude: number;
+    updatedAt?: string | null;
+  } | null;
+  volunteerLocations: Array<{
+    id?: string;
+    userId?: string;
+    name?: string;
+    photoUri?: string | null;
+    latitude: number;
+    longitude: number;
+    acceptedAt?: string | null;
+    updatedAt?: string | null;
+  }>;
+  polyline?: Array<{ latitude: number; longitude: number }> | null;
+  finalizedAt?: string | null;
+}
+
 export interface IncidentReviewPayload {
   volunteerId: string;
   rating: number;
@@ -249,6 +277,20 @@ export interface VolunteerCertificateData {
   totalPoints: number;
 }
 
+export interface MyActiveSosIncident {
+  id: string;
+  incidentId: string;
+  incidentNumber?: number;
+  incidentCode?: string;
+  status: string;
+  isLive: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export type LawEnforcementRequestStatus =
   | 'PENDING_ADMIN_REVIEW'
   | 'ASSIGNED_TO_POLICE'
@@ -264,6 +306,11 @@ export interface LawEnforcementStatus {
   status?: LawEnforcementRequestStatus;
   assignedPoliceId?: string | null;
   isAccepted?: boolean;
+  duplicate?: boolean;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string | null;
+  incidentSummary?: string | null;
+  severityReason?: string | null;
+  summaryGeneratedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -280,6 +327,12 @@ export interface LawEnforcementAdminRequest {
   status: LawEnforcementRequestStatus;
   assignedPoliceId?: string | null;
   assignedPoliceName?: string | null;
+  incidentSummary?: any | null;
+  incidentSummaryText?: string | null;
+  summaryPreview?: string | null;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | string | null;
+  severityReason?: string | null;
+  summaryGeneratedAt?: string | null;
   rejectionReason?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -365,6 +418,11 @@ export const incidentService = {
   }[]> {
     const res = await api.get('/api/incidents/my');
     return res.data.incidents ?? [];
+  },
+
+  async getMyActiveSos(): Promise<MyActiveSosIncident | null> {
+    const res = await api.get('/api/incidents/my-active-sos');
+    return res.data?.incident ?? null;
   },
 
   async getOne(id: number | string) {
@@ -483,6 +541,11 @@ export const incidentService = {
   async getIncidentRouteContext(id: number | string): Promise<IncidentRouteContext> {
     const res = await api.get(`/api/incidents/${id}/route-context`);
     return res.data as IncidentRouteContext;
+  },
+
+  async getIncidentMapSnapshot(id: number | string): Promise<IncidentMapSnapshot> {
+    const res = await api.get(`/api/incidents/${id}/map-snapshot`);
+    return res.data as IncidentMapSnapshot;
   },
 
   async getIncidentMessages(id: number | string): Promise<IncidentMessageResponse[]> {

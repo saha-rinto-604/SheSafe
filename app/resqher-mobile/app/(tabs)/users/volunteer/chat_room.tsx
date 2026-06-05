@@ -1,11 +1,11 @@
 /**
- * volunteer/chat_room.tsx â€” Tactical Group Chat (Volunteer)
+ * volunteer/chat_room.tsx - Tactical Group Chat (Volunteer)
  * Mirrors standard-user chat room UI for consistency.
  */
 
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
-    View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet,
+    View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, Image,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard,
     Modal, Pressable, Alert, ScrollView
 } from 'react-native';
@@ -25,6 +25,7 @@ import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import RespondersList from '../../../../src/components/RespondersList';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
+import AICopilotSheet from '../../../../components/AICopilotSheet';
 import { DEFAULT_GROUP_CHAT_NAME, type Incident, type IncidentCategory, type Message, type Role } from '../../../../src/types/chat';
 import { incidentService } from '../../../../src/services/incidentService';
 import { getStoredIdentity } from '../../../../src/services/api';
@@ -37,8 +38,9 @@ import {
     getForwardRouteProgress,
 } from '../../../../src/utils/routeRealtime';
 
-// â”€â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Constants --------------------------------------------------------------
 const GOOGLE_MAPS_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const COPILOT_ICON = require('../../../../assets/images/aicopiloticon.png');
 
 type Responder = {
     id: string;
@@ -69,6 +71,29 @@ function isActiveStatus(status?: string): boolean {
     return status === 'ACTIVE' || status === 'LIVE';
 }
 
+function isFinalIncidentStatus(status?: string | null): boolean {
+    const normalized = String(status || '').toUpperCase();
+    return normalized === 'RESOLVED' || normalized === 'CANCELLED';
+}
+
+function policeRequestMessageForError(error: any) {
+    const status = Number(error?.status || 0);
+    const message = String(error?.message || '').toLowerCase();
+    if (status === 409 || message.includes('already')) {
+        return 'Police request already submitted for this incident.';
+    }
+    if (status === 400 || message.includes('active sos')) {
+        return 'This SOS is no longer active.';
+    }
+    if (status === 403 || message.includes('participants')) {
+        return 'Only incident participants can request police assistance.';
+    }
+    if (status >= 500 || message.includes('internal server') || message.includes('server error')) {
+        return 'Could not submit police request. Please try again after backend is fixed.';
+    }
+    return error?.message || 'Could not submit police request. Please try again after backend is fixed.';
+}
+
 function normalizeIncident(raw: any): Incident {
     const createdAt = raw?.createdAt ?? raw?.created_at ?? new Date().toISOString();
     return {
@@ -89,7 +114,7 @@ function normalizeIncident(raw: any): Incident {
         createdAt,
     };
 }
-// â”€â”€â”€ Role badge config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Role badge config ------------------------------------------------------
 const ROLE_META: Record<Role, {
     label: string; color: string; bg: string; border: string;
     icon: keyof typeof Feather.glyphMap;
@@ -112,7 +137,7 @@ const ROLE_META: Record<Role, {
     },
 };
 
-// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Helpers ----------------------------------------------------------------
 function formatTime(iso: string): string {
     const d = new Date(iso);
     const h = d.getHours();
@@ -121,7 +146,7 @@ function formatTime(iso: string): string {
     return `${h % 12 || 12}:${m} ${ampm}`;
 }
 
-// â”€â”€â”€ RoleBadge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- RoleBadge --------------------------------------------------------------
 const RoleBadge = memo(function RoleBadge({ role }: { role: Role }) {
     const meta = ROLE_META[role];
     return (
@@ -147,7 +172,7 @@ const SystemBubble = memo(function SystemBubble({ msg }: { msg: Message }) {
     );
 });
 
-// â”€â”€â”€ PillBubble â€” Directional tail (R.pill 3 corners, 0 near avatar) â”€â”€â”€â”€â”€â”€â”€
+// --- PillBubble - Directional tail (R.pill 3 corners, 0 near avatar) -------
 const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
@@ -156,16 +181,10 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
     const tailStyle = alignRight
         ? {
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
-            borderBottomRightRadius: 2,
-            borderBottomLeftRadius: 16,
+            borderBottomRightRadius: 6,
         }
         : {
-            borderTopLeftRadius: 16,
-            borderTopRightRadius: 16,
-            borderBottomRightRadius: 16,
-            borderBottomLeftRadius: 2,
+            borderBottomLeftRadius: 6,
         };
 
     return (
@@ -193,7 +212,6 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                     alignRight ? st.bubbleOwn : st.bubbleOther,
                     tailStyle,
                 ]}>
-                    {!alignRight && <View style={[StyleSheet.absoluteFill, st.bubbleOtherBg, tailStyle]} />}
                     {msg.type === 'AUDIO' ? (
                         <View style={st.audioWrap}>
                             <TouchableOpacity style={st.audioPlayBtn}>
@@ -238,8 +256,8 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
     );
 });
 
-// â”€â”€â”€ Floating Glass Pill Input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// â”€â”€ Tactical Map Style â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Floating Glass Pill Input ----------------------------------------------
+// -- Tactical Map Style ----------------------------------------------------
 const TACTICAL_MAP_STYLE = [
     { elementType: 'geometry', stylers: [{ color: '#0A0A0C' }] },
     { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
@@ -358,19 +376,15 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
     );
 }
 
-function ArchivePill({ bottomInset, onDelete }: { bottomInset: number; onDelete: () => void }) {
+function ArchivePill({ bottomInset }: { bottomInset: number }) {
     return (
         <View style={[st.archiveOuter, { paddingBottom: Math.max(bottomInset, S.s4) }]}>
             <BlurView intensity={30} tint="dark" style={st.archiveBlur}>
                 <View style={st.archiveInner}>
                     <Feather name="lock" size={13} color={T.ink4} />
-                    <Text style={st.archiveText}>Incident Archived â€” Case Read-Only</Text>
+                    <Text style={st.archiveText}>Incident Archived • Case Read-Only</Text>
                 </View>
             </BlurView>
-            <TouchableOpacity style={st.archiveDeleteBtn} onPress={onDelete} activeOpacity={0.75}>
-                <Feather name="trash-2" size={14} color="#FF453A" />
-                <Text style={st.archiveDeleteText}>Delete Chat</Text>
-            </TouchableOpacity>
         </View>
     );
 }
@@ -391,11 +405,11 @@ function polylineDecode(str: string, precision = 5) {
     return coordinates;
 }
 
-// â”€â”€â”€ Main â€” Chat Room â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Main - Chat Room -------------------------------------------------------
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// -------------------------------------------------------------------------------
 // PremiumBar & Nav Helpers
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// -------------------------------------------------------------------------------
 const PremiumBar = memo(function PremiumBar({
     style, contentStyle, children,
 }: { style?: any; contentStyle?: any; children: React.ReactNode }) {
@@ -466,7 +480,7 @@ export default function ChatRoom() {
     const liveIncidentId = String(incidentId || '');
     const isBackendIncidentId = /^\d+$/.test(liveIncidentId);
     const [selfId, setSelfId] = useState<string | undefined>();
-    const { messages, participants, liveLocation, sendMessage, sendLocationUpdate } = useChatSocket(liveIncidentId, selfId, 'VOLUNTEER');
+    const { messages, participants, liveLocation, sendMessage, sendLocationUpdate, error: chatError, refreshMessages } = useChatSocket(isBackendIncidentId ? liveIncidentId : '', selfId, 'VOLUNTEER');
     const [incident, setIncident] = useState<Incident | null>(null);
 
     const resolvedCategory: IncidentCategory =
@@ -475,10 +489,13 @@ export default function ChatRoom() {
 
     const flatRef = useRef<FlatList>(null);
     const isLive = isActiveStatus(incident?.status);
+    const isReadOnly = isFinalIncidentStatus(incident?.status);
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
+    const [isAiSheetOpen, setAiSheetOpen] = useState(false);
 
     // Map Overlay State
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
+    const isSnapshotMap = isMapOverlayOpen && isReadOnly;
     const [mapRouteCoords, setMapRouteCoords] = useState<RoutePoint[]>([]);
     const [mapDistance, setMapDistance] = useState('');
     const [mapDuration, setMapDuration] = useState('');
@@ -510,6 +527,7 @@ export default function ChatRoom() {
     // Route Progress (completed portion turns green)
     const [completedRouteCoords, setCompletedRouteCoords] = useState<RoutePoint[]>([]);
     const [remainingRouteCoords, setRemainingRouteCoords] = useState<RoutePoint[]>([]);
+    const [snapshotFinalizedAt, setSnapshotFinalizedAt] = useState<string | null>(null);
 
     // Responders list modal state (local mock list of 5)
     const [isRespondersOpen, setRespondersOpen] = useState(false);
@@ -559,25 +577,8 @@ export default function ChatRoom() {
     const [lawStatus, setLawStatus] = useState<string | null>(null);
     const [lawConfirmOpen, setLawConfirmOpen] = useState(false);
     const [lawRequesting, setLawRequesting] = useState(false);
+    const lawRequestingRef = useRef(false);
     const [lawMessage, setLawMessage] = useState<string | null>(null);
-
-    const handleDeleteChat = useCallback(() => {
-        Alert.alert(
-            'Delete this chat from your inbox?',
-            'This will only remove the chat from your side. It will not delete incident history.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete Chat',
-                    style: 'destructive',
-                    onPress: async () => {
-                        await incidentService.deleteChatForMe(liveIncidentId);
-                        router.back();
-                    },
-                },
-            ],
-        );
-    }, [liveIncidentId, router]);
 
     const handleConfirmLeave = useCallback(async () => {
         Haptics.selectionAsync();
@@ -588,20 +589,25 @@ export default function ChatRoom() {
     }, [liveIncidentId, router]);
 
     const handleRequestLaw = useCallback(async () => {
-        if (!isBackendIncidentId || lawRequesting) return;
+        if (!isBackendIncidentId || lawRequestingRef.current) return;
+        lawRequestingRef.current = true;
         setLawRequesting(true);
         setLawMessage(null);
         try {
             const request = await incidentService.requestLawEnforcement(liveIncidentId);
             setLawStatus(request.status || 'PENDING_ADMIN_REVIEW');
             setLawConfirmOpen(false);
-            setLawMessage('Law enforcement request sent to admin.');
+            setLawMessage('Submitted to admin for review.');
         } catch (error: any) {
-            setLawMessage(error?.message || 'Unable to request law enforcement.');
+            if (Number(error?.status || 0) === 409 || String(error?.message || '').toLowerCase().includes('already')) {
+                setLawStatus('PENDING_ADMIN_REVIEW');
+            }
+            setLawMessage(policeRequestMessageForError(error));
         } finally {
+            lawRequestingRef.current = false;
             setLawRequesting(false);
         }
-    }, [isBackendIncidentId, lawRequesting, liveIncidentId]);
+    }, [isBackendIncidentId, liveIncidentId]);
 
     useEffect(() => {
         getStoredIdentity().then(identity => setSelfId(identity?.userId));
@@ -628,7 +634,7 @@ export default function ChatRoom() {
     }, [isBackendIncidentId, liveIncidentId]);
 
     const loadResponders = useCallback(async () => {
-        if (!liveIncidentId) return;
+        if (!liveIncidentId || isSnapshotMap) return;
         const response = await incidentService.getIncidentResponders(liveIncidentId);
         const volunteers = (response.volunteers || []).map(volunteer => ({
             id: volunteer.id,
@@ -649,7 +655,7 @@ export default function ChatRoom() {
         });
         setRespondersList(volunteers);
         setSelectedResponderId(prev => volunteers.some(volunteer => volunteer.id === prev) ? prev : volunteers[0]?.id || '');
-    }, [liveIncidentId]);
+    }, [isSnapshotMap, liveIncidentId]);
 
     useEffect(() => {
         if (!liveIncidentId) return;
@@ -735,11 +741,26 @@ export default function ChatRoom() {
         setIsReviewMode(false);
         setMapDistance('');
         setMapDuration('');
+        setSnapshotFinalizedAt(null);
     }, []);
 
     const fitRouteToMap = useCallback((coords: RoutePoint[]) => {
         if (coords.length <= 1) return;
         setTimeout(() => {
+            mapRef.current?.fitToCoordinates(coords, {
+                edgePadding: { top: 140, right: 60, bottom: 300, left: 60 },
+                animated: true,
+            });
+        }, 250);
+    }, []);
+
+    const fitMapCoordinates = useCallback((coords: RoutePoint[]) => {
+        if (coords.length <= 0) return;
+        setTimeout(() => {
+            if (coords.length === 1) {
+                mapRef.current?.animateCamera({ center: coords[0], zoom: 15, pitch: 0, heading: 0 }, { duration: 450 });
+                return;
+            }
             mapRef.current?.fitToCoordinates(coords, {
                 edgePadding: { top: 140, right: 60, bottom: 300, left: 60 },
                 animated: true,
@@ -818,6 +839,10 @@ export default function ChatRoom() {
     }, [fitRouteToMap]);
 
     const handleSelectResponder = useCallback(async (responderId: string) => {
+        if (isSnapshotMap) {
+            setSelectedResponderId(responderId);
+            return;
+        }
         if (responderId === selectedResponderId) return;
         Haptics.selectionAsync();
         setSelectedResponderId(responderId);
@@ -827,7 +852,59 @@ export default function ChatRoom() {
             setVictimName(nextResponder.name || 'Responder');
             await loadRouteForIncident(userLoc, nextResponder.location, travelMode);
         }
-    }, [isMyEmergency, loadRouteForIncident, respondersList, selectedResponderId, travelMode, userLoc]);
+    }, [isMyEmergency, isSnapshotMap, loadRouteForIncident, respondersList, selectedResponderId, travelMode, userLoc]);
+
+    const applySnapshotContext = useCallback(async () => {
+        const snapshot = await incidentService.getIncidentMapSnapshot(liveIncidentId);
+        const victim = snapshot.victimLocation
+            ? sanitizeCoordinate(Number(snapshot.victimLocation.latitude), Number(snapshot.victimLocation.longitude))
+            : null;
+        const volunteers = (snapshot.volunteerLocations ?? [])
+            .map((volunteer) => {
+                const location = sanitizeCoordinate(Number(volunteer.latitude), Number(volunteer.longitude));
+                if (!location) return null;
+                return {
+                    id: String(volunteer.userId || volunteer.id || ''),
+                    name: volunteer.name || 'Volunteer',
+                    avatarUri: volunteer.photoUri ?? null,
+                    location,
+                } as Responder;
+            })
+            .filter((volunteer): volunteer is Responder => !!volunteer && !!volunteer.id);
+        const polyline = (snapshot.polyline ?? [])
+            .map((point) => sanitizeCoordinate(Number(point.latitude), Number(point.longitude)))
+            .filter((point): point is RoutePoint => !!point);
+
+        setUserLoc(null);
+        setVictimLocation(victim);
+        setVictimName(snapshot.victimLocation?.name || 'Victim');
+        setRespondersList(volunteers);
+        setResponderDirectory(prev => ({
+            ...prev,
+            volunteers,
+            responderCount: volunteers.length,
+        }));
+        setSelectedResponderId(volunteers[0]?.id || '');
+        setMapRouteCoords(polyline);
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords([]);
+        setNavInstructions([]);
+        setCurrentStepIdx(0);
+        setIsLiveNavMode(false);
+        setIsReviewMode(false);
+        setSnapshotFinalizedAt(snapshot.finalizedAt ?? null);
+        setMapDistance(snapshot.status === 'CANCELLED' ? 'Case cancelled' : 'Case resolved');
+        setMapDuration('Showing last known map state');
+
+        const markerCoords = [
+            ...(victim ? [victim] : []),
+            ...volunteers.map(volunteer => volunteer.location).filter((location): location is RoutePoint => !!location),
+        ];
+        fitMapCoordinates(polyline.length > 1 ? polyline : markerCoords);
+        if (!victim && markerCoords.length === 0) {
+            setMapDuration('No saved map location is available for this archived case');
+        }
+    }, [fitMapCoordinates, liveIncidentId]);
 
     const openMapOverlay = useCallback(async () => {
         Keyboard.dismiss();
@@ -839,6 +916,11 @@ export default function ChatRoom() {
         setTravelModeDropdownOpen(false);
 
         try {
+            if (isReadOnly) {
+                await applySnapshotContext();
+                return;
+            }
+
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
                 Alert.alert('Location required', 'Please enable location access to view the route.');
@@ -902,10 +984,10 @@ export default function ChatRoom() {
         } catch (error: any) {
             Alert.alert('Route unavailable', error?.message || 'Unable to load this route.');
         }
-    }, [clearRouteOverview, isMyEmergency, liveIncidentId, loadRouteForIncident, selectedResponderId, travelMode]);
+    }, [applySnapshotContext, clearRouteOverview, isMyEmergency, isReadOnly, liveIncidentId, loadRouteForIncident, selectedResponderId, travelMode]);
 
     useEffect(() => {
-        if (!isMapOverlayOpen || !userLoc || !victimLocation || isLiveNavMode) return;
+        if (!isMapOverlayOpen || isSnapshotMap || !userLoc || !victimLocation || isLiveNavMode) return;
         Keyboard.dismiss();
         const previous = lastOverviewRouteRef.current;
         const modeChanged = previous?.mode !== travelMode;
@@ -921,10 +1003,10 @@ export default function ChatRoom() {
         setNavInstructions([]);
         setCurrentStepIdx(0);
         loadRouteForIncident(userLoc, victimLocation, travelMode);
-    }, [travelMode, isMapOverlayOpen, isLiveNavMode, userLoc, victimLocation, loadRouteForIncident]);
+    }, [travelMode, isMapOverlayOpen, isSnapshotMap, isLiveNavMode, userLoc, victimLocation, loadRouteForIncident]);
 
     useEffect(() => {
-        if (!isMapOverlayOpen || !liveIncidentId || isMyEmergency) return;
+        if (!isMapOverlayOpen || isSnapshotMap || !liveIncidentId || isMyEmergency) return;
         if (victimPollRef.current) clearInterval(victimPollRef.current);
         victimPollRef.current = setInterval(async () => {
             try {
@@ -953,10 +1035,10 @@ export default function ChatRoom() {
                 victimPollRef.current = null;
             }
         };
-    }, [isMapOverlayOpen, isLiveNavMode, isMyEmergency, liveIncidentId, loadRouteForIncident, travelMode, userLoc]);
+    }, [isMapOverlayOpen, isSnapshotMap, isLiveNavMode, isMyEmergency, liveIncidentId, loadRouteForIncident, travelMode, userLoc]);
 
     useEffect(() => {
-        if (!isMapOverlayOpen || !liveLocation) return;
+        if (!isMapOverlayOpen || isSnapshotMap || !liveLocation) return;
         const timer = setTimeout(() => {
             const role = String(liveLocation.role || '').toUpperCase();
             const liveUserId = liveLocation.userId ? String(liveLocation.userId) : '';
@@ -1003,10 +1085,10 @@ export default function ChatRoom() {
             }
         }, 0);
         return () => clearTimeout(timer);
-    }, [isLiveNavMode, isMapOverlayOpen, isMyEmergency, liveLocation, loadRouteForIncident, respondersList, selectedResponderId, selfId, travelMode, userLoc, victimLocation]);
+    }, [isLiveNavMode, isMapOverlayOpen, isSnapshotMap, isMyEmergency, liveLocation, loadRouteForIncident, respondersList, selectedResponderId, selfId, travelMode, userLoc, victimLocation]);
 
     useEffect(() => {
-        if (!isMapOverlayOpen) {
+        if (!isMapOverlayOpen || isSnapshotMap) {
             if (locationSubRef.current) {
                 locationSubRef.current.remove();
                 locationSubRef.current = null;
@@ -1052,10 +1134,10 @@ export default function ChatRoom() {
                 locationSubRef.current = null;
             }
         };
-    }, [isMapOverlayOpen, loadRouteForIncident, sendLocationUpdate, travelMode, victimLocation]);
+    }, [isMapOverlayOpen, isSnapshotMap, loadRouteForIncident, sendLocationUpdate, travelMode, victimLocation]);
 
     useEffect(() => {
-        if (!isLiveNavMode || !userLoc) {
+        if (isSnapshotMap || !isLiveNavMode || !userLoc) {
             if (offRouteTimerRef.current) {
                 clearTimeout(offRouteTimerRef.current);
                 offRouteTimerRef.current = null;
@@ -1104,7 +1186,7 @@ export default function ChatRoom() {
         }, 0);
 
         return () => clearTimeout(progressTimer);
-    }, [isLiveNavMode, userLoc, currentStepIdx, navInstructions, mapRouteCoords, victimLocation, loadRouteForIncident, travelMode]);
+    }, [isSnapshotMap, isLiveNavMode, userLoc, currentStepIdx, navInstructions, mapRouteCoords, victimLocation, loadRouteForIncident, travelMode]);
 
     useEffect(() => {
         if (isLiveNavMode && audioEnabled && navInstructions.length > 0 && currentStepIdx < navInstructions.length) {
@@ -1229,6 +1311,21 @@ export default function ChatRoom() {
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
                 >
+                    {!isBackendIncidentId && (
+                        <View style={st.chatErrorCard}>
+                            <Feather name="alert-circle" size={16} color={T.danger} />
+                            <Text style={st.chatErrorText}>Missing or invalid incident id. Please open this chat from your messages list.</Text>
+                            <TouchableOpacity style={st.chatErrorBtn} onPress={() => router.back()} activeOpacity={0.8}>
+                                <Text style={st.chatErrorBtnText}>Back</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                    {isBackendIncidentId && !!chatError && (
+                        <TouchableOpacity style={st.chatErrorCard} onPress={refreshMessages} activeOpacity={0.8}>
+                            <Feather name="alert-circle" size={16} color={T.danger} />
+                            <Text style={st.chatErrorText}>{chatError} Tap to retry.</Text>
+                        </TouchableOpacity>
+                    )}
                     <FlatList
                         ref={flatRef}
                         data={messages}
@@ -1241,20 +1338,22 @@ export default function ChatRoom() {
                         ListEmptyComponent={
                             <View style={st.emptyChat}>
                                 <View style={st.emptyChatCircle}>
-                                    <Feather name="message-circle" size={24} color={T.ink5} />
+                                    <Feather name={chatError || !isBackendIncidentId ? 'alert-circle' : 'message-circle'} size={24} color={chatError || !isBackendIncidentId ? T.danger : T.ink5} />
                                 </View>
-                                <Text style={st.emptyChatText}>No messages yet</Text>
+                                <Text style={st.emptyChatText}>
+                                    {!isBackendIncidentId ? 'Invalid chat link' : chatError ? chatError : 'No messages yet'}
+                                </Text>
                             </View>
                         }
                     />
 
-                    {isLive ? (
+                    {isLive && isBackendIncidentId ? (
                         <FloatingInput onSend={handleSend} bottomInset={insets.bottom} onImagePicked={(uri) => {
                             sendMessage(uri, 'IMAGE');
                         }} />
-                    ) : (
-                        <ArchivePill bottomInset={insets.bottom} onDelete={handleDeleteChat} />
-                    )}
+                    ) : isBackendIncidentId ? (
+                        <ArchivePill bottomInset={insets.bottom} />
+                    ) : null}
                 </KeyboardAvoidingView>
 
                 <Modal transparent={true} visible={isHeaderMenuOpen} animationType="fade">
@@ -1282,6 +1381,17 @@ export default function ChatRoom() {
 
                             <View style={st.headerMenuDivider} />
 
+                            <TouchableOpacity
+                                style={st.headerMenuRow}
+                                activeOpacity={0.7}
+                                onPress={() => { Haptics.selectionAsync(); setHeaderMenuOpen(false); setAiSheetOpen(true); }}
+                            >
+                                <Image source={COPILOT_ICON} style={st.headerMenuAiIcon} resizeMode="contain" />
+                                <Text style={st.headerMenuText}>SheSafe AI Safety Copilot</Text>
+                            </TouchableOpacity>
+
+                            <View style={st.headerMenuDivider} />
+
                             {isLive && isBackendIncidentId && (
                                 <>
                                     <TouchableOpacity
@@ -1290,12 +1400,12 @@ export default function ChatRoom() {
                                         onPress={() => {
                                             Haptics.selectionAsync();
                                             setHeaderMenuOpen(false);
-                                            setLawMessage(lawStatus ? 'Law enforcement has already been requested for this incident.' : null);
+                                            setLawMessage(lawStatus ? 'Police request already submitted for this incident.' : null);
                                             setLawConfirmOpen(true);
                                         }}
                                     >
                                         <Feather name="shield" size={16} color={lawStatus ? T.ink4 : '#FFFFFF'} />
-                                        <Text style={[st.headerMenuText, lawStatus && { color: T.ink4 }]}>Request Law Enforcement</Text>
+                                        <Text style={[st.headerMenuText, lawStatus && { color: T.ink4 }]}>Request Police</Text>
                                     </TouchableOpacity>
                                     <View style={st.headerMenuDivider} />
                                 </>
@@ -1313,17 +1423,19 @@ export default function ChatRoom() {
                     </Pressable>
                 </Modal>
 
+                <AICopilotSheet visible={isAiSheetOpen} onClose={() => setAiSheetOpen(false)} role="volunteer" incidentId={isBackendIncidentId ? liveIncidentId : null} />
+
                 <Modal transparent visible={lawConfirmOpen} animationType="fade">
                     <View style={st.leaveBackdropCentered}>
                         <View style={st.leaveCard}>
-                            <Text style={st.leaveTitle}>Request Law Enforcement?</Text>
-                            <Text style={st.leaveMessage}>This will notify admin to review and forward this SOS case to law enforcement.</Text>
+                            <Text style={st.leaveTitle}>Request Police Assistance?</Text>
+                            <Text style={st.leaveMessage}>This will send the incident to admin with an automatic incident summary for review.</Text>
                             {!!lawStatus && <Text style={[st.leaveMessage, { color: T.violet }]}>Current status: {lawStatus.replace(/_/g, ' ')}</Text>}
                             {!!lawMessage && <Text style={[st.leaveMessage, { color: lawStatus ? T.violet : T.dangerText }]}>{lawMessage}</Text>}
                             <View style={st.leaveActions}>
                                 <TouchableOpacity style={st.leaveCancel} onPress={() => setLawConfirmOpen(false)}><Text style={st.leaveCancelText}>Cancel</Text></TouchableOpacity>
                                 <TouchableOpacity style={[st.leaveYes, lawStatus && { opacity: 0.45 }]} disabled={!!lawStatus || lawRequesting} onPress={handleRequestLaw}>
-                                    <Text style={st.leaveYesText}>{lawRequesting ? 'Requesting...' : 'Request'}</Text>
+                                    <Text style={st.leaveYesText}>{lawRequesting ? 'Submitting...' : 'Submit Request'}</Text>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -1427,7 +1539,7 @@ export default function ChatRoom() {
                     </View>
                 </Modal>
 
-                {/* â”€â”€ Map Overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+                {/* -- Map Overlay --------------------------------------------------- */}
                 {isMapOverlayOpen && (
                     <View style={StyleSheet.absoluteFill}>
                         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
@@ -1437,7 +1549,7 @@ export default function ChatRoom() {
                             userInterfaceStyle="dark"
                             customMapStyle={TACTICAL_MAP_STYLE}
                             pitchEnabled={true}
-                            showsUserLocation={true}
+                            showsUserLocation={!isSnapshotMap}
                             showsMyLocationButton={false}
                             initialRegion={{
                                 latitude: 23.8293,
@@ -1494,7 +1606,26 @@ export default function ChatRoom() {
                                     />
                                 </>
                             )}
-                            {mapRouteCoords.length > 0 && (
+                            {isSnapshotMap && victimLocation && (
+                                <Marker
+                                    coordinate={victimLocation}
+                                    pinColor="#EF4444"
+                                    title={victimName || 'Victim'}
+                                    description="Last known victim location"
+                                    zIndex={1000}
+                                />
+                            )}
+                            {isSnapshotMap && respondersList.map(responder => responder.location ? (
+                                <Marker
+                                    key={`snapshot-${responder.id}`}
+                                    coordinate={responder.location}
+                                    pinColor={T.violet}
+                                    title={responder.name || 'Volunteer'}
+                                    description="Last known responder location"
+                                    zIndex={999}
+                                />
+                            ) : null)}
+                            {!isSnapshotMap && mapRouteCoords.length > 0 && (
                                 <>
                                     {/* Volunteer Marker (origin) */}
                                     <Marker
@@ -1516,7 +1647,7 @@ export default function ChatRoom() {
                             )}
                         </MapView>
 
-                        {/* Top Header â€” Live mode shows current instruction */}
+                        {/* Top Header - Live mode shows current instruction */}
                         {isLiveNavMode && navInstructions.length > 0 && currentStepIdx < navInstructions.length && (
                             <PremiumBar
                                 style={{ position: 'absolute', top: insets.top + 8, left: 16, right: 16, zIndex: 100, borderRadius: 16 }}
@@ -1564,7 +1695,7 @@ export default function ChatRoom() {
                                 </TouchableOpacity>
                                 <View style={st.overlayTitleWrap}>
                                     <Text style={st.overlayTitle}>
-                                        {isReviewMode ? 'Route Review' : 'Route Overview'}
+                                        {isSnapshotMap ? 'Snapshot Map' : isReviewMode ? 'Route Review' : 'Route Overview'}
                                     </Text>
                                 </View>
                                 <View style={{ width: 36 }} />
@@ -1600,8 +1731,19 @@ export default function ChatRoom() {
                                 </View>
                             )}
 
-                            {/* â”€â”€ LIVE MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-                            {isLiveNavMode ? (
+                            {/* -- LIVE MODE -------------------------------- */}
+                            {isSnapshotMap ? (
+                                <View>
+                                    <View style={st.overviewRow}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={st.overviewDist}>{mapDistance || 'Archived case'}</Text>
+                                            <Text style={st.overviewEta}>
+                                                {mapDuration}{snapshotFinalizedAt ? ` · ${formatTime(snapshotFinalizedAt)}` : ''}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                </View>
+                            ) : isLiveNavMode ? (
                                 <View>
                                     {navInstructions.length > 0 && currentStepIdx < navInstructions.length && (
                                         <View style={st.navInstRow}>
@@ -1639,7 +1781,7 @@ export default function ChatRoom() {
                                     </View>
                                 </View>
 
-                                /* â”€â”€ REVIEW MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+                                /* -- REVIEW MODE -------------------------------- */
                             ) : isReviewMode ? (
                                 <View>
                                     <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={false}>
@@ -1663,7 +1805,7 @@ export default function ChatRoom() {
                                     </TouchableOpacity>
                                 </View>
 
-                                /* â”€â”€ ROUTE OVERVIEW (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+                                /* -- ROUTE OVERVIEW (default) ------------------- */
                             ) : isMyEmergency && respondersList.length === 0 ? (
                                 <View style={st.waitingResponderCard}>
                                     <View style={st.waitingResponderIcon}>
@@ -1759,7 +1901,7 @@ export default function ChatRoom() {
     );
 }
 
-// â”€â”€â”€ Styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Styles -----------------------------------------------------------------
 const st = StyleSheet.create({
     root: { flex: 1 },
 
@@ -1839,15 +1981,15 @@ const st = StyleSheet.create({
         borderRadius: 16,
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.1)',
-        minWidth: 220,
+        minWidth: 260,
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
+                shadowColor: '#8A38F6',
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
             },
-            android: { elevation: 5 },
+            android: { elevation: 4 },
         }),
     },
     headerMenuRow: {
@@ -1855,6 +1997,11 @@ const st = StyleSheet.create({
         alignItems: 'center',
         padding: 16,
         gap: 12,
+    },
+    headerMenuAiIcon: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
     },
     headerMenuText: {
         color: '#FFFFFF',
@@ -1943,7 +2090,7 @@ const st = StyleSheet.create({
 
     bubbleRow: {
         flexDirection: 'row',
-        marginBottom: 20,
+        marginBottom: 14,
         gap: S.s2,
     },
     bubbleRowOwn: {
@@ -1964,7 +2111,7 @@ const st = StyleSheet.create({
     },
 
     bubbleCol: {
-        maxWidth: '75%',
+        maxWidth: '78%',
     },
 
     senderRow: {
@@ -1976,8 +2123,8 @@ const st = StyleSheet.create({
     },
     senderName: {
         fontSize: 12,
-        fontWeight: 'bold',
-        color: '#C4C1D4',
+        fontWeight: '700',
+        color: 'rgba(245,245,247,0.66)',
         marginBottom: 2,
     },
 
@@ -1993,22 +2140,17 @@ const st = StyleSheet.create({
     },
 
     bubble: {
-        paddingVertical: S.s3,
-        paddingHorizontal: S.s4,
+        borderRadius: 18,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
     },
     bubbleOther: {
+        backgroundColor: 'rgba(255,255,255,0.08)',
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.1)',
-        overflow: 'hidden',
-    },
-    bubbleOtherBg: {
-        backgroundColor: '#1E153A',
-        opacity: 0.70,
     },
     bubbleOwn: {
-        backgroundColor: T.violetDim,
-        borderWidth: 1,
-        borderColor: `${T.violet}35`,
+        backgroundColor: 'rgba(124,58,237,0.95)',
     },
     bubbleVictim: {
     },
@@ -2019,15 +2161,15 @@ const st = StyleSheet.create({
         lineHeight: 20,
     },
     msgTextOwn: {
-        color: T.ink,
+        color: '#FFFFFF',
     },
     msgTextVictim: {
         color: '#FFFFFF',
     },
     msgTime: {
         fontSize: 10,
-        color: T.ink5,
-        marginTop: S.s1,
+        color: 'rgba(245,245,247,0.34)',
+        marginTop: 4,
         paddingHorizontal: S.s2,
         alignSelf: 'flex-start',
     },
@@ -2121,12 +2263,12 @@ const st = StyleSheet.create({
         borderColor: 'rgba(255, 255, 255, 0.1)',
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
-                shadowOpacity: 0.2,
-                shadowRadius: 14,
+                shadowColor: '#8A38F6',
+                shadowOpacity: 0.10,
+                shadowRadius: 12,
                 shadowOffset: { width: 0, height: -3 },
             },
-            android: { elevation: 8 },
+            android: { elevation: 6 },
         }),
     },
     inputPillBg: {
@@ -2193,12 +2335,12 @@ const st = StyleSheet.create({
         minWidth: 180,
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
+                shadowColor: '#8A38F6',
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
             },
-            android: { elevation: 5 },
+            android: { elevation: 4 },
         }),
         zIndex: 10,
     },
@@ -2216,12 +2358,12 @@ const st = StyleSheet.create({
         minWidth: 180,
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
+                shadowColor: '#8A38F6',
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
             },
-            android: { elevation: 5 },
+            android: { elevation: 4 },
         }),
         zIndex: 10,
     },
@@ -2269,24 +2411,6 @@ const st = StyleSheet.create({
         color: T.ink4,
         letterSpacing: 0.2,
     },
-    archiveDeleteBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: R.pill,
-        backgroundColor: 'rgba(255,69,58,0.10)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,69,58,0.28)',
-        marginTop: S.s2,
-    },
-    archiveDeleteText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#FF453A',
-    },
-
     emptyChat: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -2307,6 +2431,36 @@ const st = StyleSheet.create({
     emptyChatText: {
         ...Ty.bodySm,
         color: T.ink4,
+    },
+    chatErrorCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: S.s4,
+        marginTop: S.s3,
+        paddingHorizontal: S.s3,
+        paddingVertical: S.s2,
+        borderRadius: R.md,
+        backgroundColor: T.dangerLight,
+        borderWidth: 1,
+        borderColor: T.dangerBorder,
+    },
+    chatErrorText: {
+        flex: 1,
+        fontSize: 12,
+        color: T.danger,
+        fontWeight: '700',
+    },
+    chatErrorBtn: {
+        paddingHorizontal: S.s3,
+        paddingVertical: S.s1,
+        borderRadius: R.pill,
+        backgroundColor: T.danger,
+    },
+    chatErrorBtnText: {
+        fontSize: 12,
+        color: T.onPrimary,
+        fontWeight: '800',
     },
     overlayHeader: {
         position: 'absolute',
@@ -2504,8 +2658,8 @@ const st = StyleSheet.create({
         justifyContent: 'center',
         overflow: 'hidden',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 4 },
         }),
     },
     sosMarkerInnerB: {
@@ -2519,8 +2673,8 @@ const st = StyleSheet.create({
         justifyContent: 'center',
         overflow: 'hidden',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 4 },
         }),
     },
     sosMarkerAvatar: {
@@ -2588,8 +2742,8 @@ const st = StyleSheet.create({
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.06)',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
+            android: { elevation: 4 },
         }),
     },
     saveTitleColored: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginBottom: 6 },
@@ -2603,8 +2757,7 @@ const st = StyleSheet.create({
     leaveCancelText: { color: 'rgba(255,255,255,0.8)', fontWeight: '700' },
     leaveYes: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: T.danger },
     leaveYesText: { color: T.onPrimary, fontWeight: '900' },
-
-    // â”€â”€ Live Mode Top Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Live Mode Top Banner ---------------------------------------------
     liveTopBanner: {
         position: 'absolute', left: 0, right: 0, zIndex: 10,
     },
@@ -2624,7 +2777,7 @@ const st = StyleSheet.create({
     },
     liveStepCounter: { color: T.ink3, fontSize: 13, fontWeight: '600' },
 
-    // â”€â”€ Travel Mode Selector â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Travel Mode Selector ---------------------------------------------
     travelModeRow: {
         flexDirection: 'row', gap: 6, marginBottom: 14,
     },
@@ -2640,7 +2793,7 @@ const st = StyleSheet.create({
     travelModeText: { color: T.ink3, fontSize: 11, fontWeight: '700' },
     travelModeTextActive: { color: T.onPrimary },
 
-    // â”€â”€ Review Mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // -- Review Mode ------------------------------------------------------
     reviewBtn: {
         flexDirection: 'row', alignItems: 'center', gap: 6,
         paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999,

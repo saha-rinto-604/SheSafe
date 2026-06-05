@@ -2,6 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import {
     ActivityIndicator,
     Animated,
+    AppState,
     FlatList,
     Modal,
     RefreshControl,
@@ -21,6 +22,12 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import GroupChatAvatar, { type GroupChatAvatarParticipant } from '../../../../src/components/shared/GroupChatAvatar';
 import { T, R, S } from '../../../../src/constants/theme';
 import { incidentService } from '../../../../src/services/incidentService';
+import {
+    compareIncidentChatsByNewestIncident,
+    getIncidentChatCreatedTimestamp,
+    sortIncidentChatsByNewestIncident,
+    type IncidentChatOrderingInput,
+} from '../../../../src/utils/incidentChatOrdering';
 
 const D = {
     cardFill: T.surfaceBulky,
@@ -64,7 +71,7 @@ type UserChatIncident = {
     activeParticipants?: GroupChatAvatarParticipant[];
     responderCount?: number;
     maxResponders?: number;
-};
+} & IncidentChatOrderingInput;
 
 function normalizeStatus(status: string): ChatIncidentStatus {
     const upper = String(status || 'ACTIVE').toUpperCase();
@@ -74,17 +81,8 @@ function normalizeStatus(status: string): ChatIncidentStatus {
     return 'ACTIVE';
 }
 
-function incidentActivityTime(incident: UserChatIncident): number {
-    const timestamp = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
-    const time = new Date(timestamp).getTime();
-    return Number.isFinite(time) ? time : 0;
-}
-
 function compareIncidents(a: UserChatIncident, b: UserChatIncident): number {
-    const aLive = normalizeStatus(a.status) === 'ACTIVE';
-    const bLive = normalizeStatus(b.status) === 'ACTIVE';
-    if (aLive !== bLive) return aLive ? -1 : 1;
-    return incidentActivityTime(b) - incidentActivityTime(a);
+    return compareIncidentChatsByNewestIncident(a, b);
 }
 
 function incidentNumber(id: number | string): string {
@@ -133,7 +131,7 @@ const IncidentCard = memo(function IncidentCard({
 }) {
     const status = normalizeStatus(incident.status);
     const isLive = status === 'ACTIVE';
-    const activityAt = incident.lastMessage?.createdAt ?? incident.updatedAt ?? incident.createdAt;
+    const activityAt = getIncidentChatCreatedTimestamp(incident);
     const isSystemMessage = incident.lastMessage?.senderRole === 'system';
     const lastSender = isSystemMessage ? '' : incident.lastMessage?.senderName;
     const lastText = incident.lastMessage?.text ?? 'No messages yet';
@@ -218,7 +216,8 @@ export default function ChatHome() {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
     const [deleting, setDeleting] = useState(false);
-    const searchPulse = useRef(new Animated.Value(0)).current;
+    const [searchPulse] = useState(() => new Animated.Value(0));
+    const focusedRef = useRef(false);
 
     useEffect(() => {
         const handle = setTimeout(() => setDebouncedSearch(searchQuery), 320);
@@ -236,17 +235,18 @@ export default function ChatHome() {
     const loadChats = useCallback(async () => {
         setError(null);
         const rows = await incidentService.getUserIncidentChats(debouncedSearch);
-        setIncidents((rows ?? []).map((row: any) => ({
+        setIncidents(sortIncidentChatsByNewestIncident((rows ?? []).map((row: any) => ({
             ...row,
             id: row.id,
             status: normalizeStatus(row.status),
             responderCount: Number(row.responderCount ?? row.responders?.length ?? 0),
             maxResponders: Number(row.maxResponders ?? 3),
-        })).sort(compareIncidents));
+        }))));
     }, [debouncedSearch]);
 
     useFocusEffect(useCallback(() => {
         let active = true;
+        focusedRef.current = true;
         setLoading(true);
         loadChats()
             .catch((err) => {
@@ -256,8 +256,29 @@ export default function ChatHome() {
             .finally(() => {
                 if (active) setLoading(false);
             });
-        return () => { active = false; };
+        const interval = setInterval(() => {
+            if (!focusedRef.current) return;
+            loadChats().catch((err) => {
+                setError(err?.message || 'Unable to refresh chats.');
+            });
+        }, 15000);
+        return () => {
+            active = false;
+            focusedRef.current = false;
+            clearInterval(interval);
+        };
     }, [loadChats]));
+
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active' && focusedRef.current) {
+                loadChats().catch((err) => {
+                    setError(err?.message || 'Unable to refresh chats.');
+                });
+            }
+        });
+        return () => sub.remove();
+    }, [loadChats]);
 
     const onRefresh = useCallback(async () => {
         setRefreshing(true);

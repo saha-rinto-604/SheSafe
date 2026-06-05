@@ -17,7 +17,7 @@ import { BlurView } from 'expo-blur';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
-import { T, R, S } from '../../../../src/constants/theme';
+import { T, R } from '../../../../src/constants/theme';
 import {
     incidentService,
     type IncidentMessageResponse,
@@ -72,8 +72,8 @@ function MessageBubble({ msg, isOwn }: { msg: IncidentMessageResponse; isOwn: bo
     const badge = roleBadgeStyle(msg.senderRole);
     const label = roleLabel(msg.senderRole);
     const tailStyle = isOwn
-        ? { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 2, borderBottomLeftRadius: 16 }
-        : { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderBottomRightRadius: 16, borderBottomLeftRadius: 2 };
+        ? { borderBottomRightRadius: 6 }
+        : { borderBottomLeftRadius: 6 };
 
     return (
         <View style={[ms.row, isOwn ? ms.rowOwn : ms.rowOther]}>
@@ -131,14 +131,12 @@ export default function IncidentChatScreen() {
 
     const [messages, setMessages] = useState<IncidentMessageResponse[]>([]);
     const [responders, setResponders] = useState<IncidentRespondersResponse | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [loading, setLoading] = useState(!!incidentId);
+    const [error, setError] = useState<string | null>(incidentId ? null : 'No incident ID provided.');
     const flatRef = useRef<FlatList>(null);
 
     useEffect(() => {
         if (!incidentId) {
-            setError('No incident ID provided.');
-            setLoading(false);
             return;
         }
         Promise.all([
@@ -242,21 +240,21 @@ const ms = StyleSheet.create({
     },
     systemText: { fontSize: 11, color: T.ink4, textAlign: 'center' },
 
-    row: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 12, alignItems: 'flex-end' },
+    row: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 14, alignItems: 'flex-end' },
     rowOwn: { justifyContent: 'flex-end' },
     rowOther: { justifyContent: 'flex-start' },
     avatar: { marginRight: 8, marginBottom: 2 },
-    col: { maxWidth: '75%' },
+    col: { maxWidth: '78%' },
     senderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-    senderName: { fontSize: 12, fontWeight: '600', color: T.ink3 },
+    senderName: { fontSize: 12, fontWeight: '700', color: 'rgba(245,245,247,0.66)' },
     roleBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
     roleText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
-    bubble: { paddingHorizontal: 14, paddingVertical: 10 },
-    bubbleOwn: { backgroundColor: T.violet },
-    bubbleOther: { backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: T.lineMid },
-    text: { fontSize: 14, color: T.ink2, lineHeight: 20 },
+    bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+    bubbleOwn: { backgroundColor: 'rgba(124,58,237,0.95)' },
+    bubbleOther: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+    text: { fontSize: 14, color: '#FFFFFF', lineHeight: 20 },
     textOwn: { color: '#FFFFFF' },
-    time: { fontSize: 10, color: T.ink5, marginTop: 3 },
+    time: { fontSize: 10, color: 'rgba(245,245,247,0.34)', marginTop: 4 },
     timeOwn: { textAlign: 'right' },
 });
 

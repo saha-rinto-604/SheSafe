@@ -11,6 +11,18 @@ function recordKey(n: number) {
     return `resqher_notif_${_uid}_${n}`;
 }
 
+function sanitizeNotificationText(value: string): string {
+    return String(value || '').replace(/\+?\d[\d\s().-]{6,}\d/g, 'Someone');
+}
+
+function sanitizeNotification<T extends AppNotification>(notif: T): T {
+    return {
+        ...notif,
+        title: sanitizeNotificationText(notif.title),
+        body: sanitizeNotificationText(notif.body),
+    };
+}
+
 // In-memory unread count cache. -1 means not yet initialised from SecureStore.
 let _unreadCount = -1;
 const _subs: Set<(count: number) => void> = new Set();
@@ -83,13 +95,13 @@ export const notificationStore = {
             if (existing.some(notif => notif.sourceId === payload.sourceId)) return;
         }
         const n = await nextSeq();
-        const notif: AppNotification = {
+        const notif: AppNotification = sanitizeNotification({
             n,
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             read: false,
             ...payload,
             createdAt: payload.createdAt ?? new Date().toISOString(),
-        };
+        });
         await SecureStore.setItemAsync(recordKey(n), JSON.stringify(notif));
         let idx = await getIndex();
         idx.push(n);
@@ -110,7 +122,7 @@ export const notificationStore = {
         for (const n of idx) {
             const raw = await SecureStore.getItemAsync(recordKey(n));
             if (!raw) continue;
-            try { results.push(JSON.parse(raw)); } catch { /* skip corrupted */ }
+            try { results.push(sanitizeNotification(JSON.parse(raw))); } catch { /* skip corrupted */ }
         }
         return results.reverse();
     },

@@ -2,6 +2,15 @@ const { httpError } = require('../../utils/httpError');
 const repo = require('./law.repository');
 
 const ACTIVE_INCIDENT_STATUSES = new Set(['ACTIVE', 'IN_PROGRESS', 'LIVE']);
+const CRITICAL_KEYWORDS = [
+  'weapon', 'knife', 'gun', 'assault', 'raped', 'rape', 'unconscious', 'trapped',
+  'bleeding', 'blood', 'severe threat', 'kill', 'kidnap', 'choking',
+];
+const HIGH_KEYWORDS = [
+  'medical', 'injured', 'injury', 'hurt', 'stalking', 'following', 'threat',
+  'harassment', 'harassing', 'attack', 'panic', 'unsafe', 'danger', 'help',
+  'emergency', 'scream', 'forced', 'abuse',
+];
 
 function positiveId(value, label = 'id') {
   const id = Number(value);
@@ -15,6 +24,259 @@ function cleanText(value, max = 500) {
   return text || null;
 }
 
+function parseJson(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+function nameFrom(row, firstKey, lastKey, fallback) {
+  return [row?.[firstKey], row?.[lastKey]].filter(Boolean).join(' ').trim() || fallback;
+}
+
+function compactText(value, max = 260) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > max ? `${text.slice(0, max - 1).trim()}...` : text;
+}
+
+function objectToLines(value) {
+  const parsed = parseJson(value);
+  if (!parsed || typeof parsed !== 'object') return [];
+  return Object.entries(parsed)
+    .filter(([, val]) => val !== null && val !== undefined && String(val).trim() !== '')
+    .slice(0, 8)
+    .map(([key, val]) => `${key.replace(/([A-Z])/g, ' $1')}: ${Array.isArray(val) ? val.join(', ') : String(val)}`);
+}
+
+function findKeywordHits(text, keywords) {
+  const lower = String(text || '').toLowerCase();
+  return keywords.filter((keyword) => lower.includes(keyword));
+}
+
+function summarizeChat(messages) {
+  const important = [];
+  let urgentScore = 0;
+  for (const message of messages || []) {
+    const content = compactText(message.content, 180);
+    if (!content) continue;
+    const criticalHits = findKeywordHits(content, CRITICAL_KEYWORDS);
+    const highHits = findKeywordHits(content, HIGH_KEYWORDS);
+    if (criticalHits.length) urgentScore += 4;
+    if (highHits.length) urgentScore += 2;
+    if (criticalHits.length || highHits.length || important.length < 5) {
+      important.push({
+        at: message.created_at,
+        sender: message.sender_name || 'Participant',
+        role: normalizeRole(message.sender_role),
+        type: message.message_type || 'TEXT',
+        message: content,
+      });
+    }
+  }
+  return { importantMessages: important.slice(-8), urgentScore };
+}
+
+function hasRecentLiveLocation(incident) {
+  return incident?.victim_latest_latitude != null && incident?.victim_latest_longitude != null;
+}
+
+function computeSeverity({ incident, requesterRole, responderCount, chatUrgentScore, allText }) {
+  const status = String(incident?.status || '').toUpperCase();
+  const active = ACTIVE_INCIDENT_STATUSES.has(status);
+  const criticalHits = findKeywordHits(allText, CRITICAL_KEYWORDS);
+  const highHits = findKeywordHits(allText, HIGH_KEYWORDS);
+  let score = 0;
+  const reasons = [];
+
+  if (active) {
+    score += 3;
+    reasons.push('active SOS status');
+  }
+  if (status === 'IN_PROGRESS' || status === 'LIVE') {
+    score += 1;
+    reasons.push('incident is in progress');
+  }
+  if (requesterRole === 'VOLUNTEER') {
+    score += 2;
+    reasons.push('request submitted by assisting volunteer');
+  }
+  if (responderCount >= 2) {
+    score += 2;
+    reasons.push('multiple responders involved');
+  } else if (responderCount === 1) {
+    score += 1;
+    reasons.push('responder involved');
+  }
+  if (hasRecentLiveLocation(incident)) {
+    score += 2;
+    reasons.push('recent live location available');
+  }
+  if (criticalHits.length) {
+    score += 6;
+    reasons.push(`critical danger keyword(s): ${criticalHits.slice(0, 4).join(', ')}`);
+  }
+  if (highHits.length) {
+    score += 3;
+    reasons.push(`urgent keyword(s): ${highHits.slice(0, 5).join(', ')}`);
+  }
+  if (chatUrgentScore >= 6) {
+    score += 3;
+    reasons.push('repeated urgent chat messages');
+  } else if (chatUrgentScore > 0) {
+    score += 1;
+    reasons.push('urgent chat indicators');
+  }
+
+  let severity = 'LOW';
+  if (score >= 11 || criticalHits.length >= 2) severity = 'CRITICAL';
+  else if (score >= 7 || criticalHits.length || (active && highHits.length)) severity = 'HIGH';
+  else if (score >= 3) severity = 'MEDIUM';
+
+  return {
+    severity,
+    severityReason: reasons.length
+      ? `${reasons[0][0].toUpperCase()}${reasons[0].slice(1)}${reasons.length > 1 ? ` with ${reasons.slice(1).join(', ')}` : ''}.`
+      : 'No immediate danger indicators were found in available incident data.',
+  };
+}
+
+async function generateIncidentIntelligence({ incidentId, requesterUserId, requestedByRole, requestTime }) {
+  const context = await repo.getIncidentSummaryContext(incidentId, requesterUserId);
+  if (!context?.incident) throw httpError(404, 'Incident not found.');
+  const { incident, volunteers, chatMessages, responderCount, participantCount } = context;
+  const userCaseLines = objectToLines(incident.user_case_details);
+  const volunteerCaseLines = objectToLines(incident.volunteer_case_details);
+  const finalSnapshot = parseJson(incident.final_location_snapshot);
+  const chatSummary = summarizeChat(chatMessages);
+  const victimName = nameFrom(incident, 'victim_first_name', 'victim_last_name', 'SOS triggerer');
+  const requesterName = nameFrom(incident, 'requester_first_name', 'requester_last_name', 'Requester');
+  const requesterRole = normalizeRole(requestedByRole || incident.requester_role_name);
+  const allText = [
+    incident.address,
+    ...userCaseLines,
+    ...volunteerCaseLines,
+    ...(chatMessages || []).map((message) => message.content),
+  ].join(' ');
+  const { severity, severityReason } = computeSeverity({
+    incident,
+    requesterRole,
+    responderCount,
+    chatUrgentScore: chatSummary.urgentScore,
+    allText,
+  });
+  const currentLocation = hasRecentLiveLocation(incident)
+    ? {
+      latitude: Number(incident.victim_latest_latitude),
+      longitude: Number(incident.victim_latest_longitude),
+      source: 'victim_live_location',
+    }
+    : {
+      latitude: incident.latitude == null ? null : Number(incident.latitude),
+      longitude: incident.longitude == null ? null : Number(incident.longitude),
+      source: 'incident_start_location',
+    };
+  const caseDetails = [...userCaseLines, ...volunteerCaseLines].slice(0, 12);
+  const summaryParagraph = compactText([
+    `Incident #${incident.id} is currently ${incident.status}.`,
+    `${requesterRole === 'VOLUNTEER' ? 'An assisting volunteer' : 'The incident owner'} requested police review.`,
+    incident.address ? `Known location: ${incident.address}.` : 'Location label is unavailable.',
+    caseDetails.length ? `Case details include ${caseDetails.slice(0, 3).join('; ')}.` : '',
+    chatSummary.importantMessages.length ? `Recent chat includes ${chatSummary.importantMessages.slice(-2).map((item) => `"${item.message}"`).join(' and ')}.` : '',
+  ].filter(Boolean).join(' '), 900);
+
+  const summary = {
+    version: 1,
+    title: 'AI Incident Intelligence',
+    incidentId: String(incident.id),
+    incidentCode: `#${incident.id}`,
+    requestSource: requesterRole === 'VOLUNTEER' ? 'Volunteer incident chat' : 'Standard user incident chat',
+    requestedBy: {
+      userId: String(requesterUserId),
+      role: requesterRole,
+      name: requesterName,
+      phone: incident.requester_phone || null,
+    },
+    victim: {
+      userId: String(incident.user_id),
+      name: victimName,
+      phone: incident.victim_phone || null,
+    },
+    status: incident.status,
+    sosCreatedAt: incident.created_at,
+    policeRequestTime: requestTime,
+    lastUpdatedAt: new Date().toISOString(),
+    incidentLocation: {
+      address: incident.address || null,
+      latitude: incident.latitude == null ? null : Number(incident.latitude),
+      longitude: incident.longitude == null ? null : Number(incident.longitude),
+    },
+    currentLocation,
+    finalLocationSnapshot: finalSnapshot || null,
+    responderCount,
+    participantCount,
+    acceptedVolunteers: volunteers
+      .filter((volunteer) => volunteer.status === 'ACCEPTED')
+      .map((volunteer) => ({
+        id: String(volunteer.id),
+        name: volunteer.name || 'Volunteer',
+        phone: volunteer.phone_number || null,
+        acceptedAt: volunteer.accepted_at,
+      })),
+    caseDetails,
+    importantChatDetails: chatSummary.importantMessages,
+    summary: summaryParagraph || 'No incident details were available beyond the request metadata.',
+    severity,
+    severityReason,
+  };
+
+  return {
+    summary,
+    incidentSummary: JSON.stringify(summary),
+    severity,
+    severityReason,
+  };
+}
+
+function fallbackIncidentIntelligence({ incident, incidentId, requestedByRole }) {
+  const requesterRole = normalizeRole(requestedByRole);
+  const status = String(incident?.status || '').toUpperCase();
+  const severity = ACTIVE_INCIDENT_STATUSES.has(status) ? 'HIGH' : 'MEDIUM';
+  const summaryText = `Incident #${incidentId} has an active SOS request. Law enforcement assistance was requested by ${requesterRole}.`;
+  const severityReason = severity === 'HIGH'
+    ? 'Active SOS status with limited optional incident details available.'
+    : 'Law enforcement assistance was requested with limited optional incident details available.';
+  const summary = {
+    version: 1,
+    title: 'Incident Intelligence',
+    incidentId: String(incidentId),
+    incidentCode: `#${incidentId}`,
+    requestSource: requesterRole === 'VOLUNTEER' ? 'Volunteer incident chat' : 'Standard user incident chat',
+    status: incident?.status || 'ACTIVE',
+    summary: summaryText,
+    severity,
+    severityReason,
+  };
+
+  return {
+    summary,
+    incidentSummary: JSON.stringify(summary),
+    severity,
+    severityReason,
+  };
+}
+
+async function generateIncidentIntelligenceSafely(args) {
+  try {
+    return await generateIncidentIntelligence(args);
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[law-enforcement] Falling back to basic incident summary:', error?.message || error);
+    }
+    return fallbackIncidentIntelligence(args);
+  }
+}
+
 function normalizeRole(role) {
   const raw = String(role || '').toLowerCase();
   if (raw === 'volunteer') return 'VOLUNTEER';
@@ -25,6 +287,7 @@ function normalizeRole(role) {
 
 function toRequestStatus(row) {
   if (!row) return { exists: false };
+  const incidentSummary = parseJson(row.incident_summary);
   return {
     exists: true,
     id: String(row.id),
@@ -32,6 +295,11 @@ function toRequestStatus(row) {
     status: row.status,
     assignedPoliceId: row.assigned_police_id ? String(row.assigned_police_id) : null,
     isAccepted: row.status === 'ACCEPTED_BY_POLICE',
+    duplicate: Boolean(row.duplicate),
+    severity: row.severity || null,
+    severityReason: row.severity_reason || null,
+    incidentSummary: incidentSummary?.summary || row.incident_summary || null,
+    summaryGeneratedAt: row.summary_generated_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -40,6 +308,7 @@ function toRequestStatus(row) {
 function mapRequest(row) {
   const assignedPoliceCount = Number(row.assigned_police_count || 0);
   const assignedToAll = row.status === 'ASSIGNED_TO_POLICE' && !row.assigned_police_id && assignedPoliceCount > 0;
+  const incidentSummary = parseJson(row.incident_summary);
   return {
     id: String(row.id),
     incidentId: String(row.incident_id),
@@ -67,6 +336,14 @@ function mapRequest(row) {
       badgeNumber: row.assigned_police_badge || null,
     } : null,
     requestNote: row.request_note || null,
+    incidentSummary,
+    incidentSummaryText: incidentSummary?.summary || row.incident_summary || null,
+    summaryPreview: compactText(incidentSummary?.summary || row.incident_summary, 180),
+    severity: row.severity || incidentSummary?.severity || 'LOW',
+    severityReason: row.severity_reason || incidentSummary?.severityReason || null,
+    summaryGeneratedAt: row.summary_generated_at || null,
+    reviewedByAdminId: row.reviewed_by_admin_id ? String(row.reviewed_by_admin_id) : null,
+    reviewedAt: row.reviewed_at || null,
     rejectionReason: row.rejection_reason || null,
     cancelReason: row.cancel_reason || null,
     createdAt: row.created_at,
@@ -127,20 +404,33 @@ async function createLawRequest(user, body) {
   if (!isVictim && !isVolunteer) {
     throw httpError(403, 'Only incident participants can request law enforcement.');
   }
-
-  const duplicate = await repo.findActiveForIncident(incidentId);
-  if (duplicate) {
+  if (await repo.findActiveForIncident(incidentId)) {
     throw httpError(409, 'Law enforcement has already been requested for this incident.');
   }
+
+  const requestTime = new Date().toISOString();
+  const intelligence = await generateIncidentIntelligenceSafely({
+    incidentId,
+    incident,
+    requesterUserId: user.id,
+    requestedByRole: user.role,
+    requestTime,
+  });
 
   const created = await repo.createRequest({
     incidentId,
     requestedByUserId: user.id,
     requestedByRole: user.role,
     requestNote: cleanText(body?.requestNote),
+    incidentSummary: intelligence.incidentSummary,
+    severity: intelligence.severity,
+    severityReason: intelligence.severityReason,
   });
-  await repo.addSystemMessage(incidentId, user.id, 'Law enforcement request sent to admin.').catch(() => undefined);
-  return toRequestStatus(created);
+  if (created.duplicate) {
+    throw httpError(409, 'Law enforcement has already been requested for this incident.');
+  }
+  await repo.addSystemMessage(incidentId, user.id, 'Police request submitted to admin with an automatic incident summary.').catch(() => undefined);
+  return toRequestStatus({ ...created.row, duplicate: created.duplicate });
 }
 
 async function getIncidentLawStatus(user, incidentIdValue) {
@@ -160,6 +450,17 @@ async function getIncidentLawStatus(user, incidentIdValue) {
 async function listAdminRequests() {
   await repo.ensureLawSchema();
   return (await repo.listAdminRequests()).map(mapRequest);
+}
+
+async function getAdminRequest(adminId, requestIdValue) {
+  await repo.ensureLawSchema();
+  const requestId = positiveId(requestIdValue, 'request id');
+  if (adminId) {
+    await repo.markAdminReviewed({ requestId, adminId: positiveId(adminId, 'admin id') });
+  }
+  const row = await repo.getAdminRequestById(requestId);
+  if (!row) throw httpError(404, 'Law enforcement request not found.');
+  return mapRequest(row);
 }
 
 async function listApprovedPolice() {
@@ -318,6 +619,7 @@ module.exports = {
   createLawRequest,
   getIncidentLawStatus,
   listAdminRequests,
+  getAdminRequest,
   listApprovedPolice,
   assignRequest,
   cancelRequest,

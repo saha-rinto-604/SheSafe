@@ -2,7 +2,7 @@
  * AdminSidebar — Desktop sidebar + Mobile drawer for the Admin Dashboard.
  * Uses the existing SheSafe design tokens.
  */
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Dimensions,
   Animated, Pressable, Platform, ScrollView,
@@ -28,7 +28,7 @@ type Props = {
 
 /* ── Menu Item ── */
 function MenuItem({ item, active, onPress }: { item: SidebarItem; active: boolean; onPress: () => void }) {
-  const fadeAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const [fadeAnim] = useState(() => new Animated.Value(active ? 1 : 0));
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -36,7 +36,7 @@ function MenuItem({ item, active, onPress }: { item: SidebarItem; active: boolea
       duration: 200,
       useNativeDriver: USE_NATIVE_DRIVER,
     }).start();
-  }, [active]);
+  }, [active, fadeAnim]);
 
   return (
     <TouchableOpacity
@@ -115,8 +115,8 @@ export function DesktopSidebar(props: Omit<Props, 'isDrawerOpen' | 'onCloseDrawe
 
 /* ── Mobile Drawer ── */
 export function MobileDrawer({ isDrawerOpen, onCloseDrawer, ...rest }: Props) {
-  const slideAnim = useRef(new Animated.Value(-Dimensions.get('window').width)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [slideAnim] = useState(() => new Animated.Value(-Dimensions.get('window').width));
+  const [fadeAnim] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const w = Dimensions.get('window').width * DRAWER_W_RATIO;
@@ -131,7 +131,7 @@ export function MobileDrawer({ isDrawerOpen, onCloseDrawer, ...rest }: Props) {
         Animated.timing(fadeAnim, { toValue: 0, duration: 240, useNativeDriver: USE_NATIVE_DRIVER }),
       ]).start();
     }
-  }, [isDrawerOpen]);
+  }, [fadeAnim, isDrawerOpen, slideAnim]);
 
   if (!isDrawerOpen) return null;
 

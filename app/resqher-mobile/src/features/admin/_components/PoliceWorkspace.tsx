@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { T, R, S, Ty } from '../../../constants/theme';
 import { adminService } from '../../../services/adminService';
@@ -14,6 +14,25 @@ const INACTIVE_INCIDENT_STATUSES = ['RESOLVED', 'CANCELLED'];
 
 function statusLabel(value?: string | null) {
   return String(value || '').replace(/_/g, ' ');
+}
+
+function shortTime(value?: string | null) {
+  if (!value) return 'Unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function severityStyle(value?: string | null) {
+  const severity = String(value || 'LOW').toUpperCase();
+  if (severity === 'CRITICAL') return [st.severityBadge, st.severityCritical];
+  if (severity === 'HIGH') return [st.severityBadge, st.severityHigh];
+  if (severity === 'MEDIUM') return [st.severityBadge, st.severityMedium];
+  return [st.severityBadge, st.severityLow];
+}
+
+function summaryText(summary: any, fallback?: string | null) {
+  return summary?.summary || fallback || 'Incident summary is not available yet.';
 }
 
 export function PoliceWorkspace({
@@ -32,6 +51,8 @@ export function PoliceWorkspace({
   const [requestError, setRequestError] = useState<string | null>(null);
   const [selectedPoliceByRequest, setSelectedPoliceByRequest] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedSummary, setSelectedSummary] = useState<any | null>(null);
+  const [summaryLoadingId, setSummaryLoadingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setVerificationError(null);
@@ -128,6 +149,18 @@ export function PoliceWorkspace({
     } finally { setBusyId(null); }
   };
 
+  const viewSummary = async (item: any) => {
+    setSummaryLoadingId(item.id);
+    try {
+      const detail = await adminService.getLawEnforcementRequest(item.id);
+      setSelectedSummary(detail);
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Summary Unavailable', message: err?.message || 'Could not load incident summary.' });
+    } finally {
+      setSummaryLoadingId(null);
+    }
+  };
+
   if (loading) {
     return <View style={st.center}><ActivityIndicator color={T.violet} /></View>;
   }
@@ -218,6 +251,14 @@ export function PoliceWorkspace({
               <Text style={st.cardTitle}>{item.victimName}</Text>
               <Text style={st.meta}>Requested by {item.requesterName} ({item.requesterRole})</Text>
               <Text style={st.meta}>{item.address || 'Location unavailable'}</Text>
+              <View style={st.intelligenceBox}>
+                <View style={st.intelligenceTop}>
+                  <Text style={st.assignedTitle}>AI Incident Intelligence</Text>
+                  <Text style={severityStyle(item.severity)}>{String(item.severity || 'LOW').toUpperCase()}</Text>
+                </View>
+                <Text style={st.meta} numberOfLines={3}>{item.summaryPreview || item.incidentSummaryText || 'Automatic incident summary will appear here.'}</Text>
+                {!!item.severityReason && <Text style={st.reasonPreview} numberOfLines={2}>{item.severityReason}</Text>}
+              </View>
               {!!(item.assignedToAll || item.assignedPoliceName || item.assignedPolice?.name) && (
                 <View style={st.assignedBox}>
                   <Text style={st.assignedTitle}>{item.assignedToAll ? 'Assigned Scope' : 'Assigned Officer'}</Text>
@@ -267,9 +308,12 @@ export function PoliceWorkspace({
                 </View>
               )}
               <View style={st.actions}>
+                <TouchableOpacity style={st.secondaryBtn} disabled={summaryLoadingId === item.id} onPress={() => viewSummary(item)}>
+                  <Text style={st.secondaryText}>{summaryLoadingId === item.id ? 'Loading...' : 'View Incident Summary'}</Text>
+                </TouchableOpacity>
                 {!incidentInactive && !requestInactive && (
                   <TouchableOpacity style={st.secondaryBtn} disabled={busyId === item.id} onPress={() => cancel(item.id)}>
-                    <Text style={st.secondaryText}>Cancel</Text>
+                    <Text style={st.secondaryText}>Reject Request</Text>
                   </TouchableOpacity>
                 )}
                 {assignable ? (
@@ -291,7 +335,145 @@ export function PoliceWorkspace({
           );
         })}
       </ScrollView>
+      <IncidentSummaryModal
+        request={selectedSummary}
+        approvedPolice={approvedPolice}
+        selectedPoliceId={selectedSummary ? selectedPoliceByRequest[selectedSummary.id] || ALL_POLICE_SELECTION : ALL_POLICE_SELECTION}
+        busy={!!selectedSummary && busyId === selectedSummary.id}
+        onClose={() => setSelectedSummary(null)}
+        onAssign={(requestId) => assign(requestId)}
+        onReject={(requestId) => cancel(requestId)}
+      />
     </View>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value?: string | number | null }) {
+  if (value === null || value === undefined || value === '') return null;
+  return (
+    <View style={st.detailRow}>
+      <Text style={st.detailLabel}>{label}</Text>
+      <Text style={st.detailValue}>{String(value)}</Text>
+    </View>
+  );
+}
+
+function IncidentSummaryModal({
+  request,
+  approvedPolice,
+  selectedPoliceId,
+  busy,
+  onClose,
+  onAssign,
+  onReject,
+}: {
+  request: any | null;
+  approvedPolice: any[];
+  selectedPoliceId: string;
+  busy: boolean;
+  onClose: () => void;
+  onAssign: (requestId: string) => void;
+  onReject: (requestId: string) => void;
+}) {
+  if (!request) return null;
+  const summary = request.incidentSummary || {};
+  const incidentStatus = String(request.incidentStatus || '').toUpperCase();
+  const requestStatus = String(request.status || '').toUpperCase();
+  const canAct = !INACTIVE_INCIDENT_STATUSES.includes(incidentStatus) && ASSIGNABLE_REQUEST_STATUSES.includes(requestStatus);
+  const assignToAll = selectedPoliceId === ALL_POLICE_SELECTION;
+  const selectedPolice = assignToAll ? null : approvedPolice.find(item => String(item.id) === String(selectedPoliceId));
+
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <View style={st.modalBackdrop}>
+        <View style={st.summaryModal}>
+          <View style={st.summaryHeader}>
+            <View>
+              <Text style={st.summaryTitle}>Incident Summary</Text>
+              <Text style={st.meta}>{request.incidentDisplayCode} - {statusLabel(request.status)}</Text>
+            </View>
+            <TouchableOpacity style={st.closeBtn} onPress={onClose}>
+              <Feather name="x" size={18} color={T.ink3} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={st.summaryScroll}>
+            <View style={st.intelligenceBox}>
+              <View style={st.intelligenceTop}>
+                <Text style={st.assignedTitle}>Seriousness</Text>
+                <Text style={severityStyle(request.severity)}>{String(request.severity || 'LOW').toUpperCase()}</Text>
+              </View>
+              <Text style={st.summaryBody}>{summaryText(summary, request.incidentSummaryText)}</Text>
+              {!!request.severityReason && (
+                <>
+                  <Text style={st.detailLabel}>Severity Reason</Text>
+                  <Text style={st.reasonPreview}>{request.severityReason}</Text>
+                </>
+              )}
+            </View>
+
+            <View style={st.detailBlock}>
+              <Text style={st.detailBlockTitle}>Incident Details</Text>
+              <DetailRow label="Incident ID" value={summary.incidentCode || request.incidentDisplayCode} />
+              <DetailRow label="Request source" value={summary.requestSource || request.requesterRole} />
+              <DetailRow label="Incident status" value={request.incidentStatus} />
+              <DetailRow label="SOS creation time" value={shortTime(summary.sosCreatedAt)} />
+              <DetailRow label="Police request time" value={shortTime(summary.policeRequestTime || request.createdAt)} />
+              <DetailRow label="Summary generated" value={shortTime(request.summaryGeneratedAt)} />
+              <DetailRow label="Location" value={summary.incidentLocation?.address || request.address || 'Location unavailable'} />
+              <DetailRow label="Current location source" value={summary.currentLocation?.source} />
+              <DetailRow label="Responder count" value={summary.responderCount ?? 0} />
+              <DetailRow label="Participant count" value={summary.participantCount ?? 0} />
+            </View>
+
+            <View style={st.detailBlock}>
+              <Text style={st.detailBlockTitle}>Requester And Victim</Text>
+              <DetailRow label="Requested by" value={summary.requestedBy?.name || request.requesterName} />
+              <DetailRow label="Requester role" value={summary.requestedBy?.role || request.requesterRole} />
+              <DetailRow label="Requester phone" value={summary.requestedBy?.phone} />
+              <DetailRow label="Victim" value={summary.victim?.name || request.victimName} />
+              <DetailRow label="Victim phone" value={summary.victim?.phone} />
+            </View>
+
+            {!!summary.caseDetails?.length && (
+              <View style={st.detailBlock}>
+                <Text style={st.detailBlockTitle}>Important Case Details</Text>
+                {summary.caseDetails.map((item: string, index: number) => (
+                  <Text key={`${item}-${index}`} style={st.bulletText}>- {item}</Text>
+                ))}
+              </View>
+            )}
+
+            {!!summary.importantChatDetails?.length && (
+              <View style={st.detailBlock}>
+                <Text style={st.detailBlockTitle}>Recent Chat Details</Text>
+                {summary.importantChatDetails.map((item: any, index: number) => (
+                  <Text key={`${item.at}-${index}`} style={st.bulletText}>
+                    - {item.sender || 'Participant'}: {item.message}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </ScrollView>
+          <View style={st.modalActions}>
+            {canAct && (
+              <>
+                <TouchableOpacity style={st.secondaryBtn} disabled={busy} onPress={() => onReject(request.id)}>
+                  <Text style={st.secondaryText}>Reject Request</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={st.primaryBtn} disabled={busy} onPress={() => onAssign(request.id)}>
+                  <Text style={st.primaryText}>
+                    {assignToAll ? 'Assign Police' : `Assign ${selectedPolice?.name || 'Police'}`}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+            <TouchableOpacity style={st.secondaryBtn} onPress={onClose}>
+              <Text style={st.secondaryText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -332,9 +514,17 @@ const st = StyleSheet.create({
   badgeAssigned: { backgroundColor: T.safeLight, color: T.success },
   badgeResolved: { backgroundColor: T.safeLight, color: T.success },
   badgeCancelled: { backgroundColor: T.dangerLight, color: T.dangerText },
+  severityBadge: { paddingHorizontal: S.s2, paddingVertical: 4, borderRadius: R.sm, overflow: 'hidden', fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+  severityLow: { backgroundColor: T.surfaceCard, color: T.ink3 },
+  severityMedium: { backgroundColor: T.accentLight, color: T.accent },
+  severityHigh: { backgroundColor: 'rgba(245,158,11,0.16)', color: T.gold },
+  severityCritical: { backgroundColor: T.dangerLight, color: T.dangerText },
   cardTitle: { fontSize: 16, fontWeight: '900', color: T.ink },
   meta: { ...Ty.bodySm, color: T.ink3 },
   danger: { ...Ty.bodySm, color: T.dangerText, fontWeight: '800' },
+  intelligenceBox: { padding: S.s3, borderRadius: R.md, backgroundColor: T.surfaceCard, borderWidth: 1, borderColor: T.lineMid, gap: 6 },
+  intelligenceTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: S.s3 },
+  reasonPreview: { ...Ty.bodySm, color: T.ink2, lineHeight: 18 },
   assignedBox: { padding: S.s3, borderRadius: R.md, backgroundColor: T.surfaceCard, borderWidth: 1, borderColor: T.lineMid, gap: 3 },
   assignedTitle: { fontSize: 11, color: T.violet, fontWeight: '900', textTransform: 'uppercase' },
   policePickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: S.s2, marginTop: S.s2 },
@@ -357,4 +547,18 @@ const st = StyleSheet.create({
   emptyText: { ...Ty.bodySm, color: T.ink3, marginTop: S.s2 },
   retryBtn: { marginTop: S.s3, minHeight: 36, paddingHorizontal: S.s4, borderRadius: R.md, backgroundColor: T.violet, alignItems: 'center', justifyContent: 'center' },
   retryText: { color: T.onPrimary, fontSize: 12, fontWeight: '900' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', alignItems: 'center', justifyContent: 'center', padding: S.s4 },
+  summaryModal: { width: '100%', maxWidth: 720, maxHeight: '88%', borderRadius: R.lg, backgroundColor: '#0F1020', borderWidth: 1, borderColor: T.lineMid, overflow: 'hidden' },
+  summaryHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: S.s4, borderBottomWidth: 1, borderBottomColor: T.lineMid },
+  summaryTitle: { fontSize: 18, fontWeight: '900', color: T.ink },
+  closeBtn: { width: 36, height: 36, borderRadius: R.md, backgroundColor: T.surfaceCard, borderWidth: 1, borderColor: T.lineMid, alignItems: 'center', justifyContent: 'center' },
+  summaryScroll: { padding: S.s4, gap: S.s3 },
+  summaryBody: { ...Ty.bodySm, color: T.ink, lineHeight: 20 },
+  detailBlock: { padding: S.s3, borderRadius: R.md, backgroundColor: T.surfaceCard, borderWidth: 1, borderColor: T.lineMid, gap: 7 },
+  detailBlockTitle: { fontSize: 12, color: T.violet, fontWeight: '900', textTransform: 'uppercase', marginBottom: 2 },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: S.s3 },
+  detailLabel: { flex: 0.42, fontSize: 11, color: T.ink4, fontWeight: '800', textTransform: 'uppercase' },
+  detailValue: { flex: 0.58, ...Ty.bodySm, color: T.ink2, textAlign: 'right' },
+  bulletText: { ...Ty.bodySm, color: T.ink2, lineHeight: 19 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: S.s2, padding: S.s4, borderTopWidth: 1, borderTopColor: T.lineMid, flexWrap: 'wrap' },
 });

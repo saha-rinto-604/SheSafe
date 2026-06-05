@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, Modal, StyleSheet, TouchableOpacity, Image, FlatList, Platform } from 'react-native';
+import { View, Text, Modal, StyleSheet, TouchableOpacity, FlatList, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { T, S, R } from '../constants/theme';
 import UserAvatar from './shared/UserAvatar';
 
 // Accept a flexible responder shape for mock lists

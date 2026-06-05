@@ -1,13 +1,78 @@
 const incidentService = require('./incident.service');
 const chatWsServer = require('../../websocket/chatWsServer');
 const lawService = require('../law-enforcement/law.service');
+const notificationService = require('../notifications/notification.service');
+const userService = require('../users/user.service');
+
+async function notifyNewSosTargets(incident, dispatchList) {
+  const basePayload = {
+    type: 'sos.new',
+    payload: {
+      incidentId: String(incident.id),
+      victimName: `${incident.first_name || ''} ${incident.last_name || ''}`.trim(),
+      avatarUri: incident.photo_url || null,
+      latitude: Number(incident.latitude),
+      longitude: Number(incident.longitude),
+      address: incident.address || null,
+      distanceKm: null,
+      createdAt: incident.created_at instanceof Date
+        ? incident.created_at.toISOString()
+        : String(incident.created_at),
+    },
+  };
+
+  await Promise.all((dispatchList || []).map((volunteer) => {
+    const payload = {
+      ...basePayload,
+      payload: {
+        ...basePayload.payload,
+        distanceKm: volunteer.distanceKm,
+      },
+    };
+    return notificationService.createAndDispatchNotification({
+      userId: volunteer.userId,
+      type: 'NEW_SOS_REQUEST',
+      title: 'New SOS request nearby',
+      body: 'A user needs help. Open SheSafe to respond.',
+      incidentId: incident.id,
+      data: { context: 'volunteer_dispatch', role: 'volunteer' },
+      pushTitle: 'New SOS request nearby',
+      pushBody: 'A user needs help. Open SheSafe to respond.',
+      emit: (event) => {
+        chatWsServer.sendToUser(volunteer.userId, event);
+        chatWsServer.sendToUser(volunteer.userId, payload);
+      },
+    });
+  }));
+}
+
+async function notifyIncidentMembers(incidentId, { type, title, body, pushTitle, pushBody, excludeUserId = null, senderUserId = null, respectBlocks = false }) {
+  const recipients = await incidentService.getNotificationRecipients(incidentId, { excludeUserId });
+  const visibleRecipients = respectBlocks && senderUserId
+    ? (await Promise.all(recipients.map(async (recipient) => {
+        const blocked = await userService.isUserBlockedBy(recipient.userId, senderUserId);
+        return blocked ? null : recipient;
+      }))).filter(Boolean)
+    : recipients;
+  await Promise.all(visibleRecipients.map((recipient) => notificationService.createAndDispatchNotification({
+    userId: recipient.userId,
+    type,
+    title,
+    body,
+    incidentId,
+    data: { context: 'incident_update', role: recipient.role || '' },
+    pushTitle,
+    pushBody,
+    emit: (event) => chatWsServer.sendToUser(recipient.userId, event),
+  })));
+}
 
 async function report(req, res, next) {
   try {
     const incident = await incidentService.reportIncident(req.user.id, req.body);
     const fullIncident = await incidentService.getOne(incident.id);
     const dispatchList = await incidentService.getDispatchList(incident.id);
-    chatWsServer.notifyNewSOS(fullIncident, dispatchList);
+    await notifyNewSosTargets(fullIncident, dispatchList);
     res.status(201).json({ incident });
   } catch (error) {
     next(error);
@@ -36,6 +101,13 @@ async function cancel(req, res, next) {
   try {
     const incident = await incidentService.cancelIncident(req.user.id, req.params.id);
     await lawService.closeRequestsForIncident(req.params.id, 'CANCELLED', 'Incident cancelled.').catch(() => undefined);
+    await notifyIncidentMembers(req.params.id, {
+      type: 'INCIDENT_CANCELLED',
+      title: 'Incident cancelled',
+      body: 'This incident has been cancelled.',
+      pushTitle: 'Incident cancelled',
+      pushBody: 'Open SheSafe for the latest update.',
+    });
     await chatWsServer.notifyClosed(req.params.id, 'CANCELLED', 'This incident has been cancelled.');
     res.status(200).json({ incident });
   } catch (error) {
@@ -47,6 +119,13 @@ async function resolve(req, res, next) {
   try {
     const incident = await incidentService.resolveIncident(req.user.id, req.params.id);
     await lawService.closeRequestsForIncident(req.params.id, 'RESOLVED').catch(() => undefined);
+    await notifyIncidentMembers(req.params.id, {
+      type: 'INCIDENT_RESOLVED',
+      title: 'Incident resolved',
+      body: 'This incident has been marked resolved.',
+      pushTitle: 'Incident resolved',
+      pushBody: 'Open SheSafe for the latest update.',
+    });
     await chatWsServer.notifyClosed(req.params.id, 'RESOLVED', 'This incident has been resolved.');
     res.status(200).json({ incident });
   } catch (error) {
@@ -100,13 +179,45 @@ async function nearby(req, res, next) {
 async function accept(req, res, next) {
   try {
     const result = await incidentService.acceptIncident(req.user.id, req.params.id);
-    chatWsServer.notifyAccepted(result.chatRoom.incidentId, result.chatRoom.victimUserId, {
+    const profile = await userService.getProfile(req.user.id).catch(() => null);
+    const username = String(profile?.username || '').trim().toLowerCase();
+    const fullName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim();
+    const volunteer = {
       id: req.user.id,
-      name: req.user.phoneNumber || 'Volunteer',
-      photoUrl: null,
+      name: username ? `@${username}` : fullName || 'A responder',
+      photoUrl: profile?.photoUrl || profile?.photoUri || null,
+    };
+    await notificationService.createAndDispatchNotification({
+      userId: result.chatRoom.victimUserId,
+      type: 'VOLUNTEER_ACCEPTED',
+      title: 'Volunteer accepted your SOS',
+      body: 'A responder accepted your emergency request.',
+      incidentId: result.chatRoom.incidentId,
+      data: { context: 'incident_update', role: 'standard_user' },
+      pushTitle: 'Volunteer accepted your SOS',
+      pushBody: 'Open SheSafe for responder details.',
+      emit: (event) => {
+        chatWsServer.sendToUser(result.chatRoom.victimUserId, event);
+        chatWsServer.sendToUser(result.chatRoom.victimUserId, {
+          type: 'sos.accepted',
+          payload: {
+            incidentId: String(result.chatRoom.incidentId),
+            volunteer,
+          },
+        });
+      },
     });
     chatWsServer.notifyRespondersUpdated?.(result.chatRoom.incidentId);
     res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getMyActiveSos(req, res, next) {
+  try {
+    const incident = await incidentService.getMyActiveSos(req.user.id);
+    res.status(200).json({ incident });
   } catch (error) {
     next(error);
   }
@@ -169,6 +280,15 @@ async function routeContext(req, res, next) {
   }
 }
 
+async function mapSnapshot(req, res, next) {
+  try {
+    const result = await incidentService.getMapSnapshot(req.params.id, req.user.id, req.user.role);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function messages(req, res, next) {
   try {
     const messages = await incidentService.getIncidentMessages(req.user.id, req.params.id, req.user.role);
@@ -185,6 +305,16 @@ async function sendMessage(req, res, next) {
       type: req.body.type,
       mediaUrl: req.body.mediaUrl,
     }, req.user.role);
+    await notifyIncidentMembers(req.params.id, {
+      type: 'CHAT_MESSAGE',
+      title: 'New chat message',
+      body: 'You have a new incident chat message.',
+      pushTitle: 'New chat message',
+      pushBody: 'Open SheSafe to view the incident chat.',
+      excludeUserId: req.user.id,
+      senderUserId: req.user.id,
+      respectBlocks: String(message?.type || req.body?.type || 'TEXT').toUpperCase() !== 'SYSTEM',
+    });
     chatWsServer.notifyMessageNew?.(req.params.id, message);
     res.status(201).json({ message });
   } catch (error) {
@@ -293,6 +423,7 @@ module.exports = {
   cancel,
   resolve,
   getMyIncidents,
+  getMyActiveSos,
   clearMyHistory,
   nearby,
   accept,
@@ -301,6 +432,7 @@ module.exports = {
   volunteerNotifications,
   responders,
   routeContext,
+  mapSnapshot,
   messages,
   sendMessage,
   userChats,

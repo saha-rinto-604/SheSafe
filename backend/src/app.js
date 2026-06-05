@@ -37,6 +37,8 @@ const adminRoutes           = require('./modules/admin/admin.routes');
 const lawRoutes             = require('./modules/law-enforcement/law.routes');
 const policeRoutes          = require('./modules/law-enforcement/police.routes');
 const policeVerificationRoutes = require('./modules/police-verification/police-verification.routes');
+const aiRoutes              = require('./modules/ai/ai.routes');
+const notificationRoutes    = require('./modules/notifications/notification.routes');
 
 const app = express();
 
@@ -96,6 +98,8 @@ app.use('/api/law-enforcement', lawRoutes);
 app.use('/api/police', policeRoutes);
 app.use('/api/police-verification', policeVerificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // ── 404 handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {

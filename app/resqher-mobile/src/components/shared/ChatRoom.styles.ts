@@ -81,12 +81,12 @@ export const st = StyleSheet.create({
         minWidth: 220,
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
+                shadowColor: '#8A38F6',
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
             },
-            android: { elevation: 5 },
+            android: { elevation: 4 },
         }),
     },
     headerMenuRow: {
@@ -156,7 +156,7 @@ export const st = StyleSheet.create({
     },
     bubbleRow: {
         flexDirection: 'row',
-        marginBottom: 20,
+        marginBottom: 14,
         gap: S.s2,
     },
     bubbleRowOwn: {
@@ -175,7 +175,7 @@ export const st = StyleSheet.create({
         flexShrink: 0,
     },
     bubbleCol: {
-        maxWidth: '75%',
+        maxWidth: '78%',
     },
     senderRow: {
         flexDirection: 'row',
@@ -186,8 +186,8 @@ export const st = StyleSheet.create({
     },
     senderName: {
         fontSize: 12,
-        fontWeight: 'bold',
-        color: '#C4C1D4',
+        fontWeight: '700',
+        color: 'rgba(245,245,247,0.66)',
         marginBottom: 2,
     },
     roleBadge: {
@@ -201,22 +201,17 @@ export const st = StyleSheet.create({
         textTransform: 'uppercase',
     },
     bubble: {
-        paddingVertical: S.s3,
-        paddingHorizontal: S.s4,
+        borderRadius: 18,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
     },
     bubbleOther: {
+        backgroundColor: 'rgba(255,255,255,0.08)',
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.1)',
-        overflow: 'hidden',
-    },
-    bubbleOtherBg: {
-        backgroundColor: '#1E153A',
-        opacity: 0.70,
     },
     bubbleOwn: {
-        backgroundColor: T.violetDim,
-        borderWidth: 1,
-        borderColor: `${T.violet}35`,
+        backgroundColor: 'rgba(124,58,237,0.95)',
     },
     bubbleVictim: {},
     msgText: {
@@ -225,15 +220,15 @@ export const st = StyleSheet.create({
         lineHeight: 20,
     },
     msgTextOwn: {
-        color: T.ink,
+        color: '#FFFFFF',
     },
     msgTextVictim: {
         color: '#FFFFFF',
     },
     msgTime: {
         fontSize: 10,
-        color: T.ink5,
-        marginTop: S.s1,
+        color: 'rgba(245,245,247,0.34)',
+        marginTop: 4,
         paddingHorizontal: S.s2,
         alignSelf: 'flex-start',
     },
@@ -323,12 +318,12 @@ export const st = StyleSheet.create({
         borderColor: 'rgba(255, 255, 255, 0.1)',
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
-                shadowOpacity: 0.2,
-                shadowRadius: 14,
+                shadowColor: '#8A38F6',
+                shadowOpacity: 0.10,
+                shadowRadius: 12,
                 shadowOffset: { width: 0, height: -3 },
             },
-            android: { elevation: 8 },
+            android: { elevation: 6 },
         }),
     },
     inputPillBg: {
@@ -388,12 +383,12 @@ export const st = StyleSheet.create({
         minWidth: 180,
         ...Platform.select({
             ios: {
-                shadowColor: '#000',
+                shadowColor: '#8A38F6',
                 shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
+                shadowOpacity: 0.12,
+                shadowRadius: 10,
             },
-            android: { elevation: 5 },
+            android: { elevation: 4 },
         }),
         zIndex: 10,
     },
@@ -582,8 +577,8 @@ export const st = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 4 },
         }),
     },
     sosMarkerInnerB: {
@@ -596,8 +591,8 @@ export const st = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         ...Platform.select({
-            ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
-            android: { elevation: 6 },
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
+            android: { elevation: 4 },
         }),
     },
     sosMarkerAvatar: {

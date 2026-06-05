@@ -4,7 +4,7 @@
  * Uses the same animated sliding-indicator segment pattern as activity.tsx.
  */
 
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     View,
     Text,
@@ -45,76 +45,6 @@ type VolunteerIncident = {
     occurredAtLabel: string;
     status: IncidentStatus;
 };
-
-// ── Mock data ──────────────────────────────────────────────────────────────────
-const ALL_INCIDENTS: VolunteerIncident[] = [
-    // ── ASSISTING (helped others)
-    {
-        id: 'inc-312',
-        category: 'ASSISTED',
-        incidentNumber: 312,
-        personName: 'Sumaiya Hossain',
-        location: 'Gulshan, Dhaka',
-        occurredAtLabel: '12 May 2026 · 10:15 PM',
-        status: 'Active',
-    },
-    {
-        id: 'inc-204',
-        category: 'ASSISTED',
-        incidentNumber: 204,
-        personName: 'Fatima Rahman',
-        location: 'Mirpur, Dhaka',
-        occurredAtLabel: '12 May 2026 · 8:40 PM',
-        status: 'Resolved',
-    },
-    {
-        id: 'inc-198',
-        category: 'ASSISTED',
-        incidentNumber: 198,
-        personName: 'Nadia Akter',
-        location: 'Dhanmondi, Dhaka',
-        occurredAtLabel: '01 May 2026 · 7:10 PM',
-        status: 'Cancelled',
-    },
-    {
-        id: 'inc-175',
-        category: 'ASSISTED',
-        incidentNumber: 175,
-        personName: 'Ayesha Sultana',
-        location: 'Gulshan, Dhaka',
-        occurredAtLabel: '14 Apr 2026 · 5:05 PM',
-        status: 'Resolved',
-    },
-
-    // ── MY EMERGENCIES (own SOS)
-    {
-        id: 'inc-301',
-        category: 'MY_EMERGENCY',
-        incidentNumber: 301,
-        personName: 'Kabir Hossain',
-        location: 'Khilkhet, Dhaka',
-        occurredAtLabel: '12 May 2026 · 9:55 PM',
-        status: 'Active',
-    },
-    {
-        id: 'inc-289',
-        category: 'MY_EMERGENCY',
-        incidentNumber: 289,
-        personName: 'Raihan Ahmed',
-        location: 'Mohakhali, Dhaka',
-        occurredAtLabel: '11 May 2026 · 6:30 PM',
-        status: 'Resolved',
-    },
-    {
-        id: 'inc-270',
-        category: 'MY_EMERGENCY',
-        incidentNumber: 270,
-        personName: '—',
-        location: 'Banani, Dhaka',
-        occurredAtLabel: '09 May 2026 · 3:20 PM',
-        status: 'Cancelled',
-    },
-];
 
 // ── Status badge config ────────────────────────────────────────────────────────
 type StatusStyle = { color: string; bg: string; border: string; dot: string };
@@ -286,7 +216,7 @@ export default function VolunteerIncidents() {
     const [segmentWidth, setSegmentWidth] = useState(0);
     const [allIncidents, setAllIncidents] = useState<VolunteerIncident[]>([]);
     const [loading, setLoading] = useState(true);
-    const indicator = useRef(new Animated.Value(0)).current;
+    const [indicator] = useState(() => new Animated.Value(0));
 
     // Animate sliding indicator
     useEffect(() => {
@@ -329,7 +259,10 @@ export default function VolunteerIncidents() {
     }, []);
 
     useEffect(() => {
-        loadIncidents().catch(() => setLoading(false));
+        const timer = setTimeout(() => {
+            loadIncidents().catch(() => setLoading(false));
+        }, 0);
+        return () => clearTimeout(timer);
     }, [loadIncidents]);
 
     const incidents = useMemo(

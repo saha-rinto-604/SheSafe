@@ -6,7 +6,7 @@
  * Rules: Max 5 contacts · One Primary contact at a time
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -21,7 +21,6 @@ import {
     KeyboardAvoidingView,
     Platform,
     Linking,
-    ActivityIndicator,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -84,7 +83,7 @@ export default function EmergencyContactsScreen() {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [draft, setDraft] = useState<DraftContact>(EMPTY_DRAFT);
     const [isSaving, setIsSaving] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [, setLoading] = useState(true);
 
     // ── Load contacts from API on mount ──────────────────────────────────
     useEffect(() => {
@@ -394,7 +393,7 @@ export default function EmergencyContactsScreen() {
 
                         {atMax && (
                             <Text style={s.maxHint}>
-                                You've reached the maximum of {MAX_CONTACTS} contacts.
+                                You{'\''}ve reached the maximum of {MAX_CONTACTS} contacts.
                             </Text>
                         )}
                     </View>

@@ -16,15 +16,16 @@ import {
     StatusBar,
     Alert,
     Image,
+    Modal,
     Platform,
     AppState,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import api from '../../../../src/services/api';
-import { T, R, S } from '../../../../src/constants/theme';
+import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
 import { useAuth } from '../../../../src/context/AuthContext';
@@ -211,10 +212,25 @@ export default function VolunteerVerificationScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { signOut } = useAuth();
+    const [sosBlockModalVisible, setSosBlockModalVisible] = useState(false);
 
     const handleLogout = async () => {
-        await signOut();
-        router.replace('/(auth)/login');
+        const signedOut = await signOut(() => setSosBlockModalVisible(true));
+        if (signedOut) {
+            router.replace('/(auth)/login');
+        }
+    };
+
+    const handleBack = async () => {
+        if (record.status === 'pending') {
+            await handleLogout();
+            return;
+        }
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+        await handleLogout();
     };
 
     const [record, setRecord] = useState<VerificationRecord>(INITIAL_RECORD);
@@ -410,7 +426,7 @@ export default function VolunteerVerificationScreen() {
                 <View style={[s.header, { paddingTop: insets.top + 8 }]}>
                     <TouchableOpacity
                         style={s.headerBtn}
-                        onPress={() => router.back()}
+                        onPress={handleBack}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                         <Feather name="chevron-left" size={22} color={T.ink} />
@@ -656,6 +672,36 @@ export default function VolunteerVerificationScreen() {
                         );
                     })()}
                 </ScrollView>
+
+                <Modal visible={sosBlockModalVisible} transparent animationType="fade" onRequestClose={() => setSosBlockModalVisible(false)}>
+                    <View style={s.sosBlockOverlay}>
+                        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSosBlockModalVisible(false)} />
+                        <View style={s.sosBlockCard}>
+                            <View style={s.sosBlockIconWrap}>
+                                <Feather name="alert-triangle" size={24} color={T.accent} />
+                            </View>
+                            <Text style={s.sosBlockTitle}>Cannot Logout</Text>
+                            <Text style={s.sosBlockMessage}>
+                                You have an active SOS emergency. Please stop or resolve the SOS before logging out.
+                            </Text>
+                            <View style={s.sosBlockActions}>
+                                <TouchableOpacity style={s.sosBlockSecondaryBtn} onPress={() => setSosBlockModalVisible(false)} activeOpacity={0.85}>
+                                    <Text style={s.sosBlockSecondaryTxt} numberOfLines={1}>Stay in SOS</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={s.sosBlockPrimaryBtn}
+                                    onPress={() => {
+                                        setSosBlockModalVisible(false);
+                                        router.replace('/(tabs)/users/volunteer' as any);
+                                    }}
+                                    activeOpacity={0.85}
+                                >
+                                    <Text style={s.sosBlockPrimaryTxt} numberOfLines={1}>Go to SOS Screen</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
             </View>
         </AtmosphericShell>
     );
@@ -791,6 +837,92 @@ const s = StyleSheet.create({
     },
     logoutBtnText: {
         color: T.danger,
+    },
+    sosBlockOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.72)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    sosBlockCard: {
+        width: '100%',
+        maxWidth: 380,
+        backgroundColor: T.surfaceBulky,
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+        padding: 24,
+        alignItems: 'center',
+        ...Platform.select({
+            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 24, shadowOffset: { width: 0, height: 10 } },
+            android: { elevation: 16 },
+        }),
+    },
+    sosBlockIconWrap: {
+        width: 58,
+        height: 58,
+        borderRadius: 29,
+        backgroundColor: 'rgba(245,158,11,0.14)',
+        borderWidth: 1,
+        borderColor: 'rgba(245,158,11,0.30)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    sosBlockTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: T.ink,
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    sosBlockMessage: {
+        fontSize: 14,
+        lineHeight: 21,
+        color: T.ink3,
+        textAlign: 'center',
+        marginBottom: 22,
+    },
+    sosBlockActions: {
+        width: '100%',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+    },
+    sosBlockPrimaryBtn: {
+        flexGrow: 1,
+        flexBasis: 132,
+        minHeight: 50,
+        borderRadius: R.md,
+        backgroundColor: T.violet,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 14,
+    },
+    sosBlockPrimaryTxt: {
+        color: T.onPrimary,
+        fontSize: 14,
+        fontWeight: '800',
+        textAlign: 'center',
+    },
+    sosBlockSecondaryBtn: {
+        flexGrow: 1,
+        flexBasis: 132,
+        minHeight: 50,
+        borderRadius: R.md,
+        backgroundColor: T.surfaceBulky,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.14)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 14,
+    },
+    sosBlockSecondaryTxt: {
+        color: T.ink3,
+        fontSize: 14,
+        fontWeight: '700',
+        textAlign: 'center',
     },
     primaryBtnText: {
         fontSize: 15, fontWeight: '700',

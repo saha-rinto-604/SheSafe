@@ -7,6 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import api from '../../../../src/services/api';
 import { T, R, S } from '../../../../src/constants/theme';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
+import { useAuth } from '../../../../src/context/AuthContext';
 
 type PoliceVerification = {
   status: 'not_submitted' | 'pending' | 'approved' | 'rejected';
@@ -102,6 +103,7 @@ function UploadCard({
 export default function PoliceVerificationScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { signOut } = useAuth();
   const [record, setRecord] = useState<PoliceVerification | null>(null);
   const [nidCardUri, setNidCardUri] = useState<string | undefined>();
   const [selfieUri, setSelfieUri] = useState<string | undefined>();
@@ -109,6 +111,23 @@ export default function PoliceVerificationScreen() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploadingType, setUploadingType] = useState<DocType | null>(null);
+
+  const goToLogin = async () => {
+    await signOut();
+    router.replace('/(auth)/login' as any);
+  };
+
+  const handleBack = async () => {
+    if (record?.status === 'pending') {
+      await goToLogin();
+      return;
+    }
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    await goToLogin();
+  };
 
   useEffect(() => {
     api.get('/api/police-verification')
@@ -203,6 +222,18 @@ export default function PoliceVerificationScreen() {
   return (
     <SafeAreaView style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <View style={s.header}>
+        <TouchableOpacity
+          style={s.headerBtn}
+          onPress={handleBack}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.75}
+        >
+          <Feather name="chevron-left" size={22} color={T.ink} />
+        </TouchableOpacity>
+        <Text style={s.headerTitle}>Police Verification</Text>
+        <View style={s.headerSpacer} />
+      </View>
       <ScrollView contentContainerStyle={[s.content, { paddingBottom: insets.bottom + S.s6 }]}>
         <View style={s.heroIcon}><SheSafeMark size={46} /></View>
         <Text style={s.title}>Police Verification</Text>
@@ -260,6 +291,10 @@ export default function PoliceVerificationScreen() {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bg },
   center: { flex: 1, backgroundColor: T.bg, alignItems: 'center', justifyContent: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s4, paddingBottom: S.s3, borderBottomWidth: 1, borderBottomColor: T.lineMid, backgroundColor: T.surfaceGlass },
+  headerBtn: { width: 36, height: 36, borderRadius: R.hBtn, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: T.lineMid, backgroundColor: T.surfaceCard },
+  headerTitle: { flex: 1, textAlign: 'center', color: T.ink, fontSize: 16, fontWeight: '800', marginHorizontal: S.s2 },
+  headerSpacer: { width: 36, height: 36 },
   content: { padding: S.s5 },
   heroIcon: { width: 66, height: 66, borderRadius: R.lg, backgroundColor: T.violetDim, borderWidth: 1, borderColor: T.lineMid, alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: S.s4 },
   title: { fontSize: 24, fontWeight: '900', color: T.ink, textAlign: 'center' },
