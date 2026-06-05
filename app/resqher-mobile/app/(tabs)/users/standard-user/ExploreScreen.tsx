@@ -25,6 +25,7 @@ import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SheSafeLogo from '../../../../src/components/SheSafeLogo';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
 import AICopilotFloatingButton from '../../../../components/AICopilotFloatingButton';
+import { SafePlaceIcon } from '../../../../components/map/SafePlaceIcon';
 import { getUserProfile, UserProfile } from '../../../../src/services/profile';
 import { incidentService, normalizeIncidentZone, safePlaceService, type IncidentZone } from '../../../../src/services/incidentService';
 import { getConfirmedSafePlaces, mapSafePlaceToDestination, type SafePlace } from '../../../../src/services/safePlaceService';
@@ -205,6 +206,19 @@ function decodePolyline(encoded: string): LatLng[] {
     }
     return coordinates;
 }
+
+const isSameCoordinate = (
+    a?: { latitude: number; longitude: number } | null,
+    b?: { latitude: number; longitude: number } | null,
+    tolerance = 0.00015,
+) => {
+    if (!a || !b) return false;
+
+    return (
+        Math.abs(Number(a.latitude) - Number(b.latitude)) <= tolerance &&
+        Math.abs(Number(a.longitude) - Number(b.longitude)) <= tolerance
+    );
+};
 
 const PulseRadar = memo(function PulseRadar() {
     const a0 = useAnimatedValue(0);
@@ -646,6 +660,31 @@ export default function ExploreScreen() {
             : T.violet;
 
     const safePlaceToSuggestion = useCallback((place: SafePlace): PlaceSuggestion => mapSafePlaceToDestination(place), []);
+
+    const isSafePlaceSelectedAsDestination = useCallback((place: SafePlace) => {
+        const destination = endLocation ?? (selectedPlace?.source === 'safe_place' ? selectedPlace : null);
+        if (!destination) return false;
+
+        const safePlaceId = String(place.id);
+        const destinationId = String(destination.id ?? '');
+        if (destinationId === safePlaceId || destinationId === `safe-place-${safePlaceId}`) return true;
+
+        return isSameCoordinate(
+            {
+                latitude: Number(place.latitude),
+                longitude: Number(place.longitude),
+            },
+            {
+                latitude: Number(destination.latitude),
+                longitude: Number(destination.longitude),
+            },
+        );
+    }, [endLocation, selectedPlace]);
+
+    const selectedDestinationIsSafePlace = useMemo(
+        () => confirmedSafePlaces.some(place => isSafePlaceSelectedAsDestination(place)),
+        [confirmedSafePlaces, isSafePlaceSelectedAsDestination],
+    );
 
     const fetchConfirmedSafePlaces = useCallback(async () => {
         try {
@@ -1204,13 +1243,19 @@ export default function ExploreScreen() {
     const triggerSafetyRecalculation = useCallback(async () => {
         if (!startLocation || !endLocation || !GOOGLE_MAPS_API_KEY) return;
         const requestId = ++safePathRequestIdRef.current;
+        const routeRequestId = routeRequestIdRef.current;
+        const routeIsCurrent = () => (
+            isMountedRef.current
+            && safePathRequestIdRef.current === requestId
+            && routeRequestIdRef.current === routeRequestId
+        );
 
         setScanState('SCANNING');
         setShowSafePath(false);
         startScanAnimation();
 
         await new Promise(r => setTimeout(r, 1800));
-        if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+        if (!routeIsCurrent()) return;
 
         const origin = `${startLocation.latitude},${startLocation.longitude}`;
         const destination = `${endLocation.latitude},${endLocation.longitude}`;
@@ -1220,7 +1265,7 @@ export default function ExploreScreen() {
         try {
             const res = await fetch(url);
             const data = await res.json();
-            if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+            if (!routeIsCurrent()) return;
 
             if (!data?.routes?.length) {
                 stopScanAnimation();
@@ -1231,13 +1276,14 @@ export default function ExploreScreen() {
             let latestZones: IncidentZone[] = [];
             try {
                 const fetchedZones = await incidentService.getZones();
-                if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+                if (!routeIsCurrent()) return;
                 latestZones = (fetchedZones || [])
                     .map(normalizeIncidentZone)
                     .filter((zone): zone is IncidentZone => zone !== null && zone.incidentCount >= 1);
                 setIncidentZones(latestZones);
                 setZonesError(null);
             } catch (zoneErr) {
+                if (!routeIsCurrent()) return;
                 console.warn('[ExploreScreen] Safe Path could not refresh incident zones:', zoneErr);
                 if (isMountedRef.current) {
                     setZonesError(zoneErr instanceof Error ? zoneErr.message : 'Unable to refresh incident zones');
@@ -1321,7 +1367,7 @@ export default function ExploreScreen() {
                                     const roadsUrl = `https://roads.googleapis.com/v1/nearestRoads?points=${rawWpLat},${rawWpLng}&key=${GOOGLE_MAPS_API_KEY}`;
                                     const roadsRes = await fetch(roadsUrl);
                                     const roadsData = await roadsRes.json();
-                                    if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+                                    if (!routeIsCurrent()) return;
                                     if (roadsData?.snappedPoints?.length > 0) {
                                         const snapped = roadsData.snappedPoints[0]?.location;
                                         if (snapped?.latitude && snapped?.longitude) {
@@ -1338,7 +1384,7 @@ export default function ExploreScreen() {
                                 try {
                                     const wpRes = await fetch(wpUrl);
                                     const wpData = await wpRes.json();
-                                    if (!isMountedRef.current || safePathRequestIdRef.current !== requestId) return;
+                                    if (!routeIsCurrent()) return;
 
                                     if (wpData?.routes?.length) {
                                         const wpRoute = wpData.routes[0];
@@ -1419,6 +1465,7 @@ export default function ExploreScreen() {
                 void playRouteAudio('partial');
             }
         } catch {
+            if (!routeIsCurrent()) return;
             stopScanAnimation();
             setScanState('NO_ROUTE');
         }
@@ -1668,6 +1715,9 @@ export default function ExploreScreen() {
 
     const exitDirectionsMode = useCallback(() => {
         clearRouteState();
+        setSelectedPlace(null);
+        setSearchText('');
+        setPlaceSheetOpen(false);
         RNAnimated.timing(directionsProgress, {
             toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false,
         }).start();
@@ -1697,15 +1747,7 @@ export default function ExploreScreen() {
         if (directionsMode) {
             exitDirectionsMode();
         } else {
-            setRouteCoords([]);
-            setNavInstructions([]);
-            setCurrentStepIdx(0);
-            setRouteUnsafe(false);
-            setBlockedZoneName(null);
-            setShowSafePath(false);
-            setScanState(null);
-            setSafeRouteCoords([]);
-            setUnsafeRouteCoords([]);
+            clearRouteState();
         }
 
         if (userLoc) {
@@ -1716,7 +1758,7 @@ export default function ExploreScreen() {
         } else {
             mapRef.current?.animateToRegion(DEFAULT_REGION, 700);
         }
-    }, [closeLocationCard, closePlaceSheet, deactivateSearch, directionsMode, exitDirectionsMode, placeSheetOpen, showLocationCard, userLoc]);
+    }, [clearRouteState, closeLocationCard, closePlaceSheet, deactivateSearch, directionsMode, exitDirectionsMode, placeSheetOpen, showLocationCard, userLoc]);
 
     const handleStartSelect = useCallback((place: PlaceSuggestion) => {
         setStartLocation(place);
@@ -1822,22 +1864,31 @@ export default function ExploreScreen() {
                         );
                     })}
 
-                    {confirmedSafePlaces.map((place) => (
-                        <Marker
-                            key={`confirmed-safe-place-${place.id}`}
-                            coordinate={{ latitude: place.latitude, longitude: place.longitude }}
-                            anchor={{ x: 0.5, y: 1 }}
-                            calloutAnchor={{ x: 0.5, y: 0 }}
-                            tracksViewChanges={true}
-                            zIndex={700}
-                            title="Safe Place"
-                            description={place.description || place.address || place.name}
-                            pinColor={T.violet}
-                            onPress={() => handleSafePlaceMarkerPress(place)}
-                        />
-                    ))}
+                    {confirmedSafePlaces.map((place) => {
+                        const selectedSafePlace = isSafePlaceSelectedAsDestination(place);
+                        return (
+                            <Marker
+                                key={`confirmed-safe-place-${place.id}`}
+                                coordinate={{ latitude: Number(place.latitude), longitude: Number(place.longitude) }}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                tracksViewChanges={false}
+                                zIndex={selectedSafePlace ? 850 : 700}
+                                onPress={() => handleSafePlaceMarkerPress(place)}
+                            >
+                                <View
+                                    style={[
+                                        s.safePlaceMarkerHalo,
+                                        selectedSafePlace && s.safePlaceMarkerHaloSelected,
+                                    ]}
+                                    pointerEvents="none"
+                                >
+                                    <SafePlaceIcon />
+                                </View>
+                            </Marker>
+                        );
+                    })}
 
-                    {selectedPlace && !directionsMode && (
+                    {selectedPlace && !directionsMode && !selectedDestinationIsSafePlace && (
                         <Marker
                             key={`${selectedPlace.id}-${selectedPlaceMarkerColor}`}
                             coordinate={{ latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }}
@@ -1871,13 +1922,13 @@ export default function ExploreScreen() {
                             zIndex={1000}
                         />
                     )}
-                    {directionsMode && endLocation && (
+                    {directionsMode && endLocation && !selectedDestinationIsSafePlace && (
                         <Marker
                             coordinate={{ latitude: endLocation.latitude, longitude: endLocation.longitude }}
                             pinColor={selectedPlaceMarkerColor}
                             title={selectedPlace?.name || 'Destination'}
                             description={selectedPlace?.address || 'Route destination'}
-                            zIndex={999}
+                            zIndex={800}
                         />
                     )}
 
@@ -2912,20 +2963,27 @@ const s = StyleSheet.create({
         }),
     },
     placeMarkerStem: { width: 0, height: 0 },
-    safePlaceMarkerWrap: { alignItems: 'center', justifyContent: 'center' },
-    safePlaceMarkerIcon: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: T.violet,
-        borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.9)',
+    safePlaceMarkerHalo: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
         alignItems: 'center',
         justifyContent: 'center',
-        ...Platform.select({
-            ios: { shadowColor: '#8A38F6', shadowOpacity: 0.55, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } },
-            android: { elevation: 7, shadowColor: '#8A38F6' },
-        }),
+        backgroundColor: 'rgba(94, 234, 212, 0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(94, 234, 212, 0.22)',
+        shadowColor: '#5EEAD4',
+        shadowOpacity: 0.32,
+        shadowRadius: 9,
+        shadowOffset: { width: 0, height: 2 },
+        elevation: 7,
+    },
+    safePlaceMarkerHaloSelected: {
+        backgroundColor: 'rgba(94, 234, 212, 0.14)',
+        borderColor: 'rgba(94, 234, 212, 0.52)',
+        shadowOpacity: 0.48,
+        shadowRadius: 13,
+        elevation: 10,
     },
     placeSheetBackdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(3,3,8,0.35)', zIndex: 230 },
     placeSheet: {
