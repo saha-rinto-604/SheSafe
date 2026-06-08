@@ -23,6 +23,7 @@ const MIGRATIONS = [
   'migration_add_profile_and_modules.sql',
   '003_multi_volunteer_incidents.sql',
   '004_user_case_details.sql',
+  '005_reviews_activity_leaderboard.sql',
   '006_admin_module.sql',
   '007_law_enforcement_requests.sql',
   '008_incident_final_location_snapshot.sql',

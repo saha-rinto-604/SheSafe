@@ -540,24 +540,29 @@ function attach(server) {
 
     // Join the incident in DB and get participant list
     let participants = [];
+    let joinMessage = null;
     try {
-      participants = await chatService.join(userId, incidentId);
+      const joinResult = await chatService.joinAndGetEvent(userId, incidentId, userPayload.role);
+      participants = joinResult.participants;
+      joinMessage = joinResult.joinMessage;
     } catch {
       // incident may be cancelled — still allow read-only connection
     }
 
-    // Notify all others that this participant joined
-    broadcast(incidentId, {
-      type: 'incident.participant.joined',
-      payload: {
-        id: String(userId),
-        name: userInfo.name,
-        notificationName: userInfo.notificationName,
-        username: userInfo.username || undefined,
-        role: userInfo.role || userPayload.role,
-        avatarUrl: userInfo.photoUrl || undefined,
-      },
-    }, ws);
+    if (joinMessage) {
+      broadcastAll(incidentId, { type: 'message:new', payload: joinMessage });
+      broadcast(incidentId, {
+        type: 'incident.participant.joined',
+        payload: {
+          id: String(userId),
+          name: userInfo.name,
+          notificationName: userInfo.notificationName,
+          username: userInfo.username || undefined,
+          role: userInfo.role || userPayload.role,
+          avatarUrl: userInfo.photoUrl || undefined,
+        },
+      }, ws);
+    }
 
     // Send current participants to the newly connected client
     ws.send(JSON.stringify({ type: 'incident.participants.list', payload: participants }));

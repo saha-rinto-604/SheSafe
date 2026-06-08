@@ -40,10 +40,12 @@ async function ensureChatSchema() {
        content TEXT NOT NULL,
        message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT',
        media_url VARCHAR(500) DEFAULT NULL,
+       system_event_key VARCHAR(100) DEFAULT NULL,
        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
        PRIMARY KEY (id),
        KEY idx_chat_incident_id (incident_id),
        KEY idx_chat_sender_id (sender_id),
+       UNIQUE KEY uq_chat_system_event_key (system_event_key),
        CONSTRAINT fk_chat_incident FOREIGN KEY (incident_id)
          REFERENCES incidents (id) ON UPDATE CASCADE ON DELETE CASCADE,
        CONSTRAINT fk_chat_sender FOREIGN KEY (sender_id)
@@ -69,6 +71,13 @@ async function ensureChatSchema() {
     );
   }
 
+  if (!(await hasColumn('chat_messages', 'system_event_key'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD COLUMN system_event_key VARCHAR(100) DEFAULT NULL AFTER media_url`
+    );
+  }
+
   if (!(await hasColumn('chat_messages', 'created_at'))) {
     await query(
       `ALTER TABLE chat_messages
@@ -80,6 +89,13 @@ async function ensureChatSchema() {
     await query(
       `ALTER TABLE chat_messages
        ADD KEY idx_chat_incident_created (incident_id, created_at, id)`
+    );
+  }
+
+  if (!(await hasIndex('chat_messages', 'uq_chat_system_event_key'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD UNIQUE KEY uq_chat_system_event_key (system_event_key)`
     );
   }
 
@@ -113,12 +129,12 @@ async function getParticipants(incidentId) {
   );
 }
 
-async function insertMessage({ incidentId, senderId, content, messageType, mediaUrl }) {
+async function insertMessage({ incidentId, senderId, content, messageType, mediaUrl, systemEventKey }) {
   await ensureChatSchema();
   const result = await query(
-    `INSERT INTO chat_messages (incident_id, sender_id, content, message_type, media_url)
-     VALUES (?, ?, ?, ?, ?)`,
-    [incidentId, senderId, content, messageType || 'TEXT', mediaUrl || null]
+    `INSERT INTO chat_messages (incident_id, sender_id, content, message_type, media_url, system_event_key)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [incidentId, senderId, content, messageType || 'TEXT', mediaUrl || null, systemEventKey || null]
   );
   const rows = await query(
     `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url, m.created_at,
@@ -130,6 +146,36 @@ async function insertMessage({ incidentId, senderId, content, messageType, media
     [result.insertId]
   );
   return rows[0];
+}
+
+async function insertSystemMessageOnce({ incidentId, senderId, content, systemEventKey }) {
+  await ensureChatSchema();
+  const result = await query(
+    `INSERT IGNORE INTO chat_messages (incident_id, sender_id, content, message_type, system_event_key)
+     VALUES (?, ?, ?, 'SYSTEM', ?)`,
+    [incidentId, senderId, content, systemEventKey]
+  );
+  const rows = await query(
+    `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url, m.created_at,
+            u.id AS sender_id, u.first_name, u.last_name, u.username, u.photo_url, r.role_name
+     FROM chat_messages m
+     JOIN users u ON m.sender_id = u.id
+     JOIN roles r ON u.role_id = r.id
+     WHERE m.system_event_key = ? LIMIT 1`,
+    [systemEventKey]
+  );
+  return { row: rows[0], created: Number(result.affectedRows || 0) > 0 };
+}
+
+async function getUserChatIdentity(userId) {
+  const rows = await query(
+    `SELECT u.id, u.first_name, u.last_name, u.username, r.role_name
+     FROM users u
+     JOIN roles r ON u.role_id = r.id
+     WHERE u.id = ? LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
 }
 
 async function getMessages(incidentId, limit = 100, viewerId = null) {
@@ -303,6 +349,8 @@ module.exports = {
   getParticipants,
   ensureChatSchema,
   insertMessage,
+  insertSystemMessageOnce,
+  getUserChatIdentity,
   getMessages,
   getActiveIncidents,
   getAssistedChats,

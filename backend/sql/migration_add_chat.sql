@@ -7,11 +7,13 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content TEXT NOT NULL,
   message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT',
   media_url VARCHAR(500) DEFAULT NULL,
+  system_event_key VARCHAR(100) DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_chat_incident_id (incident_id),
   KEY idx_chat_incident_created (incident_id, created_at, id),
   KEY idx_chat_sender_id (sender_id),
+  UNIQUE KEY uq_chat_system_event_key (system_event_key),
   CONSTRAINT fk_chat_incident FOREIGN KEY (incident_id)
     REFERENCES incidents (id) ON UPDATE CASCADE ON DELETE CASCADE,
   CONSTRAINT fk_chat_sender FOREIGN KEY (sender_id)
@@ -50,6 +52,30 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 ALTER TABLE chat_messages
   MODIFY COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT';
+
+SET @has_chat_system_event_key := (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'chat_messages'
+    AND COLUMN_NAME = 'system_event_key'
+);
+SET @sql := IF(@has_chat_system_event_key = 0,
+  'ALTER TABLE chat_messages ADD COLUMN system_event_key VARCHAR(100) DEFAULT NULL AFTER media_url',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @has_chat_system_event_index := (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'chat_messages'
+    AND INDEX_NAME = 'uq_chat_system_event_key'
+);
+SET @sql := IF(@has_chat_system_event_index = 0,
+  'ALTER TABLE chat_messages ADD UNIQUE KEY uq_chat_system_event_key (system_event_key)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @has_archived_at := (
   SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS

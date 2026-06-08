@@ -23,6 +23,7 @@ const {
   getUserCaseDetails: getUserCaseDetailsRepo,
   updateUserCaseDetails: updateUserCaseDetailsRepo,
   createIncidentReview,
+  getIncidentReviewRows,
   getVolunteerActivityLogs,
   getVolunteerLeaderboardRows,
   getVolunteerSummary,
@@ -481,7 +482,8 @@ function notificationIdentityFromRow(row, { usernameKey = 'username', firstKey =
 function formatResponder(row) {
   return {
     id: String(row.id),
-    name: userName(row),
+    name: notificationIdentityFromRow(row),
+    username: row.username || undefined,
     photoUri: row.photo_url || null,
     latitude: row.latest_latitude == null ? null : Number(row.latest_latitude),
     longitude: row.latest_longitude == null ? null : Number(row.latest_longitude),
@@ -534,11 +536,18 @@ async function getResponders(incidentId, userId, role) {
     photoUri: data.incident.photo_url || null,
     role: 'standard_user',
   };
-  const volunteers = data.volunteers.map(formatResponder);
+  const reviewedRows = userId ? await getIncidentReviewRows(incidentId, userId) : [];
+  const reviewedVolunteerIds = reviewedRows.map((row) => String(row.volunteer_id));
+  const reviewedVolunteerIdSet = new Set(reviewedVolunteerIds);
+  const volunteers = data.volunteers.map(formatResponder).map((volunteer) => ({
+    ...volunteer,
+    alreadyReviewed: reviewedVolunteerIdSet.has(String(volunteer.id)),
+  }));
   return {
     incidentId: Number(incidentId),
     sosUser,
     volunteers,
+    reviewedVolunteerIds,
     activeParticipants: activeParticipantsForChat(sosUser, volunteers),
     totalMembers: volunteers.length + 1,
     maxVolunteerResponders: 3,
@@ -896,10 +905,13 @@ async function updateVolunteerCaseDetails(userId, incidentId, payload) {
 
 async function submitIncidentReview(userId, incidentId, payload) {
   const volunteerId = payload?.volunteerId;
-  const rating = Math.max(1, Math.min(5, Number(payload?.rating || 0)));
+  const rating = Number(payload?.rating);
   const feedback = String(payload?.feedback || '').trim();
+  const volunteerIdText = String(volunteerId ?? '').trim();
 
-  if (!volunteerId) throw httpError(400, 'volunteerId is required.');
+  if (!volunteerIdText || ['undefined', 'null', 'nan'].includes(volunteerIdText.toLowerCase())) {
+    throw httpError(400, 'volunteerId is required.');
+  }
   if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
     throw httpError(400, 'rating must be between 1 and 5.');
   }
@@ -917,7 +929,9 @@ async function submitIncidentReview(userId, incidentId, payload) {
   if (result.status === 'NOT_RESPONDER') throw httpError(400, 'You can only review accepted responders for this incident.');
 
   const review = result.review;
+  if (!review) throw httpError(500, 'Unable to load saved review.');
   return {
+    alreadyReviewed: result.status === 'ALREADY_REVIEWED',
     review: {
       id: String(review.id),
       incidentId: String(review.incident_id),

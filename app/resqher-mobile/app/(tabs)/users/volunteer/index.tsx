@@ -93,12 +93,57 @@ async function fetchWithRetry<T>(
 
 type SosRequest = NearbyIncident;
 
+type ReviewVolunteer = {
+    id: string;
+    name: string;
+    avatarUri: string | null;
+};
+
 type PlaceIncident = {
     id: string;
     reporter: string;
     time: string;
     status: string;
 };
+
+function isUsableVolunteerId(value: unknown) {
+    const id = String(value ?? '').trim();
+    return !!id && id !== 'undefined' && id !== 'null' && id !== 'NaN';
+}
+
+function reviewDisplayName(volunteer: any) {
+    const username = String(volunteer?.username || '').trim();
+    if (username) return username.startsWith('@') ? username : `@${username}`;
+    const name = String(volunteer?.name || '').trim();
+    if (name) return name;
+    const fullName = [volunteer?.firstName ?? volunteer?.first_name, volunteer?.lastName ?? volunteer?.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+    return fullName || 'Volunteer';
+}
+
+function buildReviewQueue(responders: any): ReviewVolunteer[] {
+    const volunteers = Array.isArray(responders?.volunteers) ? responders.volunteers : [];
+    const reviewed = new Set((Array.isArray(responders?.reviewedVolunteerIds) ? responders.reviewedVolunteerIds : []).map((id: unknown) => String(id)));
+    const seen = new Set<string>();
+    const queue: ReviewVolunteer[] = [];
+
+    for (const volunteer of volunteers) {
+        const id = String(volunteer?.id ?? volunteer?.volunteerId ?? volunteer?.userId ?? '').trim();
+        if (!isUsableVolunteerId(id) || seen.has(id) || reviewed.has(id) || volunteer?.alreadyReviewed) continue;
+        const role = String(volunteer?.role || 'volunteer').toLowerCase();
+        if (role && role !== 'volunteer') continue;
+        seen.add(id);
+        queue.push({
+            id,
+            name: reviewDisplayName(volunteer),
+            avatarUri: volunteer?.photoUri ?? volunteer?.profile_image ?? volunteer?.photo_url ?? volunteer?.avatarUri ?? null,
+        });
+    }
+
+    return queue;
+}
 
 function isLiveSosStatus(status?: string): boolean {
     const normalized = String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
@@ -639,7 +684,7 @@ export default function VolunteerHome() {
     const [stopConfirmVisible, setStopConfirmVisible] = useState(false);
     const [reviewVisible, setReviewVisible] = useState(false);
     const [reviewLoading, setReviewLoading] = useState(false);
-    const [reviewQueue, setReviewQueue] = useState<{ id: string; name: string; avatarUri: string | null }[]>([]);
+    const [reviewQueue, setReviewQueue] = useState<ReviewVolunteer[]>([]);
     const [reviewIncidentId, setReviewIncidentId] = useState<string | null>(null);
     const [reviewFeedback, setReviewFeedback] = useState('');
     const [reviewRating, setReviewRating] = useState(5);
@@ -1261,11 +1306,7 @@ export default function VolunteerHome() {
 
     const loadReviewVolunteers = useCallback(async (incidentId: string) => {
         const responders = await incidentService.getIncidentResponders(incidentId);
-        return (responders.volunteers || []).map((volunteer) => ({
-            id: String(volunteer.id),
-            name: volunteer.name || 'Volunteer',
-            avatarUri: volunteer.photoUri ?? null,
-        }));
+        return buildReviewQueue(responders);
     }, []);
 
     const openReviewPopup = useCallback(async (incidentId: string | null) => {
@@ -1420,6 +1461,7 @@ export default function VolunteerHome() {
     }, [pulseAnims]);
 
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
+    const currentReviewVolunteer = reviewQueue[0] ?? null;
     const searchOverlayOpen = searchActive || startSearchActive;
     const routeOverlayBlocked = searchOverlayOpen;
 
@@ -3918,40 +3960,32 @@ export default function VolunteerHome() {
                                     size="large"
                                     style={{ marginVertical: 40 }}
                                 />
-                            ) : (<>
+                            ) : currentReviewVolunteer ? (<>
                             <View style={s.reviewAvatarRow}>
-                                {reviewQueue.map((volunteer, index) => {
-                                    const isCurrent = index === 0;
-                                    const isRemoving = volunteer.id === reviewRemovingId;
-                                    const animatedStyle = isRemoving ? {
-                                        opacity: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
-                                        transform: [{ translateY: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) }],
-                                    } : undefined;
-
-                                    return (
-                                        <RNAnimated.View
-                                            key={volunteer.id}
-                                            style={[
-                                                s.reviewAvatarWrap,
-                                                isCurrent && s.reviewAvatarWrapCurrent,
-                                                isRemoving && s.reviewAvatarWrapRemoving,
-                                                animatedStyle,
-                                            ]}
-                                        >
-                                            <UserAvatar
-                                                uri={volunteer.avatarUri}
-                                                size={isCurrent ? 68 : 56}
-                                                style={s.reviewAvatarImg}
-                                            />
-                                        </RNAnimated.View>
-                                    );
-                                })}
+                                <RNAnimated.View
+                                    key={currentReviewVolunteer.id}
+                                    style={[
+                                        s.reviewAvatarWrap,
+                                        s.reviewAvatarWrapCurrent,
+                                        currentReviewVolunteer.id === reviewRemovingId && s.reviewAvatarWrapRemoving,
+                                        currentReviewVolunteer.id === reviewRemovingId && {
+                                            opacity: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                                            transform: [{ translateY: reviewExitAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) }],
+                                        },
+                                    ]}
+                                >
+                                    <UserAvatar
+                                        uri={currentReviewVolunteer.avatarUri}
+                                        size={68}
+                                        style={s.reviewAvatarImg}
+                                    />
+                                </RNAnimated.View>
                             </View>
                             <Text style={s.reviewSelectedName} numberOfLines={1}>
-                                {reviewQueue[0]?.name ?? 'Volunteer'}
+                                {currentReviewVolunteer.name || 'Volunteer'}
                             </Text>
                             <Text style={s.reviewSelectedMeta} numberOfLines={1}>
-                                {reviewQueue.length} volunteer{reviewQueue.length === 1 ? '' : 's'} participated
+                                {reviewQueue.length} volunteer{reviewQueue.length === 1 ? '' : 's'} left to review
                             </Text>
 
                             <TextInput
@@ -3960,6 +3994,7 @@ export default function VolunteerHome() {
                                 placeholder="Write your feedback here..."
                                 placeholderTextColor={T.ink4}
                                 multiline
+                                editable={!reviewSubmitting}
                                 textAlignVertical="top"
                                 style={s.reviewInput}
                             />
@@ -3968,24 +4003,24 @@ export default function VolunteerHome() {
                                 {[1, 2, 3, 4, 5].map(star => {
                                     const active = star <= reviewRating;
                                     return (
-                                        <TouchableOpacity key={star} onPress={() => setReviewRating(star)} activeOpacity={0.8}>
+                                        <TouchableOpacity key={star} onPress={() => setReviewRating(star)} disabled={reviewSubmitting} activeOpacity={0.8}>
                                             <Ionicons name={active ? 'star' : 'star-outline'} size={24} color={active ? '#FBBF24' : T.ink4} />
                                         </TouchableOpacity>
                                     );
                                 })}
                             </View>
 
-                            <TouchableOpacity style={s.reviewSubmitBtn} onPress={submitVolunteerReview} activeOpacity={0.9}>
+                            <TouchableOpacity style={[s.reviewSubmitBtn, reviewSubmitting && { opacity: 0.65 }]} onPress={submitVolunteerReview} disabled={reviewSubmitting} activeOpacity={0.9}>
                                 <LinearGradient
                                     colors={[T.violet, '#7C3AED']}
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 1 }}
                                     style={s.reviewSubmitFill}
                                 >
-                                    <Text style={s.reviewSubmitText}>Submit Review</Text>
+                                    <Text style={s.reviewSubmitText}>{reviewSubmitting ? 'Submitting...' : 'Submit Review'}</Text>
                                 </LinearGradient>
                             </TouchableOpacity>
-                            </>)}
+                            </>) : null}
                         </View>
                     </View>
                 </Modal>

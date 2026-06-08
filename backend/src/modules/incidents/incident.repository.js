@@ -211,6 +211,33 @@ async function ensureVolunteerDispatchSchema() {
      )`
   );
 
+  if (!(await hasColumn('reviews', 'incident_id'))) {
+    await query(`ALTER TABLE reviews ADD COLUMN incident_id BIGINT UNSIGNED DEFAULT NULL AFTER id`);
+  }
+  if (!(await hasColumn('reviews', 'reviewer_id'))) {
+    await query(`ALTER TABLE reviews ADD COLUMN reviewer_id BIGINT UNSIGNED DEFAULT NULL AFTER incident_id`);
+  }
+  if (!(await hasColumn('reviews', 'volunteer_id'))) {
+    await query(`ALTER TABLE reviews ADD COLUMN volunteer_id BIGINT UNSIGNED DEFAULT NULL AFTER reviewer_id`);
+  }
+  if (!(await hasIndex('reviews', 'uq_incident_reviewer_volunteer'))) {
+    await query(
+      `DELETE r1 FROM reviews r1
+       JOIN reviews r2
+         ON r1.incident_id = r2.incident_id
+        AND r1.reviewer_id = r2.reviewer_id
+        AND r1.volunteer_id = r2.volunteer_id
+        AND r1.id > r2.id
+       WHERE r1.incident_id IS NOT NULL
+         AND r1.reviewer_id IS NOT NULL
+         AND r1.volunteer_id IS NOT NULL`
+    );
+    await query(
+      `ALTER TABLE reviews
+       ADD UNIQUE KEY uq_incident_reviewer_volunteer (incident_id, reviewer_id, volunteer_id)`
+    );
+  }
+
   await query(
     `INSERT IGNORE INTO incident_volunteers (incident_id, volunteer_id, accepted_at, status)
      SELECT id, volunteer_id, COALESCE(accepted_at, created_at), 'ACCEPTED'
@@ -860,6 +887,7 @@ async function getIncidentResponders(incidentId) {
         u.id,
         u.first_name,
         u.last_name,
+        u.username,
         u.photo_url,
         u.latest_latitude,
         u.latest_longitude,
@@ -1121,15 +1149,34 @@ async function createIncidentReview({ incidentId, reviewerId, volunteerId, ratin
   );
   if (!responderRows.length) return { status: 'NOT_RESPONDER' };
 
-  await query(
-    `INSERT INTO reviews (incident_id, reviewer_id, volunteer_id, rating, feedback)
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       rating = VALUES(rating),
-       feedback = VALUES(feedback),
-       updated_at = NOW()`,
-    [incidentId, reviewerId, volunteerId, rating, feedback || null]
+  const existingRows = await query(
+    `SELECT id, incident_id, reviewer_id, volunteer_id, rating, feedback, created_at, updated_at
+     FROM reviews
+     WHERE incident_id = ? AND reviewer_id = ? AND volunteer_id = ?
+     LIMIT 1`,
+    [incidentId, reviewerId, volunteerId]
   );
+  if (existingRows[0]) {
+    return { status: 'ALREADY_REVIEWED', review: existingRows[0] };
+  }
+
+  try {
+    await query(
+      `INSERT INTO reviews (incident_id, reviewer_id, volunteer_id, rating, feedback)
+       VALUES (?, ?, ?, ?, ?)`,
+      [incidentId, reviewerId, volunteerId, rating, feedback || null]
+    );
+  } catch (err) {
+    if (err?.code !== 'ER_DUP_ENTRY') throw err;
+    const duplicateRows = await query(
+      `SELECT id, incident_id, reviewer_id, volunteer_id, rating, feedback, created_at, updated_at
+       FROM reviews
+       WHERE incident_id = ? AND reviewer_id = ? AND volunteer_id = ?
+       LIMIT 1`,
+      [incidentId, reviewerId, volunteerId]
+    );
+    return { status: 'ALREADY_REVIEWED', review: duplicateRows[0] || null };
+  }
 
   const rows = await query(
     `SELECT id, incident_id, reviewer_id, volunteer_id, rating, feedback, created_at, updated_at
@@ -1139,6 +1186,17 @@ async function createIncidentReview({ incidentId, reviewerId, volunteerId, ratin
     [incidentId, reviewerId, volunteerId]
   );
   return { status: 'OK', review: rows[0] || null };
+}
+
+async function getIncidentReviewRows(incidentId, reviewerId) {
+  await ensureVolunteerDispatchSchema();
+  return query(
+    `SELECT id, incident_id, reviewer_id, volunteer_id, rating, feedback, created_at, updated_at
+     FROM reviews
+     WHERE incident_id = ?
+       AND reviewer_id = ?`,
+    [incidentId, reviewerId]
+  );
 }
 
 async function getVolunteerActivityLogs(volunteerId) {
@@ -1305,6 +1363,7 @@ module.exports = {
   getUserCaseDetails,
   updateUserCaseDetails,
   createIncidentReview,
+  getIncidentReviewRows,
   getVolunteerActivityLogs,
   getVolunteerLeaderboardRows,
   getVolunteerSummary,

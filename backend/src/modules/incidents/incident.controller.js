@@ -370,7 +370,7 @@ async function updateVolunteerCaseDetails(req, res, next) {
 async function createReview(req, res, next) {
   try {
     const result = await incidentService.submitIncidentReview(req.user.id, req.params.id, req.body);
-    res.status(201).json(result);
+    res.status(result.alreadyReviewed ? 200 : 201).json(result);
   } catch (error) {
     next(error);
   }

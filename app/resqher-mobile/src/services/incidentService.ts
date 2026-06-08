@@ -120,11 +120,13 @@ export interface AcceptedIncidentResponse {
 export interface IncidentResponder {
   id: string;
   name: string;
+  username?: string;
   photoUri?: string | null;
   latitude?: number | null;
   longitude?: number | null;
   role: 'volunteer';
   acceptedAt?: string | null;
+  alreadyReviewed?: boolean;
 }
 
 export interface IncidentSosUser {
@@ -149,6 +151,7 @@ export interface IncidentRespondersResponse {
   incidentId: number | string;
   sosUser: IncidentSosUser;
   volunteers: IncidentResponder[];
+  reviewedVolunteerIds?: string[];
   activeParticipants?: IncidentChatParticipant[];
   totalMembers: number;
   maxVolunteerResponders: number;
@@ -190,14 +193,14 @@ export interface IncidentRouteContext {
     longitude?: number | null;
     photoUri?: string | null;
   } | null;
-  volunteers?: Array<{
+  volunteers?: {
     id: string;
     name: string;
     latitude?: number | null;
     longitude?: number | null;
     photoUri?: string | null;
     acceptedAt?: string | null;
-  }>;
+  }[];
 }
 
 export interface IncidentMapSnapshot {
@@ -214,7 +217,7 @@ export interface IncidentMapSnapshot {
     longitude: number;
     updatedAt?: string | null;
   } | null;
-  volunteerLocations: Array<{
+  volunteerLocations: {
     id?: string;
     userId?: string;
     name?: string;
@@ -223,8 +226,8 @@ export interface IncidentMapSnapshot {
     longitude: number;
     acceptedAt?: string | null;
     updatedAt?: string | null;
-  }>;
-  polyline?: Array<{ latitude: number; longitude: number }> | null;
+  }[];
+  polyline?: { latitude: number; longitude: number }[] | null;
   finalizedAt?: string | null;
 }
 
@@ -586,14 +589,17 @@ export const incidentService = {
     return res.data?.details ?? {};
   },
 
-  async submitIncidentReview(id: number | string, payload: IncidentReviewPayload) {
+  async submitIncidentReview(id: number | string, payload: IncidentReviewPayload): Promise<{ review?: any; alreadyReviewed?: boolean }> {
     try {
       const res = await api.post(`/api/incidents/${id}/reviews`, {
         volunteerId: payload.volunteerId,
         rating: payload.rating,
         feedback: payload.feedback ?? '',
       });
-      return res.data?.review;
+      return {
+        review: res.data?.review,
+        alreadyReviewed: Boolean(res.data?.alreadyReviewed),
+      };
     } catch (error) {
       throw normalizeApiError(error);
     }

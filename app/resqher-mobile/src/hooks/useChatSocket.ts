@@ -68,6 +68,7 @@ function normalizeSocketMessage(raw: any): Message {
         content: raw.text ?? raw.content ?? '',
         type: raw.type ?? raw.message_type ?? (raw.senderRole === 'system' ? 'SYSTEM' : 'TEXT'),
         timestamp: raw.createdAt ?? raw.timestamp ?? raw.created_at,
+        mediaUrl: raw.mediaUrl ?? raw.media_url,
     };
 }
 
@@ -79,6 +80,7 @@ interface UseChatSocketReturn {
     isConnected: boolean;
     error: string | null;
     sendMessage: (content: string, type?: 'TEXT' | 'IMAGE' | 'AUDIO') => Promise<void>;
+    sendImage: (localUri: string) => Promise<void>;
     sendLocationUpdate: (location: { latitude: number; longitude: number; heading?: number | null }) => Promise<void>;
     refreshMessages: () => Promise<void>;
 }
@@ -125,6 +127,33 @@ export function useChatSocket(
                 message,
             });
             if (mountedRef.current) setError(message);
+        }
+    }, [incidentId]);
+
+    const sendImage = useCallback(async (localUri: string) => {
+        if (!incidentId || !localUri) return;
+        try {
+            const msg = await chatService.sendImage(incidentId, localUri);
+            if (mountedRef.current) {
+                setMessages(prev => {
+                    if (prev.find(m => m.id === msg.id)) return prev;
+                    const next = [...prev, msg];
+                    chatStore.save(incidentId, next);
+                    return next;
+                });
+                setError(null);
+            }
+        } catch (err: any) {
+            const status = err?.response?.status ?? err?.status;
+            const message = err?.response?.data?.message || err?.message || 'Unable to send chat image.';
+            console.warn('[Chat] Failed to send image', {
+                incidentId,
+                endpoint: `/api/chat/${incidentId}/image`,
+                status,
+                message,
+            });
+            if (mountedRef.current) setError(message);
+            throw err;
         }
     }, [incidentId]);
 
@@ -186,7 +215,7 @@ export function useChatSocket(
                                 return next;
                             });
                             // Notify if message is from someone else
-                            if (incoming.sender.id !== selfIdRef.current) {
+                            if (incoming.type !== 'SYSTEM' && incoming.sender.id !== selfIdRef.current) {
                                 notificationStore.add({
                                     type: 'message_received',
                                     title: 'New Message',
@@ -393,5 +422,5 @@ export function useChatSocket(
         };
     }, [connectWS, incidentId, refreshMessages, stopPolling]);
 
-    return { messages, participants, victimLocation, liveLocation, isConnected, error, sendMessage, sendLocationUpdate, refreshMessages };
+    return { messages, participants, victimLocation, liveLocation, isConnected, error, sendMessage, sendImage, sendLocationUpdate, refreshMessages };
 }

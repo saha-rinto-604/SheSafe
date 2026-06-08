@@ -252,6 +252,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 
     const role = msg.sender.role;
     const alignRight = isOwn;
+    const imageUri = msg.mediaUrl || (/^https?:\/\//i.test(msg.content) ? msg.content : '');
 
     const tailStyle = alignRight
         ? { borderBottomRightRadius: 6 }
@@ -269,7 +270,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                         <RoleBadge role={role} />
                     </View>
                 )}
-                <View style={[st.bubble, alignRight ? st.bubbleOwn : st.bubbleOther, tailStyle]}>
+                <View style={[st.bubble, alignRight ? st.bubbleOwn : st.bubbleOther, msg.type === 'IMAGE' && st.imageBubble, tailStyle]}>
                     {msg.type === 'AUDIO' ? (
                         <View style={st.audioWrap}>
                             <TouchableOpacity style={st.audioPlayBtn}>
@@ -284,8 +285,14 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                         </View>
                     ) : msg.type === 'IMAGE' ? (
                         <View style={st.imageWrap}>
-                            <Feather name="image" size={22} color={T.ink4} />
-                            <Text style={st.imageLabel}>Photo attached</Text>
+                            {imageUri ? (
+                                <Image source={{ uri: imageUri }} style={st.chatImage} resizeMode="cover" />
+                            ) : (
+                                <>
+                                    <Feather name="image" size={22} color={T.ink4} />
+                                    <Text style={st.imageLabel}>Photo unavailable</Text>
+                                </>
+                            )}
                         </View>
                     ) : (
                         <Text style={[st.msgText, alignRight && st.msgTextOwn]}>{msg.content}</Text>
@@ -298,7 +305,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
 });
 
 // --- Floating Input (Modal-based Attach Menu equivalent to Volunteer UI) ---
-function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: string) => void; bottomInset: number; onImagePicked: (uri: string) => void }) {
+function FloatingInput({ onSend, bottomInset, onImagePicked, isUploadingImage }: { onSend: (text: string) => void; bottomInset: number; onImagePicked: (uri: string) => void; isUploadingImage: boolean }) {
     const [text, setText] = useState('');
     const [isAttachMenuVisible, setAttachMenuVisible] = useState(false);
     const inputRef = useRef<TextInput>(null);
@@ -321,7 +328,9 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                             <TouchableOpacity
                                 style={[st.attachOptionRow, { paddingBottom: 12 }]}
                                 activeOpacity={0.7}
+                                disabled={isUploadingImage}
                                 onPress={async () => {
+                                    if (isUploadingImage) return;
                                     Haptics.selectionAsync();
                                     try {
                                         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -340,8 +349,8 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                                     }
                                 }}
                             >
-                                <Feather name="image" size={20} color="#FFFFFF" />
-                                <Text style={st.attachOptionText}>Photo</Text>
+                                <Feather name={isUploadingImage ? 'loader' : 'image'} size={20} color="#FFFFFF" />
+                                <Text style={st.attachOptionText}>{isUploadingImage ? 'Uploading...' : 'Photo'}</Text>
                             </TouchableOpacity>
                         </View>
                     </Pressable>
@@ -353,8 +362,8 @@ function FloatingInput({ onSend, bottomInset, onImagePicked }: { onSend: (text: 
                     <View style={[StyleSheet.absoluteFill, st.inputPillBg]} />
                 </BlurView>
                 <View style={st.inputPill}>
-                    <TouchableOpacity style={st.inputAction} onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(!isAttachMenuVisible); }} activeOpacity={0.7}>
-                        <Feather name="paperclip" size={20} color={isAttachMenuVisible ? T.violet : "#FFFFFF"} />
+                    <TouchableOpacity style={st.inputAction} onPress={() => { if (isUploadingImage) return; Haptics.selectionAsync(); setAttachMenuVisible(!isAttachMenuVisible); }} disabled={isUploadingImage} activeOpacity={0.7}>
+                        <Feather name={isUploadingImage ? 'loader' : 'paperclip'} size={20} color={isAttachMenuVisible ? T.violet : "#FFFFFF"} />
                     </TouchableOpacity>
                     <TextInput ref={inputRef} style={st.input} placeholder="Type a message..." placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} onFocus={() => setAttachMenuVisible(false)} />
                     <TouchableOpacity style={[st.sendBtn, !hasText && st.sendBtnOff]} onPress={handleSend} disabled={!hasText} activeOpacity={0.7}>
@@ -391,8 +400,9 @@ export default function ChatRoom() {
     const isRealIncident = isBackendIncidentId && !incidentId.startsWith('temp-') && incidentId !== 'sos-new';
 
     // Socket
-    const { messages, sendMessage, liveLocation, sendLocationUpdate, isConnected, error: chatError, refreshMessages } = useChatSocket(isRealIncident ? incidentId : '', userId ?? undefined, 'USER');
+    const { messages, sendMessage, sendImage, liveLocation, sendLocationUpdate, isConnected, error: chatError, refreshMessages } = useChatSocket(isRealIncident ? incidentId : '', userId ?? undefined, 'USER');
     const [localMessages] = useState<Message[]>([]);
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [incident, setIncident] = useState<Incident | null>(null);
     const currentIncident = React.useMemo(() => {
         if (!isRealIncident || incident?.id !== incidentId) return null;
@@ -558,10 +568,17 @@ export default function ChatRoom() {
         sendMessage(text, 'TEXT');
     }, [isReadOnly, isRealIncident, sendMessage]);
 
-    const handleSendPhoto = useCallback((uri: string) => {
-        if (isReadOnly || !isRealIncident) return;
-        sendMessage(uri, 'IMAGE');
-    }, [isReadOnly, isRealIncident, sendMessage]);
+    const handleSendPhoto = useCallback(async (uri: string) => {
+        if (isReadOnly || !isRealIncident || isUploadingImage) return;
+        setIsUploadingImage(true);
+        try {
+            await sendImage(uri);
+        } catch (err: any) {
+            Alert.alert('Image upload failed', err?.message || 'Please try again.');
+        } finally {
+            setIsUploadingImage(false);
+        }
+    }, [isReadOnly, isRealIncident, isUploadingImage, sendImage]);
 
     const handleConfirmLeave = useCallback(async () => {
         Haptics.selectionAsync();
@@ -1165,7 +1182,7 @@ export default function ChatRoom() {
                         }
                     />
                     {!isReadOnly && isRealIncident ? (
-                        <FloatingInput onSend={handleSend} onImagePicked={handleSendPhoto} bottomInset={insets.bottom} />
+                        <FloatingInput onSend={handleSend} onImagePicked={handleSendPhoto} isUploadingImage={isUploadingImage} bottomInset={insets.bottom} />
                     ) : isRealIncident ? (
                         <ArchivePill
                             bottomInset={insets.bottom}
@@ -1587,7 +1604,7 @@ const st = StyleSheet.create({
     msgTimeOwn: { alignSelf: 'flex-end', textAlign: 'right' },
     systemWrap: { flexDirection: 'row', alignItems: 'center', gap: S.s2, marginVertical: S.s3 },
     systemLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: T.lineMid },
-    systemPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s3, paddingVertical: S.s1 },
+    systemPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.s3, paddingVertical: S.s1, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
     systemText: { fontSize: 11, color: T.ink4, fontStyle: 'italic' },
     systemTextEvidence: { color: T.violet, fontWeight: '600', fontStyle: 'normal' },
     audioWrap: { flexDirection: 'row', alignItems: 'center', gap: S.s2 },
@@ -1595,7 +1612,9 @@ const st = StyleSheet.create({
     audioWaveform: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 2, height: 22 },
     waveBar: { width: 3, borderRadius: 1.5 },
     audioDur: { fontSize: 10, color: T.ink4, fontWeight: '600' },
-    imageWrap: { width: '100%', height: 100, borderRadius: R.lg, backgroundColor: T.surfaceMid, alignItems: 'center', justifyContent: 'center', gap: S.s2 },
+    imageBubble: { paddingVertical: 4, paddingHorizontal: 4, backgroundColor: 'transparent' },
+    imageWrap: { width: 220, maxWidth: '100%', height: 180, borderRadius: 14, backgroundColor: T.surfaceMid, alignItems: 'center', justifyContent: 'center', gap: S.s2, overflow: 'hidden' },
+    chatImage: { width: '100%', height: '100%', borderRadius: 14 },
     imageLabel: { fontSize: 11, color: T.ink4, fontWeight: '500' },
     inputOuter: { width: '90%', alignSelf: 'center', paddingTop: S.s2 },
     inputPillContainer: { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', ...Platform.select({ ios: { shadowColor: '#8A38F6', shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } }, android: { elevation: 6 } }) },

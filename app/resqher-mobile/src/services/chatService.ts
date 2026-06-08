@@ -1,6 +1,15 @@
 import api from './api';
 import type { Message, Incident, Participant } from '../types/chat';
 
+function imageMimeType(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'heic') return 'image/heic';
+  if (ext === 'heif') return 'image/heif';
+  return 'image/jpeg';
+}
+
 function toMessage(raw: any): Message {
   const isSystem = raw.type === 'SYSTEM' || raw.message_type === 'SYSTEM' || raw.senderRole === 'system';
   if (raw.senderName || raw.text) {
@@ -60,6 +69,20 @@ export const chatService = {
     payload: { content: string; type?: 'TEXT' | 'IMAGE' | 'AUDIO' }
   ): Promise<Message> {
     const res = await api.post(`/api/incidents/${incidentId}/messages`, { text: payload.content, type: payload.type });
+    return toMessage(res.data.message);
+  },
+
+  async sendImage(incidentId: string, localUri: string): Promise<Message> {
+    const formData = new FormData();
+    const filename = localUri.split('/').pop()?.split('?')[0] || `chat-${Date.now()}.jpg`;
+    formData.append('image', {
+      uri: localUri,
+      name: filename,
+      type: imageMimeType(filename),
+    } as any);
+    const res = await api.post(`/api/chat/${incidentId}/image`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return toMessage(res.data.message);
   },
 

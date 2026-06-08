@@ -1,10 +1,13 @@
 const { httpError } = require('../../utils/httpError');
+const { uploadBuffer } = require('../../config/cloudinary');
 const { findIncidentById, isIncidentMember, getIncidentParticipantState } = require('../incidents/incident.repository');
 const {
   joinIncident,
   getParticipants,
   ensureChatSchema,
   insertMessage,
+  insertSystemMessageOnce,
+  getUserChatIdentity,
   getMessages,
   getActiveIncidents,
   getAssistedChats,
@@ -36,6 +39,62 @@ function formatMessage(row) {
 function normalizeRole(dbRole) {
   const map = { standard_user: 'USER', volunteer: 'VOLUNTEER', law_enforcement: 'POLICE' };
   return map[dbRole] || 'USER';
+}
+
+function roleDisplayName(roleName) {
+  const role = normalizeRole(roleName);
+  if (role === 'VOLUNTEER') return 'Volunteer';
+  if (role === 'POLICE') return 'Police';
+  return 'User';
+}
+
+function isPhoneLike(value) {
+  const compact = String(value || '').replace(/[\s().-]/g, '');
+  return /^\+?\d{7,15}$/.test(compact);
+}
+
+function joinDisplayName(user) {
+  const username = String(user?.username || '').trim();
+  if (/^[a-z0-9_]{3,30}$/i.test(username)) return username;
+  const fullName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim();
+  if (fullName && !isPhoneLike(fullName)) return fullName;
+  return roleDisplayName(user?.role_name);
+}
+
+async function createJoinSystemMessage(userId, incidentId) {
+  const user = await getUserChatIdentity(userId);
+  const displayName = joinDisplayName(user);
+  const systemEventKey = `incident_join:${incidentId}:${userId}`;
+  const result = await insertSystemMessageOnce({
+    incidentId,
+    senderId: userId,
+    content: `${displayName} has joined the chat room`,
+    systemEventKey,
+  });
+  return {
+    message: result.row ? formatMessage(result.row) : null,
+    created: result.created,
+  };
+}
+
+async function joinAndGetEvent(userId, incidentId, role) {
+  const incident = await findIncidentById(incidentId);
+  if (!incident) throw httpError(404, 'Incident not found.');
+  if (incident.status === 'CANCELLED') throw httpError(400, 'Incident is cancelled.');
+  await ensureAccess(userId, incidentId, role);
+  await joinIncident(incidentId, userId);
+  const joinEvent = await createJoinSystemMessage(userId, incidentId);
+  const participants = await getParticipants(incidentId);
+  return {
+    participants: participants.map((p) => ({
+      id: String(p.id),
+      name: `${p.first_name} ${p.last_name}`.trim(),
+      username: p.username || undefined,
+      role: normalizeRole(p.role_name),
+      photoUrl: p.photo_url || null,
+    })),
+    joinMessage: joinEvent.created ? joinEvent.message : null,
+  };
 }
 
 function formatIncident(r) {
@@ -102,6 +161,7 @@ async function sendMessage(userId, incidentId, payload, role) {
 
   // Auto-join sender as participant
   await joinIncident(incidentId, userId);
+  await createJoinSystemMessage(userId, incidentId);
 
   const row = await insertMessage({
     incidentId,
@@ -113,20 +173,34 @@ async function sendMessage(userId, incidentId, payload, role) {
   return formatMessage(row);
 }
 
-async function join(userId, incidentId) {
+async function sendImageMessage(userId, incidentId, file, role) {
   const incident = await findIncidentById(incidentId);
   if (!incident) throw httpError(404, 'Incident not found.');
-  if (incident.status === 'CANCELLED') throw httpError(400, 'Incident is cancelled.');
-  await ensureAccess(userId, incidentId);
+  if (['CANCELLED', 'RESOLVED'].includes(incident.status)) throw httpError(400, 'This incident chat is read-only.');
+  await ensureAccess(userId, incidentId, role);
+  if (!file) throw httpError(400, 'Image file is required.');
+  if (!String(file.mimetype || '').startsWith('image/')) throw httpError(400, 'Only image uploads are allowed.');
+  if (Number(file.size || 0) > 5 * 1024 * 1024) throw httpError(400, 'Image must be 5MB or smaller.');
+
   await joinIncident(incidentId, userId);
-  const participants = await getParticipants(incidentId);
-  return participants.map((p) => ({
-    id: String(p.id),
-    name: `${p.first_name} ${p.last_name}`.trim(),
-    username: p.username || undefined,
-    role: normalizeRole(p.role_name),
-    photoUrl: p.photo_url || null,
-  }));
+  await createJoinSystemMessage(userId, incidentId);
+
+  const folder = `shesafe/chat-images/${incidentId}`;
+  const publicId = `chat_${userId}_${Date.now()}`;
+  const { secure_url: secureUrl } = await uploadBuffer(file.buffer, folder, publicId);
+  const row = await insertMessage({
+    incidentId,
+    senderId: userId,
+    content: 'Photo',
+    messageType: 'IMAGE',
+    mediaUrl: secureUrl,
+  });
+  return formatMessage(row);
+}
+
+async function join(userId, incidentId, role) {
+  const result = await joinAndGetEvent(userId, incidentId, role);
+  return result.participants;
 }
 
 async function listActiveIncidents() {
@@ -165,7 +239,9 @@ module.exports = {
   fetchMessages,
   ensureChatSchema,
   sendMessage,
+  sendImageMessage,
   join,
+  joinAndGetEvent,
   listActiveIncidents,
   listAssistedIncidents,
   archiveForMe,
