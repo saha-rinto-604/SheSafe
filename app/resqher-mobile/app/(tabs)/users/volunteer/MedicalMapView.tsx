@@ -19,6 +19,7 @@ import {
     Animated as RNAnimated, Easing,
 } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
+import { useMapRenderDiagnostics } from '../../../../src/components/shared/MapRenderDiagnostics';
 import * as Location from 'expo-location';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -838,15 +839,16 @@ export default function MedicalMapView() {
     const handleDirections = useCallback(async () => {
         if (!selectedProvider) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        clearRouteState({ keepProvider: true });
+        const routeIntentId = routeRequestIdRef.current;
 
         const destination = {
             latitude: selectedProvider.latitude,
             longitude: selectedProvider.longitude,
         };
         const origin = await refreshCurrentGpsLocation({ showFallbackAlert: true });
-        if (!origin) return;
+        if (!origin || !mountedRef.current || routeRequestIdRef.current !== routeIntentId) return;
 
-        clearRouteState({ keepProvider: true });
         hideCalloutKeepRoute();
         setShowRouteOverview(true);
 
@@ -1018,6 +1020,26 @@ export default function MedicalMapView() {
     const completedRoutePreviewCoords = useMemo(() => completedRouteCoords.filter(isValidLatLng), [completedRouteCoords]);
     const remainingRoutePreviewCoords = useMemo(() => remainingRouteCoords.filter(isValidLatLng), [remainingRouteCoords]);
 
+    const mapDiagnostics = useMapRenderDiagnostics({
+        screenName: 'VolunteerMedicalMap',
+        location: userLoc,
+        regionSource: userLoc ? 'user-location' : 'fallback-dhaka',
+        overlayState: {
+            selectedPin,
+            showCallout,
+            showRouteOverview,
+            isRouting,
+            isLiveNav,
+            isReviewMode,
+            providers: providers.length,
+            routePoints: fullRouteCoords.length,
+            completedRoutePoints: completedRoutePreviewCoords.length,
+            remainingRoutePoints: remainingRoutePreviewCoords.length,
+        },
+        onReady: () => setMapReady(true),
+        onRetry: () => setMapReady(false),
+    });
+
     return (
         <AtmosphericShell>
             <View style={st.root}>
@@ -1025,16 +1047,20 @@ export default function MedicalMapView() {
 
                 {/* ── Full-screen Map ── */}
                 <MapView
+                    key={mapDiagnostics.mapKey}
                     ref={mapRef}
+                    debugName="VolunteerMedicalMap"
                     style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
+                    onLayout={mapDiagnostics.onMapLayout}
+                    onMapLoaded={mapDiagnostics.onMapLoaded}
                     showsUserLocation={false}
                     showsMyLocationButton={false}
                     showsCompass={false}
                     moveOnMarkerPress={false}
                     customMapStyle={TACTICAL_MAP_STYLE}
-                    onMapReady={() => setMapReady(true)}
+                    onMapReady={mapDiagnostics.onMapReady}
                     onPress={() => {
                         if (showCallout) closeCallout();
                     }}
@@ -1106,6 +1132,7 @@ export default function MedicalMapView() {
                     {/* Completed route (blue) */}
                     {!isReviewMode && completedRoutePreviewCoords.length > 1 && (
                         <Polyline
+                            key={`medical-route-completed-${selectedPin ?? 'none'}`}
                             coordinates={completedRoutePreviewCoords}
                             strokeColor="#3B82F6"
                             strokeWidth={5}
@@ -1116,6 +1143,7 @@ export default function MedicalMapView() {
                     {/* Remaining route (violet) */}
                     {!isReviewMode && remainingRoutePreviewCoords.length > 1 && (
                         <Polyline
+                            key={`medical-route-remaining-${selectedPin ?? 'none'}`}
                             coordinates={remainingRoutePreviewCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -1124,8 +1152,9 @@ export default function MedicalMapView() {
                         />
                     )}
                     {/* Fallback: full route if no progress split yet */}
-                    {(isReviewMode || completedRoutePreviewCoords.length === 0) && fullRouteCoords.length > 1 && (
+                    {(isReviewMode || remainingRoutePreviewCoords.length === 0) && fullRouteCoords.length > 1 && (
                         <Polyline
+                            key={`medical-route-full-${selectedPin ?? 'none'}`}
                             coordinates={fullRouteCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -1495,7 +1524,10 @@ export default function MedicalMapView() {
 
                 {/* ── Bottom Navbar ── */}
                 {!isLiveNav && (
-                    <VolunteerNavbar activeTab="Medical" />
+                    <VolunteerNavbar
+                        activeTab="Medical"
+                        onActiveTabPress={() => router.push('/(tabs)/users/volunteer/medical' as any)}
+                    />
                 )}
             </View>
         </AtmosphericShell>

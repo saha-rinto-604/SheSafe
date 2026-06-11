@@ -148,11 +148,12 @@ export const st = StyleSheet.create({
         letterSpacing: 0.8,
         textTransform: 'uppercase',
     },
-    chatArea: { flex: 1 },
+    chatArea: { flex: 1, minHeight: 0 },
     messageList: {
+        flexGrow: 1,
         paddingHorizontal: S.s4,
         paddingTop: S.s3,
-        paddingBottom: S.s2,
+        paddingBottom: S.s4,
     },
     bubbleRow: {
         flexDirection: 'row',
@@ -307,7 +308,8 @@ export const st = StyleSheet.create({
         fontWeight: '500',
     },
     inputOuter: {
-        width: '90%',
+        width: '92%',
+        maxWidth: 720,
         alignSelf: 'center',
         paddingTop: S.s2,
     },
@@ -332,7 +334,8 @@ export const st = StyleSheet.create({
     },
     inputPill: {
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-end',
+        minHeight: 56,
         paddingHorizontal: 16,
         paddingVertical: 10,
         gap: 12,
@@ -345,10 +348,13 @@ export const st = StyleSheet.create({
     },
     input: {
         flex: 1,
+        minHeight: 36,
         fontSize: 15,
+        lineHeight: 20,
         color: '#FFFFFF',
-        maxHeight: 100,
-        paddingVertical: Platform.OS === 'ios' ? 8 : 4,
+        maxHeight: 112,
+        paddingTop: Platform.OS === 'ios' ? 8 : 6,
+        paddingBottom: Platform.OS === 'ios' ? 8 : 6,
     },
     sendBtn: {
         width: 36,

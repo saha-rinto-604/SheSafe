@@ -17,9 +17,9 @@ import type { UserRole } from '../../src/services/api';
 import { useToast } from '../../src/components/Toast';
 import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
-import { routeForPoliceStatus } from '../../src/constants/routes';
+import { routeForRoleStatus } from '../../src/constants/routes';
 import SecureTextField from '../../components/auth/SecureTextField';
-import { getApiBaseUrlError } from '../../src/services/api';
+import { getApiBaseUrlError, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
 
 type Role = UserRole;
 type FormData = {
@@ -209,7 +209,7 @@ function FormField({
 export default function Signup() {
   const router = useRouter();
   const { requestSignupOtp, verifySignupOtp, isLoading: authLoading } = useAuth();
-  const { showToast } = useToast();
+  const { showToast, clearToast } = useToast();
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [role, setRole] = useState<Role | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -225,6 +225,10 @@ export default function Signup() {
   const pw = useWatch({ control, name: 'password' }) ?? '';
   const selectedMeta = useMemo(() => ROLE_OPTIONS.find(o => o.value === role) ?? null, [role]);
   const busy = submitting || authLoading;
+
+  useEffect(() => {
+    void warmAuthBackend();
+  }, []);
 
   const goStep = (s: 1 | 2 | 3 | 4) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -259,9 +263,10 @@ export default function Signup() {
 
   const onSubmit = async (data: FormData) => {
     if (submittingRef.current || busy) return;
+    clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
       return;
     }
     if (!role) {
@@ -298,7 +303,6 @@ export default function Signup() {
       goStep(4);
     } catch (e: any) {
       const msg = e?.message ?? '';
-      const code = e?.code;
       if (msg.toLowerCase().includes('already registered')) {
         showToast({
           type: 'warning',
@@ -307,11 +311,12 @@ export default function Signup() {
           action: { label: 'Sign In', onPress: () => router.push('/(auth)/login') },
         });
       } else {
-        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
         showToast({
           type: 'error',
-          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Registration Failed',
-          message: msg || 'Unable to send OTP. Please try again.',
+          title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification code not sent',
+          message: isAuthConnectionError(e)
+            ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+            : 'We couldn’t send the verification code. Please try again.',
         });
       }
     } finally {
@@ -322,9 +327,10 @@ export default function Signup() {
 
   const onVerifyOtp = async (data: FormData) => {
     if (submittingRef.current || busy) return;
+    clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
       return;
     }
     const trimmedOtp = data.otpCode.trim();
@@ -337,15 +343,9 @@ export default function Signup() {
     try {
       const result = await verifySignupOtp(data.phone.trim(), trimmedOtp);
       showToast({ type: 'success', title: 'Welcome to SheSafe!', message: 'Your account has been created successfully.' });
-      const rolePaths: Record<string, string> = {
-        USER: '/(tabs)/users/standard-user/sos_screen',
-        VOLUNTEER: '/(tabs)/users/volunteer/volunteer-verification',
-        POLICE: routeForPoliceStatus(result.verificationStatus, result.user?.policeProfile),
-      };
-      router.replace(rolePaths[result.role] as any);
+      router.replace(routeForRoleStatus(result.role, result.verificationStatus, result.user) as any);
     } catch (e: any) {
       const msg = e?.message ?? '';
-      const code = e?.code;
       if (msg.toLowerCase().includes('already registered')) {
         showToast({
           type: 'warning',
@@ -354,11 +354,12 @@ export default function Signup() {
           action: { label: 'Sign In', onPress: () => router.push('/(auth)/login') },
         });
       } else {
-        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
         showToast({
           type: 'error',
-          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Registration Failed',
-          message: msg || 'Unable to verify OTP. Please try again.',
+          title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification failed',
+          message: isAuthConnectionError(e)
+            ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+            : 'The verification code is invalid or expired. Please try again.',
         });
       }
     } finally {

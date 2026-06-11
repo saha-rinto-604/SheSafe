@@ -38,8 +38,12 @@ async function ensureChatSchema() {
        incident_id BIGINT UNSIGNED NOT NULL,
        sender_id BIGINT UNSIGNED NOT NULL,
        content TEXT NOT NULL,
-       message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT',
+       message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM','VIDEO') NOT NULL DEFAULT 'TEXT',
        media_url VARCHAR(500) DEFAULT NULL,
+       media_public_id VARCHAR(255) DEFAULT NULL,
+       media_mime_type VARCHAR(100) DEFAULT NULL,
+       media_filename VARCHAR(255) DEFAULT NULL,
+       media_size_bytes BIGINT UNSIGNED DEFAULT NULL,
        system_event_key VARCHAR(100) DEFAULT NULL,
        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
        PRIMARY KEY (id),
@@ -56,12 +60,12 @@ async function ensureChatSchema() {
   if (!(await hasColumn('chat_messages', 'message_type'))) {
     await query(
       `ALTER TABLE chat_messages
-       ADD COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT' AFTER content`
+       ADD COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM','VIDEO') NOT NULL DEFAULT 'TEXT' AFTER content`
     );
   }
   await query(
     `ALTER TABLE chat_messages
-     MODIFY COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM') NOT NULL DEFAULT 'TEXT'`
+     MODIFY COLUMN message_type ENUM('TEXT','IMAGE','AUDIO','SYSTEM','VIDEO') NOT NULL DEFAULT 'TEXT'`
   );
 
   if (!(await hasColumn('chat_messages', 'media_url'))) {
@@ -75,6 +79,34 @@ async function ensureChatSchema() {
     await query(
       `ALTER TABLE chat_messages
        ADD COLUMN system_event_key VARCHAR(100) DEFAULT NULL AFTER media_url`
+    );
+  }
+
+  if (!(await hasColumn('chat_messages', 'media_public_id'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD COLUMN media_public_id VARCHAR(255) DEFAULT NULL AFTER media_url`
+    );
+  }
+
+  if (!(await hasColumn('chat_messages', 'media_mime_type'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD COLUMN media_mime_type VARCHAR(100) DEFAULT NULL AFTER media_public_id`
+    );
+  }
+
+  if (!(await hasColumn('chat_messages', 'media_filename'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD COLUMN media_filename VARCHAR(255) DEFAULT NULL AFTER media_mime_type`
+    );
+  }
+
+  if (!(await hasColumn('chat_messages', 'media_size_bytes'))) {
+    await query(
+      `ALTER TABLE chat_messages
+       ADD COLUMN media_size_bytes BIGINT UNSIGNED DEFAULT NULL AFTER media_filename`
     );
   }
 
@@ -129,15 +161,50 @@ async function getParticipants(incidentId) {
   );
 }
 
-async function insertMessage({ incidentId, senderId, content, messageType, mediaUrl, systemEventKey }) {
+async function insertMessage({
+  incidentId,
+  senderId,
+  content,
+  messageType,
+  mediaUrl,
+  mediaPublicId,
+  mediaMimeType,
+  mediaFilename,
+  mediaSizeBytes,
+  systemEventKey,
+}) {
   await ensureChatSchema();
   const result = await query(
-    `INSERT INTO chat_messages (incident_id, sender_id, content, message_type, media_url, system_event_key)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [incidentId, senderId, content, messageType || 'TEXT', mediaUrl || null, systemEventKey || null]
+    `INSERT INTO chat_messages (
+       incident_id,
+       sender_id,
+       content,
+       message_type,
+       media_url,
+       media_public_id,
+       media_mime_type,
+       media_filename,
+       media_size_bytes,
+       system_event_key
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      incidentId,
+      senderId,
+      content,
+      messageType || 'TEXT',
+      mediaUrl || null,
+      mediaPublicId || null,
+      mediaMimeType || null,
+      mediaFilename || null,
+      mediaSizeBytes == null ? null : Number(mediaSizeBytes),
+      systemEventKey || null,
+    ]
   );
   const rows = await query(
-    `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url, m.created_at,
+    `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url,
+            m.media_public_id, m.media_mime_type, m.media_filename, m.media_size_bytes,
+            m.created_at,
             u.id AS sender_id, u.first_name, u.last_name, u.username, u.photo_url, r.role_name
      FROM chat_messages m
      JOIN users u ON m.sender_id = u.id
@@ -156,7 +223,9 @@ async function insertSystemMessageOnce({ incidentId, senderId, content, systemEv
     [incidentId, senderId, content, systemEventKey]
   );
   const rows = await query(
-    `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url, m.created_at,
+    `SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url,
+            m.media_public_id, m.media_mime_type, m.media_filename, m.media_size_bytes,
+            m.created_at,
             u.id AS sender_id, u.first_name, u.last_name, u.username, u.photo_url, r.role_name
      FROM chat_messages m
      JOIN users u ON m.sender_id = u.id
@@ -198,7 +267,9 @@ async function getMessages(incidentId, limit = 100, viewerId = null) {
   return query(
     `SELECT *
      FROM (
-       SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url, m.created_at,
+       SELECT m.id, m.incident_id, m.content, m.message_type, m.media_url,
+              m.media_public_id, m.media_mime_type, m.media_filename, m.media_size_bytes,
+              m.created_at,
               u.id AS sender_id, u.first_name, u.last_name, u.username, u.photo_url, r.role_name
        FROM chat_messages m
        JOIN users u ON m.sender_id = u.id

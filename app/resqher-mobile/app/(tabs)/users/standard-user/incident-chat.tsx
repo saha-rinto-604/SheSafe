@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View, Text, FlatList, TouchableOpacity, StyleSheet,
-    StatusBar, ActivityIndicator,
+    StatusBar, ActivityIndicator, Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ import { BlurView } from 'expo-blur';
 
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
+import { LiveSafetyVideoPlayerModal, VideoMessageCard } from '../../../../src/components/shared/LiveSafetyVideoPlayer';
 import { T, R } from '../../../../src/constants/theme';
 import {
     incidentService,
@@ -66,11 +67,13 @@ function SystemBubble({ text }: { text: string }) {
     );
 }
 
-function MessageBubble({ msg, isOwn }: { msg: IncidentMessageResponse; isOwn: boolean }) {
+function MessageBubble({ msg, isOwn, onPlayVideo }: { msg: IncidentMessageResponse; isOwn: boolean; onPlayVideo: (uri: string, title?: string) => void }) {
     if (msg.senderRole === 'system') return <SystemBubble text={msg.text} />;
 
     const badge = roleBadgeStyle(msg.senderRole);
     const label = roleLabel(msg.senderRole);
+    const messageType = String(msg.type ?? msg.messageType ?? msg.message_type ?? '').toUpperCase();
+    const videoUri = msg.mediaUrl || msg.media_url || (/^https?:\/\//i.test(msg.text) ? msg.text : '');
     const tailStyle = isOwn
         ? { borderBottomRightRadius: 6 }
         : { borderBottomLeftRadius: 6 };
@@ -91,8 +94,21 @@ function MessageBubble({ msg, isOwn }: { msg: IncidentMessageResponse; isOwn: bo
                         )}
                     </View>
                 )}
-                <View style={[ms.bubble, isOwn ? ms.bubbleOwn : ms.bubbleOther, tailStyle]}>
-                    <Text style={[ms.text, isOwn && ms.textOwn]}>{msg.text}</Text>
+                <View style={[ms.bubble, isOwn ? ms.bubbleOwn : ms.bubbleOther, messageType === 'VIDEO' && ms.videoBubble, tailStyle]}>
+                    {messageType === 'VIDEO' ? (
+                        <VideoMessageCard
+                            filename={msg.mediaFilename ?? msg.media_filename}
+                            onPress={() => {
+                                if (!videoUri) {
+                                    Alert.alert('Live Safety Video', 'Video could not be played on this device.');
+                                    return;
+                                }
+                                onPlayVideo(videoUri, msg.mediaFilename || msg.media_filename || 'Live Safety Video');
+                            }}
+                        />
+                    ) : (
+                        <Text style={[ms.text, isOwn && ms.textOwn]}>{msg.text}</Text>
+                    )}
                 </View>
                 <Text style={[ms.time, isOwn && ms.timeOwn]}>{formatTime(msg.createdAt)}</Text>
             </View>
@@ -133,6 +149,7 @@ export default function IncidentChatScreen() {
     const [responders, setResponders] = useState<IncidentRespondersResponse | null>(null);
     const [loading, setLoading] = useState(!!incidentId);
     const [error, setError] = useState<string | null>(incidentId ? null : 'No incident ID provided.');
+    const [videoPlayer, setVideoPlayer] = useState<{ uri: string; title: string } | null>(null);
     const flatRef = useRef<FlatList>(null);
 
     useEffect(() => {
@@ -201,6 +218,7 @@ export default function IncidentChatScreen() {
                             <MessageBubble
                                 msg={item}
                                 isOwn={item.senderId === String(userId ?? '')}
+                                onPlayVideo={(uri, title = 'Live Safety Video') => setVideoPlayer({ uri, title })}
                             />
                         )}
                         keyExtractor={item => item.id}
@@ -224,6 +242,12 @@ export default function IncidentChatScreen() {
                         <Text style={s.archiveText}>{archiveMessage(status ?? '')}</Text>
                     </View>
                 </View>
+                <LiveSafetyVideoPlayerModal
+                    visible={!!videoPlayer}
+                    sourceUri={videoPlayer?.uri}
+                    title={videoPlayer?.title}
+                    onClose={() => setVideoPlayer(null)}
+                />
             </View>
         </AtmosphericShell>
     );
@@ -252,6 +276,7 @@ const ms = StyleSheet.create({
     bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
     bubbleOwn: { backgroundColor: 'rgba(124,58,237,0.95)' },
     bubbleOther: { backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+    videoBubble: { paddingHorizontal: 4, paddingVertical: 4, backgroundColor: 'transparent' },
     text: { fontSize: 14, color: '#FFFFFF', lineHeight: 20 },
     textOwn: { color: '#FFFFFF' },
     time: { fontSize: 10, color: 'rgba(245,245,247,0.34)', marginTop: 4 },

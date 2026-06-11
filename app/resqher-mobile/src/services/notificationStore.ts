@@ -53,6 +53,8 @@ export type NotifType =
     | 'sos_triggered'
     | 'message_received'
     | 'volunteer_joined'
+    | 'live_video_request'
+    | 'live_video_declined'
     | 'incident_resolved'
     | 'incident_cancelled'
     | 'system';

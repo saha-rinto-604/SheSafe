@@ -30,6 +30,10 @@ function formatMessage(row) {
     content: row.content,
     type: row.message_type,
     mediaUrl: row.media_url || undefined,
+    mediaPublicId: row.media_public_id || undefined,
+    mediaMimeType: row.media_mime_type || undefined,
+    mediaFilename: row.media_filename || undefined,
+    mediaSizeBytes: row.media_size_bytes == null ? undefined : Number(row.media_size_bytes),
     timestamp: row.created_at instanceof Date
       ? row.created_at.toISOString()
       : String(row.created_at),

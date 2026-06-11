@@ -71,6 +71,8 @@ function localToVolunteerNotification(notification: AppNotification): DisplayNot
     sos_triggered: 'VOLUNTEER_SOS_ALERT',
     message_received: 'MESSAGE',
     volunteer_joined: 'RESPONDER_UPDATE',
+    live_video_request: 'MESSAGE',
+    live_video_declined: 'GENERAL',
     incident_resolved: 'INCIDENT_RESOLVED',
     incident_cancelled: 'INCIDENT_CANCELLED',
     system: 'GENERAL',

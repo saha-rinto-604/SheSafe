@@ -8,6 +8,7 @@ import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
+import { useMapRenderDiagnostics } from '../../../../src/components/shared/MapRenderDiagnostics';
 import { T, Ty, R, S } from '../../../../src/constants/theme';
 import { incidentService, type PoliceTask } from '../../../../src/services/incidentService';
 import { getForwardRouteProgress, OFF_ROUTE_THRESHOLD_M, REROUTE_THROTTLE_MS } from '../../../../src/utils/routeRealtime';
@@ -712,16 +713,37 @@ export default function PoliceLiveMap() {
   }), [policeLoc, victimLoc]);
 
   const canGoLive = !!policeLoc && !!victimLoc && routeCoords.length > 1 && !routeLoading;
+  const mapDiagnostics = useMapRenderDiagnostics({
+    screenName: 'PoliceLiveMap',
+    location: policeLoc ?? victimLoc,
+    hasKnownLocation: Boolean(policeLoc || victimLoc),
+    regionSource: policeLoc ? 'police-location' : victimLoc ? 'victim-location' : 'fallback-dhaka',
+    overlayState: {
+      loading,
+      routeLoading,
+      routeError,
+      isLive,
+      showReview,
+      statusAlert: statusAlert?.status,
+      routePoints: routeCoords.length,
+      activeRoutePoints: activeRoute.length,
+    },
+  });
 
   return (
     <SafeAreaView style={st.root}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <MapView
+        key={mapDiagnostics.mapKey}
         ref={mapRef}
+        debugName="PoliceLiveMap"
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_GOOGLE}
         initialRegion={initialRegion}
+        onLayout={mapDiagnostics.onMapLayout}
+        onMapReady={mapDiagnostics.onMapReady}
+        onMapLoaded={mapDiagnostics.onMapLoaded}
         showsUserLocation={!isLive}
         showsMyLocationButton={false}
         showsCompass={false}

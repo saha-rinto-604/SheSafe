@@ -9,12 +9,12 @@ import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
     View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, Image,
     Platform, StatusBar, KeyboardAvoidingView, Keyboard,
-    Modal, Pressable, Alert, ScrollView
+    Modal, Pressable, Alert, ScrollView, AppState
 } from 'react-native';
 import MapView, { Marker, Polyline, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -25,12 +25,17 @@ import * as ImagePicker from 'expo-image-picker';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import RespondersList from '../../../../src/components/RespondersList';
 import UserAvatar from '../../../../src/components/shared/UserAvatar';
+import LiveSafetyVideoRecorder from '../../../../src/components/shared/LiveSafetyVideoRecorder';
+import { LiveSafetyVideoPlayerModal, VideoMessageCard } from '../../../../src/components/shared/LiveSafetyVideoPlayer';
+import { LiveSafetyWebRTCBroadcaster } from '../../../../src/components/shared/LiveSafetyWebRTCStream';
 import { T, R, S, Ty } from '../../../../src/constants/theme';
 import AICopilotSheet from '../../../../components/AICopilotSheet';
-import { type Incident, type Message, type Role } from '../../../../src/types/chat';
+import { type Incident, type LiveVideoRequest, type Message, type Role } from '../../../../src/types/chat';
 import { useChatSocket } from '../../../../src/hooks/useChatSocket';
 import { incidentService } from '../../../../src/services/incidentService';
+import { liveVideoService } from '../../../../src/services/liveVideoService';
 import { useAuth } from '../../../../src/context/AuthContext';
+import { useGlobalLiveSafetyVideo } from '../../../../src/context/GlobalLiveSafetyVideoContext';
 import {
     ENDPOINT_MOVE_THRESHOLD_M,
     OFF_ROUTE_THRESHOLD_M,
@@ -247,12 +252,13 @@ const SystemBubble = memo(function SystemBubble({ msg }: { msg: Message }) {
     );
 });
 
-const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
+const PillBubble = memo(function PillBubble({ msg, isOwn, onPlayVideo }: { msg: Message; isOwn: boolean; onPlayVideo: (uri: string, title?: string) => void }) {
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
     const role = msg.sender.role;
     const alignRight = isOwn;
     const imageUri = msg.mediaUrl || (/^https?:\/\//i.test(msg.content) ? msg.content : '');
+    const videoUri = msg.mediaUrl || (/^https?:\/\//i.test(msg.content) ? msg.content : '');
 
     const tailStyle = alignRight
         ? { borderBottomRightRadius: 6 }
@@ -270,7 +276,7 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                         <RoleBadge role={role} />
                     </View>
                 )}
-                <View style={[st.bubble, alignRight ? st.bubbleOwn : st.bubbleOther, msg.type === 'IMAGE' && st.imageBubble, tailStyle]}>
+                <View style={[st.bubble, alignRight ? st.bubbleOwn : st.bubbleOther, (msg.type === 'IMAGE' || msg.type === 'VIDEO') && st.imageBubble, tailStyle]}>
                     {msg.type === 'AUDIO' ? (
                         <View style={st.audioWrap}>
                             <TouchableOpacity style={st.audioPlayBtn}>
@@ -294,6 +300,17 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                                 </>
                             )}
                         </View>
+                    ) : msg.type === 'VIDEO' ? (
+                        <VideoMessageCard
+                            filename={msg.mediaFilename}
+                            onPress={() => {
+                                if (!videoUri) {
+                                    Alert.alert('Live Safety Video', 'Video could not be played on this device.');
+                                    return;
+                                }
+                                onPlayVideo(videoUri, msg.mediaFilename || 'Live Safety Video');
+                            }}
+                        />
                     ) : (
                         <Text style={[st.msgText, alignRight && st.msgTextOwn]}>{msg.content}</Text>
                     )}
@@ -365,7 +382,7 @@ function FloatingInput({ onSend, bottomInset, onImagePicked, isUploadingImage }:
                     <TouchableOpacity style={st.inputAction} onPress={() => { if (isUploadingImage) return; Haptics.selectionAsync(); setAttachMenuVisible(!isAttachMenuVisible); }} disabled={isUploadingImage} activeOpacity={0.7}>
                         <Feather name={isUploadingImage ? 'loader' : 'paperclip'} size={20} color={isAttachMenuVisible ? T.violet : "#FFFFFF"} />
                     </TouchableOpacity>
-                    <TextInput ref={inputRef} style={st.input} placeholder="Type a message..." placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} onFocus={() => setAttachMenuVisible(false)} />
+                    <TextInput ref={inputRef} style={st.input} placeholder="Type a message..." placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} textAlignVertical="top" onFocus={() => setAttachMenuVisible(false)} />
                     <TouchableOpacity style={[st.sendBtn, !hasText && st.sendBtnOff]} onPress={handleSend} disabled={!hasText} activeOpacity={0.7}>
                         <Ionicons name="send" size={18} color="#FFFFFF" />
                     </TouchableOpacity>
@@ -391,18 +408,44 @@ function ArchivePill({ bottomInset, message }: { bottomInset: number; message: s
 // --- Main - Chat Room -------------------------------------------------------
 export default function ChatRoom() {
     const router = useRouter();
+    const isChatFocused = useIsFocused();
     const insets = useSafeAreaInsets();
     const { userId } = useAuth();
+    const { managedIncidentId } = useGlobalLiveSafetyVideo();
     const { incidentId: rawIncidentId } = useLocalSearchParams<{ incidentId: string }>();
 
     const incidentId = String(rawIncidentId || '');
+    const isGloballyManagedLiveVideo = managedIncidentId === incidentId;
     const isBackendIncidentId = /^\d+$/.test(String(incidentId || ''));
     const isRealIncident = isBackendIncidentId && !incidentId.startsWith('temp-') && incidentId !== 'sos-new';
 
     // Socket
-    const { messages, sendMessage, sendImage, liveLocation, sendLocationUpdate, isConnected, error: chatError, refreshMessages } = useChatSocket(isRealIncident ? incidentId : '', userId ?? undefined, 'USER');
+    const {
+        messages,
+        sendMessage,
+        sendImage,
+        liveLocation,
+        sendLocationUpdate,
+        isConnected,
+        error: chatError,
+        refreshMessages,
+        liveVideoRequest: socketLiveVideoRequest,
+        liveVideoEvent,
+        liveStreamEvent,
+        clearLiveVideoRequest,
+        clearLiveVideoEvent,
+        sendLiveStreamSignal,
+    } = useChatSocket(isRealIncident ? incidentId : '', userId ?? undefined, 'USER');
     const [localMessages] = useState<Message[]>([]);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
+    const [pendingLiveVideoRequest, setPendingLiveVideoRequest] = useState<LiveVideoRequest | null>(null);
+    const [liveVideoAutoStart, setLiveVideoAutoStart] = useState(false);
+    const [isLiveVideoPromptVisible, setLiveVideoPromptVisible] = useState(false);
+    const [liveVideoCountdown, setLiveVideoCountdown] = useState(10);
+    const [isLiveStreamBroadcasterVisible, setLiveStreamBroadcasterVisible] = useState(false);
+    const [isLiveVideoRecorderVisible, setLiveVideoRecorderVisible] = useState(false);
+    const [videoPlayer, setVideoPlayer] = useState<{ uri: string; title: string } | null>(null);
+    const [liveVideoAppState, setLiveVideoAppState] = useState(AppState.currentState);
     const [incident, setIncident] = useState<Incident | null>(null);
     const currentIncident = React.useMemo(() => {
         if (!isRealIncident || incident?.id !== incidentId) return null;
@@ -410,8 +453,9 @@ export default function ChatRoom() {
     }, [incident, incidentId, isRealIncident]);
     const flatRef = useRef<FlatList>(null);
     const incidentStatus = String(currentIncident?.status ?? 'ACTIVE').toUpperCase();
-    const isLive = incidentStatus === 'LIVE' || incidentStatus === 'ACTIVE';
+    const isLive = incidentStatus === 'LIVE' || incidentStatus === 'ACTIVE' || incidentStatus === 'IN_PROGRESS';
     const isReadOnly = isFinalIncidentStatus(incidentStatus);
+    const isStartingLiveVideoRef = useRef(false);
 
     // Map & Navigation States
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
@@ -562,6 +606,11 @@ export default function ChatRoom() {
         if (activeMessages.length > 0) setTimeout(() => flatRef.current?.scrollToEnd({ animated: true }), 150);
     }, [activeMessages.length]);
 
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', setLiveVideoAppState);
+        return () => subscription.remove();
+    }, []);
+
     // --- Actions -------------------------
     const handleSend = useCallback((text: string) => {
         if (isReadOnly || !isRealIncident) return;
@@ -579,6 +628,154 @@ export default function ChatRoom() {
             setIsUploadingImage(false);
         }
     }, [isReadOnly, isRealIncident, isUploadingImage, sendImage]);
+
+    const showLiveVideoRequest = useCallback((request: LiveVideoRequest | null, autoStartAllowed: boolean) => {
+        if (!request || isReadOnly || !isRealIncident || !isLive || isGloballyManagedLiveVideo) return;
+        setPendingLiveVideoRequest(request);
+        setLiveVideoAutoStart(autoStartAllowed);
+        setLiveVideoCountdown(10);
+        setLiveVideoPromptVisible(true);
+    }, [isGloballyManagedLiveVideo, isLive, isReadOnly, isRealIncident]);
+
+    const dismissLiveVideoRequest = useCallback(() => {
+        setLiveVideoPromptVisible(false);
+        setPendingLiveVideoRequest(null);
+        setLiveVideoAutoStart(false);
+        setLiveVideoCountdown(10);
+        clearLiveVideoRequest();
+        clearLiveVideoEvent();
+    }, [clearLiveVideoEvent, clearLiveVideoRequest]);
+
+    const startLiveVideoRecording = useCallback(async () => {
+        if (!pendingLiveVideoRequest || !isRealIncident || !isLive || isReadOnly || isGloballyManagedLiveVideo || isStartingLiveVideoRef.current) return;
+        if (AppState.currentState !== 'active' || !isChatFocused) return;
+        isStartingLiveVideoRef.current = true;
+        try {
+            await liveVideoService.respondLiveVideoRequest(incidentId, pendingLiveVideoRequest.id, 'APPROVED');
+            setLiveVideoPromptVisible(false);
+            setLiveStreamBroadcasterVisible(true);
+        } catch (error: any) {
+            Alert.alert('Live Safety Video', error?.message || 'This incident is no longer active.');
+        } finally {
+            isStartingLiveVideoRef.current = false;
+        }
+    }, [incidentId, isChatFocused, isGloballyManagedLiveVideo, isLive, isReadOnly, isRealIncident, pendingLiveVideoRequest]);
+
+    const declineLiveVideoRequest = useCallback(async () => {
+        const request = pendingLiveVideoRequest;
+        if (!request || !isRealIncident) {
+            dismissLiveVideoRequest();
+            return;
+        }
+        try {
+            await liveVideoService.respondLiveVideoRequest(incidentId, request.id, 'DECLINED');
+        } catch (error: any) {
+            Alert.alert('Live Safety Video', error?.message || 'Live Safety Video was declined.');
+        } finally {
+            dismissLiveVideoRequest();
+        }
+    }, [dismissLiveVideoRequest, incidentId, isRealIncident, pendingLiveVideoRequest]);
+
+    const handleLiveVideoRecorded = useCallback(async (uri: string) => {
+        if (!isRealIncident || !isLive || isReadOnly) {
+            throw new Error('This incident is no longer active.');
+        }
+        await liveVideoService.uploadLiveVideo(incidentId, uri);
+        await refreshMessages();
+    }, [incidentId, isLive, isReadOnly, isRealIncident, refreshMessages]);
+
+    const handleLiveVideoSessionStop = useCallback(async () => {
+        const request = pendingLiveVideoRequest;
+        if (request && isRealIncident) {
+            await liveVideoService.respondLiveVideoRequest(incidentId, request.id, 'STOPPED').catch(() => undefined);
+        }
+        setLiveVideoRecorderVisible(false);
+        dismissLiveVideoRequest();
+    }, [dismissLiveVideoRequest, incidentId, isRealIncident, pendingLiveVideoRequest]);
+
+    const handleLiveStreamClose = useCallback(() => {
+        setLiveStreamBroadcasterVisible(false);
+        dismissLiveVideoRequest();
+    }, [dismissLiveVideoRequest]);
+
+    const handleLiveStreamFallbackEvidence = useCallback(() => {
+        setLiveStreamBroadcasterVisible(false);
+        setLiveVideoRecorderVisible(true);
+    }, []);
+
+    const openVideoPlayer = useCallback((uri: string, title = 'Live Safety Video') => {
+        setVideoPlayer({ uri, title });
+    }, []);
+
+    useEffect(() => {
+        if (!isRealIncident || !isLive || isReadOnly) {
+            const clearTimer = setTimeout(() => {
+                dismissLiveVideoRequest();
+                setLiveStreamBroadcasterVisible(false);
+                setLiveVideoRecorderVisible(false);
+            }, 0);
+            return () => clearTimeout(clearTimer);
+        }
+
+        let cancelled = false;
+        liveVideoService.getPendingLiveVideoRequest(incidentId)
+            .then(({ request, autoStartAllowed }) => {
+                if (cancelled || !request || request.status !== 'PENDING') return;
+                showLiveVideoRequest(request, autoStartAllowed);
+            })
+            .catch(() => undefined);
+
+        return () => { cancelled = true; };
+    }, [dismissLiveVideoRequest, incidentId, isLive, isReadOnly, isRealIncident, showLiveVideoRequest]);
+
+    useEffect(() => {
+        if (socketLiveVideoRequest?.status === 'PENDING') {
+            const autoStartAllowed = liveVideoEvent?.type === 'requested'
+                ? liveVideoEvent.autoStartAllowed
+                : false;
+            const showTimer = setTimeout(() => {
+                showLiveVideoRequest(socketLiveVideoRequest, autoStartAllowed);
+            }, 0);
+            return () => clearTimeout(showTimer);
+        }
+    }, [liveVideoEvent, showLiveVideoRequest, socketLiveVideoRequest]);
+
+    useEffect(() => {
+        if (liveVideoEvent?.type === 'declined' || liveVideoEvent?.type === 'stopped' || liveVideoEvent?.type === 'completed') {
+            const dismissTimer = setTimeout(dismissLiveVideoRequest, 0);
+            return () => clearTimeout(dismissTimer);
+        }
+    }, [dismissLiveVideoRequest, liveVideoEvent]);
+
+    useEffect(() => {
+        if (!isLiveVideoPromptVisible || !liveVideoAutoStart || !pendingLiveVideoRequest) return;
+        if (liveVideoAppState !== 'active' || !isChatFocused) return;
+
+        const resetTimer = setTimeout(() => setLiveVideoCountdown(10), 0);
+        const interval = setInterval(() => {
+            if (AppState.currentState !== 'active' || !isChatFocused) return;
+            setLiveVideoCountdown(prev => {
+                if (prev <= 1) {
+                    clearInterval(interval);
+                    void startLiveVideoRecording();
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state !== 'active') {
+                clearInterval(interval);
+            }
+        });
+
+        return () => {
+            clearTimeout(resetTimer);
+            clearInterval(interval);
+            subscription.remove();
+        };
+    }, [isChatFocused, isLiveVideoPromptVisible, liveVideoAppState, liveVideoAutoStart, pendingLiveVideoRequest, startLiveVideoRecording]);
 
     const handleConfirmLeave = useCallback(async () => {
         Haptics.selectionAsync();
@@ -1145,7 +1342,11 @@ export default function ChatRoom() {
                 </View>
 
                 {/* -- Chat Content -- */}
-                <KeyboardAvoidingView style={st.chatArea} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}>
+                <KeyboardAvoidingView
+                    style={st.chatArea}
+                    behavior="padding"
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
+                >
                     {!isRealIncident && (
                         <View style={st.chatErrorCard}>
                             <Feather name="alert-circle" size={16} color={T.danger} />
@@ -1164,11 +1365,21 @@ export default function ChatRoom() {
                     <FlatList
                         ref={flatRef}
                         data={activeMessages}
-                        renderItem={({ item }) => <PillBubble msg={item} isOwn={item.sender.id === (userId ?? 'self')} />}
+                        renderItem={({ item }) => (
+                            <PillBubble
+                                msg={item}
+                                isOwn={item.sender.id === (userId ?? 'self')}
+                                onPlayVideo={openVideoPlayer}
+                            />
+                        )}
                         keyExtractor={item => item.id}
-                        contentContainerStyle={st.messageList}
+                        contentContainerStyle={[
+                            st.messageList,
+                            !isReadOnly && isRealIncident && st.messageListWithInput,
+                        ]}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                         onScrollBeginDrag={Keyboard.dismiss}
                         ListEmptyComponent={
                             <View style={st.emptyChat}>
@@ -1190,6 +1401,66 @@ export default function ChatRoom() {
                         />
                     ) : null}
                 </KeyboardAvoidingView>
+
+                <Modal transparent visible={!isGloballyManagedLiveVideo && isLiveVideoPromptVisible && !!pendingLiveVideoRequest && !isLiveVideoRecorderVisible && !isLiveStreamBroadcasterVisible} animationType="fade">
+                    <View style={st.liveVideoBackdrop}>
+                        <View style={st.liveVideoCard}>
+                            <View style={st.liveVideoIcon}>
+                                <Feather name="video" size={22} color="#FFFFFF" />
+                            </View>
+                            <Text style={st.liveVideoTitle}>Live Safety Video Request</Text>
+                            {liveVideoAutoStart ? (
+                                <Text style={st.liveVideoBody}>
+                                    Live Safety Video will start in {liveVideoCountdown} seconds.
+                                </Text>
+                            ) : (
+                                <Text style={st.liveVideoBody}>
+                                    An accepted responder is requesting live video to better understand your situation.
+                                </Text>
+                            )}
+                            <View style={st.liveVideoActions}>
+                                <TouchableOpacity
+                                    style={[st.liveVideoButton, st.liveVideoPrimary]}
+                                    activeOpacity={0.82}
+                                    onPress={startLiveVideoRecording}
+                                >
+                                    <Text style={st.liveVideoPrimaryText}>{liveVideoAutoStart ? 'Start Now' : 'Start Live Stream'}</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[st.liveVideoButton, st.liveVideoSecondary]}
+                                    activeOpacity={0.82}
+                                    onPress={declineLiveVideoRequest}
+                                >
+                                    <Text style={st.liveVideoSecondaryText}>{liveVideoAutoStart ? 'Cancel' : 'Not Now'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </Modal>
+
+                <LiveSafetyWebRTCBroadcaster
+                    visible={!isGloballyManagedLiveVideo && isLiveStreamBroadcasterVisible}
+                    incidentId={incidentId}
+                    incidentLabel={`Incident #${incidentId}`}
+                    sessionActive={isLive && !isReadOnly && isChatFocused && liveVideoAppState === 'active'}
+                    liveStreamEvent={liveStreamEvent}
+                    sendSignal={sendLiveStreamSignal}
+                    onClose={handleLiveStreamClose}
+                    onFallbackEvidence={handleLiveStreamFallbackEvidence}
+                />
+                <LiveSafetyVideoRecorder
+                    visible={!isGloballyManagedLiveVideo && isLiveVideoRecorderVisible}
+                    incidentLabel={`Incident #${incidentId}`}
+                    sessionActive={isLive && !isReadOnly && isChatFocused && liveVideoAppState === 'active'}
+                    onClipRecorded={handleLiveVideoRecorded}
+                    onStopSession={handleLiveVideoSessionStop}
+                />
+                <LiveSafetyVideoPlayerModal
+                    visible={!!videoPlayer}
+                    sourceUri={videoPlayer?.uri}
+                    title={videoPlayer?.title}
+                    onClose={() => setVideoPlayer(null)}
+                />
 
                 {/* -- Unified Header Menu Modal (3-Dot Functionality) -- */}
                 <Modal transparent={true} visible={isHeaderMenuOpen} animationType="fade">
@@ -1330,6 +1601,7 @@ export default function ChatRoom() {
                         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
                         <MapView
                             ref={mapRef}
+                            debugName="StandardChatRouteMap"
                             style={StyleSheet.absoluteFill}
                             userInterfaceStyle="dark"
                             customMapStyle={TACTICAL_MAP_STYLE}
@@ -1584,8 +1856,9 @@ const st = StyleSheet.create({
     connPill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     connDot: { width: 5, height: 5, borderRadius: 2.5 },
     connTxt: { fontSize: 9, fontWeight: '600', color: T.ink5, letterSpacing: 0.3 },
-    chatArea: { flex: 1 },
-    messageList: { paddingHorizontal: S.s4, paddingTop: S.s3, paddingBottom: S.s2 },
+    chatArea: { flex: 1, minHeight: 0 },
+    messageList: { flexGrow: 1, paddingHorizontal: S.s4, paddingTop: S.s3, paddingBottom: S.s4 },
+    messageListWithInput: { paddingBottom: S.s5 },
     bubbleRow: { flexDirection: 'row', marginBottom: 14, gap: S.s2 },
     bubbleRowOwn: { justifyContent: 'flex-end', alignItems: 'flex-end' },
     bubbleRowOther: { justifyContent: 'flex-start', alignItems: 'flex-start' },
@@ -1616,12 +1889,24 @@ const st = StyleSheet.create({
     imageWrap: { width: 220, maxWidth: '100%', height: 180, borderRadius: 14, backgroundColor: T.surfaceMid, alignItems: 'center', justifyContent: 'center', gap: S.s2, overflow: 'hidden' },
     chatImage: { width: '100%', height: '100%', borderRadius: 14 },
     imageLabel: { fontSize: 11, color: T.ink4, fontWeight: '500' },
-    inputOuter: { width: '90%', alignSelf: 'center', paddingTop: S.s2 },
+    liveVideoBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+    liveVideoCard: { width: '100%', maxWidth: 420, borderRadius: 18, backgroundColor: '#1E153A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', padding: 20, alignItems: 'center', gap: 12 },
+    liveVideoUploadCard: { width: '100%', maxWidth: 360, borderRadius: 18, backgroundColor: '#1E153A', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', padding: 20, alignItems: 'center', gap: 10 },
+    liveVideoIcon: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#DC2626', alignItems: 'center', justifyContent: 'center' },
+    liveVideoTitle: { color: '#FFFFFF', fontSize: 17, fontWeight: '900', textAlign: 'center' },
+    liveVideoBody: { color: T.ink3, fontSize: 13, lineHeight: 19, textAlign: 'center', fontWeight: '600' },
+    liveVideoActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+    liveVideoButton: { minHeight: 44, borderRadius: 13, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center', flex: 1 },
+    liveVideoPrimary: { backgroundColor: '#DC2626' },
+    liveVideoSecondary: { backgroundColor: T.surfaceBulky, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+    liveVideoPrimaryText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
+    liveVideoSecondaryText: { color: T.ink, fontSize: 13, fontWeight: '800' },
+    inputOuter: { width: '92%', maxWidth: 720, alignSelf: 'center', paddingTop: S.s2 },
     inputPillContainer: { borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', ...Platform.select({ ios: { shadowColor: '#8A38F6', shadowOpacity: 0.10, shadowRadius: 12, shadowOffset: { width: 0, height: -3 } }, android: { elevation: 6 } }) },
     inputPillBg: { backgroundColor: '#1E153A', opacity: 0.45 },
-    inputPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
+    inputPill: { flexDirection: 'row', alignItems: 'flex-end', minHeight: 56, paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
     inputAction: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-    input: { flex: 1, fontSize: 15, color: '#FFFFFF', maxHeight: 100, paddingVertical: Platform.OS === 'ios' ? 8 : 4 },
+    input: { flex: 1, minHeight: 36, fontSize: 15, lineHeight: 20, color: '#FFFFFF', maxHeight: 112, paddingTop: Platform.OS === 'ios' ? 8 : 6, paddingBottom: Platform.OS === 'ios' ? 8 : 6 },
     sendBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#8A38F6', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#8A38F6', shadowOpacity: 0.22, shadowRadius: 10, shadowOffset: { width: 0, height: 0 } }, android: { elevation: 6 } }) },
     sendBtnOff: { opacity: 0.5 },
     attachMenuOuter: { position: 'absolute', bottom: 70, left: 20, backgroundColor: '#1E153A', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)', paddingTop: 8, paddingHorizontal: 8, minWidth: 180, ...Platform.select({ ios: { shadowColor: '#8A38F6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 10 }, android: { elevation: 4 } }), zIndex: 10 },

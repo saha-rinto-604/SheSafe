@@ -1,4 +1,11 @@
 const { query, pool } = require('../../config/db');
+const {
+  VOLUNTEER_ACCEPT_RADIUS_KM,
+  approvedVolunteerJoins,
+  approvedVolunteerAccountCondition,
+  getVolunteerEligibility,
+  haversineKm,
+} = require('../volunteers/volunteerEligibility');
 
 let dispatchSchemaReady = false;
 
@@ -627,7 +634,7 @@ async function getMyActiveSos(userId) {
             i.status, i.created_at, i.updated_at
      FROM incidents i
      WHERE i.user_id = ?
-       AND UPPER(TRIM(i.status)) IN ('ACTIVE', 'LIVE', 'IN_PROGRESS')
+       AND UPPER(TRIM(i.status)) IN ('ACTIVE', 'LIVE', 'IN_PROGRESS', 'ACCEPTED', 'ASSISTING')
      ORDER BY i.created_at DESC, i.id DESC
      LIMIT 1`,
     [userId]
@@ -636,8 +643,6 @@ async function getMyActiveSos(userId) {
 }
 
 // ── Volunteer Dispatch ─────────────────────────────────────────────────────
-
-const DISPATCH_RADIUS_KM = 5;
 
 /**
  * Find all verified, online volunteers within 5km of an incident.
@@ -664,15 +669,15 @@ async function findNearbyVolunteers(incidentLat, incidentLng) {
         )
       ) AS distance_km
     FROM users u
-    JOIN roles r ON u.role_id = r.id AND r.role_name = 'volunteer'
-    JOIN volunteer_verifications vv ON vv.user_id = u.id AND vv.status = 'verified'
+    ${approvedVolunteerJoins('u', 'r', 'vv')}
     WHERE u.is_online = TRUE
       AND u.accept_sos_requests = TRUE
+      AND ${approvedVolunteerAccountCondition('u')}
       AND u.latest_latitude IS NOT NULL
       AND u.latest_longitude IS NOT NULL
     HAVING distance_km <= ?
     ORDER BY distance_km ASC
-  `, [incidentLat, incidentLng, incidentLat, DISPATCH_RADIUS_KM]);
+  `, [incidentLat, incidentLng, incidentLat, VOLUNTEER_ACCEPT_RADIUS_KM]);
 }
 
 /**
@@ -688,7 +693,7 @@ async function acceptIncidentAtomic(incidentId, volunteerId) {
     await conn.beginTransaction();
 
     const [rows] = await conn.execute(
-      `SELECT id, user_id, volunteer_id, status FROM incidents
+      `SELECT id, user_id, volunteer_id, latitude, longitude, status FROM incidents
        WHERE id = ?
        FOR UPDATE`,
       [incidentId]
@@ -733,6 +738,35 @@ async function acceptIncidentAtomic(incidentId, volunteerId) {
     if (existingStatus && existingStatus !== 'ACCEPTED') {
       await conn.rollback();
       return { success: false, reason: 'PREVIOUSLY_LEFT' };
+    }
+
+    if (!alreadyAccepted) {
+      const executeWithConnection = async (sql, params) => {
+        const [resultRows] = await conn.execute(sql, params);
+        return resultRows;
+      };
+      const eligibility = await getVolunteerEligibility(volunteerId, executeWithConnection);
+      if (!eligibility.approved) {
+        await conn.rollback();
+        return { success: false, reason: 'VOLUNTEER_NOT_VERIFIED' };
+      }
+
+      const volunteerLat = eligibility.row?.latest_latitude;
+      const volunteerLng = eligibility.row?.latest_longitude;
+      if (volunteerLat == null || volunteerLng == null) {
+        await conn.rollback();
+        return { success: false, reason: 'VOLUNTEER_LOCATION_MISSING' };
+      }
+      if (incident.latitude == null || incident.longitude == null) {
+        await conn.rollback();
+        return { success: false, reason: 'INCIDENT_LOCATION_MISSING' };
+      }
+
+      const distanceKm = haversineKm(volunteerLat, volunteerLng, incident.latitude, incident.longitude);
+      if (distanceKm == null || distanceKm > VOLUNTEER_ACCEPT_RADIUS_KM) {
+        await conn.rollback();
+        return { success: false, reason: 'OUTSIDE_ACCEPT_RADIUS', distanceKm };
+      }
     }
 
     const [countRows] = await conn.execute(
@@ -1241,7 +1275,7 @@ async function getVolunteerLeaderboardRows() {
        COALESCE(review_stats.average_rating, 0) AS average_rating,
        COALESCE(review_stats.rating_count, 0) AS rating_count
      FROM users u
-     JOIN roles r ON r.id = u.role_id AND r.role_name = 'volunteer'
+     ${approvedVolunteerJoins('u', 'r', 'vv')}
      LEFT JOIN (
        SELECT
          iv.volunteer_id,
@@ -1256,7 +1290,8 @@ async function getVolunteerLeaderboardRows() {
        SELECT volunteer_id, AVG(rating) AS average_rating, COUNT(id) AS rating_count
        FROM reviews
        GROUP BY volunteer_id
-     ) review_stats ON review_stats.volunteer_id = u.id`
+     ) review_stats ON review_stats.volunteer_id = u.id
+     WHERE ${approvedVolunteerAccountCondition('u')}`
   );
 }
 
@@ -1265,8 +1300,9 @@ async function getVolunteerSummary(volunteerId) {
   const rows = await query(
     `SELECT u.id, u.first_name, u.last_name, u.photo_url
      FROM users u
-     JOIN roles r ON r.id = u.role_id AND r.role_name = 'volunteer'
+     ${approvedVolunteerJoins('u', 'r', 'vv')}
      WHERE u.id = ?
+       AND ${approvedVolunteerAccountCondition('u')}
      LIMIT 1`,
     [volunteerId]
   );

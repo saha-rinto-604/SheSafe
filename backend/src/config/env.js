@@ -10,6 +10,14 @@ function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 }
 
+function parseCsv(value, fallback = []) {
+  const values = String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return values.length ? values : fallback;
+}
+
 const required = ['MYSQL_HOST', 'MYSQL_USER', 'MYSQL_DATABASE', 'JWT_SECRET'];
 for (const key of required) {
   if (!process.env[key]) {
@@ -48,5 +56,11 @@ module.exports = {
       parseBoolean(process.env.AUTH_RETURN_OTP_IN_RESPONSE)
       || nodeEnv === 'development'
       || nodeEnv === 'test',
+  },
+  webRtc: {
+    stunUrls: parseCsv(process.env.WEBRTC_STUN_URLS, ['stun:stun.l.google.com:19302']),
+    turnUrl: (process.env.WEBRTC_TURN_URL || '').trim(),
+    turnUsername: (process.env.WEBRTC_TURN_USERNAME || '').trim(),
+    turnCredential: (process.env.WEBRTC_TURN_CREDENTIAL || '').trim(),
   },
 };

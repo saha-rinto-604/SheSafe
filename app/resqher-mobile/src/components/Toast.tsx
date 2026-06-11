@@ -34,6 +34,7 @@ export type ToastConfig = {
 
 type ToastContextValue = {
   showToast: (config: ToastConfig) => void;
+  clearToast: () => void;
 };
 
 // ── Color Palette ──────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ const TOAST_THEMES: Record<ToastType, {
   iconColor: string; titleColor: string; msgColor: string; progressColor: string;
 }> = {
   success: {
-    bg: 'rgba(16,185,129,0.12)',
+    bg: 'rgba(12,28,30,0.98)',
     border: 'rgba(16,185,129,0.30)',
     icon: 'check-circle',
     iconColor: '#34D399',
@@ -51,7 +52,7 @@ const TOAST_THEMES: Record<ToastType, {
     progressColor: '#10B981',
   },
   error: {
-    bg: 'rgba(244,63,94,0.12)',
+    bg: 'rgba(34,16,30,0.98)',
     border: 'rgba(244,63,94,0.30)',
     icon: 'alert-circle',
     iconColor: '#FB7185',
@@ -60,7 +61,7 @@ const TOAST_THEMES: Record<ToastType, {
     progressColor: '#F43F5E',
   },
   warning: {
-    bg: 'rgba(245,158,11,0.12)',
+    bg: 'rgba(34,26,18,0.98)',
     border: 'rgba(245,158,11,0.30)',
     icon: 'alert-triangle',
     iconColor: '#FBBF24',
@@ -69,7 +70,7 @@ const TOAST_THEMES: Record<ToastType, {
     progressColor: '#F59E0B',
   },
   info: {
-    bg: 'rgba(56,189,248,0.12)',
+    bg: 'rgba(25,18,45,0.98)',
     border: 'rgba(56,189,248,0.30)',
     icon: 'info',
     iconColor: '#38BDF8',
@@ -101,7 +102,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const dismiss = useCallback(() => setToast(null), []);
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={{ showToast, clearToast: dismiss }}>
       {children}
       {toast && (
         <ToastBanner
@@ -176,7 +177,7 @@ function ToastBanner({ config, onDismiss }: { config: ToastConfig; onDismiss: ()
       style={[
         st.container,
         {
-          top: insets.top + 8,
+          top: insets.top + 64,
           transform: [{ translateY }],
           opacity,
         },
@@ -284,6 +285,11 @@ const st = StyleSheet.create({
         shadowOffset: { width: 0, height: 8 },
       },
       android: { elevation: 24 },
+      web: {
+        width: '100%',
+        maxWidth: 520,
+        alignSelf: 'center',
+      },
     }),
   },
   iconWrap: {

@@ -1,5 +1,9 @@
 const { pool, query } = require('../../config/db');
 const { ensurePoliceProfilesSchema } = require('../users/user.repository');
+const {
+  approvedVolunteerAccountCondition,
+  approvedVolunteerExistsCondition,
+} = require('../volunteers/volunteerEligibility');
 
 let schemaReadyPromise = null;
 
@@ -267,16 +271,31 @@ async function getOverview() {
     `SELECT
        COUNT(*) AS total_users,
        SUM(CASE WHEN r.role_name = 'standard_user' THEN 1 ELSE 0 END) AS standard_users,
-       SUM(CASE WHEN r.role_name = 'volunteer' THEN 1 ELSE 0 END) AS total_volunteers
+       SUM(CASE
+         WHEN r.role_name = 'volunteer'
+          AND ${approvedVolunteerExistsCondition('u')}
+         THEN 1 ELSE 0 END) AS total_volunteers
      FROM users u
      JOIN roles r ON r.id = u.role_id`
   );
 
   const [volunteerCounts] = await query(
     `SELECT
-       SUM(CASE WHEN vv.status = 'verified' THEN 1 ELSE 0 END) AS verified_volunteers,
-       SUM(CASE WHEN vv.status = 'pending' THEN 1 ELSE 0 END) AS pending_verifications
-     FROM volunteer_verifications vv`
+       SUM(CASE
+         WHEN LOWER(TRIM(vv.status)) = 'verified'
+          AND ${approvedVolunteerAccountCondition('u')}
+         THEN 1 ELSE 0 END) AS verified_volunteers,
+       SUM(CASE WHEN LOWER(TRIM(vv.status)) = 'pending' THEN 1 ELSE 0 END) AS pending_verifications
+     FROM users u
+     JOIN roles r ON r.id = u.role_id AND LOWER(TRIM(r.role_name)) = 'volunteer'
+     JOIN volunteer_verifications vv
+       ON vv.id = (
+         SELECT latest_vv.id
+         FROM volunteer_verifications latest_vv
+         WHERE latest_vv.user_id = u.id
+         ORDER BY latest_vv.id DESC
+         LIMIT 1
+       )`
   );
 
   const [policeCounts] = await query(
@@ -318,6 +337,8 @@ async function getOverview() {
      FROM users u
      JOIN roles r ON r.id = u.role_id
      WHERE r.role_name = 'volunteer'
+       AND ${approvedVolunteerExistsCondition('u')}
+       AND ${approvedVolunteerAccountCondition('u')}
        AND COALESCE(u.is_online, 0) = 1`
   );
 

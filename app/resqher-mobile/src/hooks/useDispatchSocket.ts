@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { getAccessToken, getWebSocketUrl } from '../services/api';
 import type { NearbyIncident } from '../services/incidentService';
+import type { BackendNotification } from '../services/notificationService';
 
 type DispatchEvent =
     | { type: 'dispatch.connected'; payload: { userId: string } }
@@ -11,7 +12,8 @@ type DispatchEvent =
     | { type: 'sos.rejected'; payload: { incidentId: string } }
     | { type: 'law_enforcement.assigned' | 'police:assigned'; payload: PoliceDispatchPayload }
     | { type: 'incident_status_updated' | 'incident:status_updated'; payload: PoliceDispatchPayload }
-    | { type: 'law_enforcement.requested' | 'law_enforcement.request_updated'; payload: LawEnforcementRequestPayload };
+    | { type: 'law_enforcement.requested' | 'law_enforcement.request_updated'; payload: LawEnforcementRequestPayload }
+    | { type: 'notification.created'; payload: BackendNotification };
 
 export type PoliceDispatchPayload = {
     notificationId?: string | null;
@@ -45,6 +47,7 @@ type Handlers = {
     onIncidentStatusUpdated?: (payload: PoliceDispatchPayload) => void;
     onPoliceAssignment?: (payload: PoliceDispatchPayload) => void;
     onLawEnforcementRequest?: (payload: LawEnforcementRequestPayload) => void;
+    onNotificationCreated?: (notification: BackendNotification) => void;
 };
 
 export function useDispatchSocket({
@@ -55,17 +58,18 @@ export function useDispatchSocket({
     onIncidentStatusUpdated,
     onPoliceAssignment,
     onLawEnforcementRequest,
+    onNotificationCreated,
 }: Handlers) {
     const [isConnected, setIsConnected] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
     const mountedRef = useRef(true);
     const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const connectRef = useRef<(() => Promise<void>) | null>(null);
-    const handlersRef = useRef({ onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest });
+    const handlersRef = useRef({ onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest, onNotificationCreated });
 
     useEffect(() => {
-        handlersRef.current = { onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest };
-    }, [onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest]);
+        handlersRef.current = { onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest, onNotificationCreated };
+    }, [onNewSos, onAccepted, onClaimed, onIncidentStatusUpdated, onPoliceAssignment, onLawEnforcementRequest, onNotificationCreated]);
 
     const connect = useCallback(async () => {
         if (!enabled) return;
@@ -131,6 +135,10 @@ export function useDispatchSocket({
                             requestId: data.payload.requestId ? String(data.payload.requestId) : null,
                             status: data.payload.status ? String(data.payload.status).toUpperCase() : undefined,
                         });
+                    }
+
+                    if (data.type === 'notification.created') {
+                        handlersRef.current.onNotificationCreated?.(data.payload);
                     }
                 } catch {
                     // Ignore malformed dispatch frames.

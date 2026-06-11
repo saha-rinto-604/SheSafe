@@ -21,6 +21,7 @@ const MIGRATIONS = [
   'migration_add_pending_signups.sql',
   'migration_add_safe_places.sql',
   'migration_add_profile_and_modules.sql',
+  'migration_add_live_video.sql',
   '003_multi_volunteer_incidents.sql',
   '004_user_case_details.sql',
   '005_reviews_activity_leaderboard.sql',
@@ -35,9 +36,20 @@ const MIGRATIONS = [
   'seed_incidents_demo.sql', // idempotent — WHERE NOT EXISTS
 ]; // add new migration files here in order
 
-async function runSqlMigrations(conn) {
+function selectedMigrations() {
+  const onlyIndex = process.argv.indexOf('--only');
+  if (onlyIndex === -1) return MIGRATIONS;
+
+  const file = process.argv[onlyIndex + 1];
+  if (!file || !MIGRATIONS.includes(file)) {
+    throw new Error(`Unknown migration requested with --only: ${file || '(missing)'}`);
+  }
+  return [file];
+}
+
+async function runSqlMigrations(conn, files) {
   console.log('Running SQL migrations...');
-  for (const file of MIGRATIONS) {
+  for (const file of files) {
     const filePath = path.join(SQL_DIR, file);
     if (!fs.existsSync(filePath)) {
       console.warn(`  SKIP  ${file} (not found)`);
@@ -81,18 +93,21 @@ async function seedMedicalProviders(conn) {
 }
 
 async function run() {
+  const migrations = selectedMigrations();
+  const targetedRun = migrations.length === 1 && process.argv.includes('--only');
   const conn = await mysql.createConnection({
     host: process.env.MYSQL_HOST || '127.0.0.1',
     port: Number(process.env.MYSQL_PORT || 3306),
     user: process.env.MYSQL_USER || 'root',
     password: process.env.MYSQL_PASSWORD || '',
+    database: process.env.MYSQL_DATABASE || 'resqher_db',
     multipleStatements: true,
   });
 
   try {
-    await runSqlMigrations(conn);
-    await seedMedicalProviders(conn);
-    console.log('All migrations and seeding complete.');
+    await runSqlMigrations(conn, migrations);
+    if (!targetedRun) await seedMedicalProviders(conn);
+    console.log(targetedRun ? 'Targeted migration complete.' : 'All migrations and seeding complete.');
   } catch (err) {
     console.error('Migration error:', err.message);
     process.exit(1);

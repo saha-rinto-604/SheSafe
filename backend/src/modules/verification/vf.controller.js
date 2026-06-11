@@ -30,8 +30,16 @@ async function uploadDocument(req, res) {
     const rawType = req.params.type;
     const docType = TYPE_MAP[rawType] || rawType;
 
+    console.log('[verification upload] file parsed', {
+      type: rawType,
+      fileReceived: Boolean(req.file),
+      mimetype: req.file?.mimetype,
+      size: req.file?.size,
+      userId: req.user?.id,
+    });
+
     if (!req.file) {
-      return res.status(400).json({ message: 'No file provided.' });
+      return res.status(400).json({ message: 'No file received. Please select a valid image and try again.' });
     }
     const record = await vfService.uploadDocument(req.user.id, docType, req.file.buffer);
     res.json({ verification: record });

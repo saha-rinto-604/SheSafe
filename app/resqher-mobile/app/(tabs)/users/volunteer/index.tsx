@@ -12,6 +12,7 @@ import {
     AppState,
  Animated as RNAnimated, Easing } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
+import { useMapRenderDiagnostics } from '../../../../src/components/shared/MapRenderDiagnostics';
 import Svg, { Path, Circle as SvgCircle, Rect, Text as SvgText } from 'react-native-svg';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
@@ -674,6 +675,7 @@ export default function VolunteerHome() {
     const [safePlaceAnswer, setSafePlaceAnswer] = useState('');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
     const [isSosButtonVisible, setIsSosButtonVisible] = useState(false);
     const [holdPhase, setHoldPhase] = useState<'idle' | 'holding' | 'armed'>('idle');
     const [sosActive, setSosActive] = useState(false);
@@ -936,6 +938,7 @@ export default function VolunteerHome() {
             const nearby = await incidentService.getNearbyIncidents(sanitized ?? undefined);
             const liveRequests = (nearby || [])
                 .filter(req => isLiveSosStatus(req.status))
+                .filter(req => !Number.isFinite(Number(req.distanceKm)) || Number(req.distanceKm) <= 5)
                 .filter(req => !rejectedSosIdsRef.current.has(String(req.id)));
 
             if (!isMountedRef.current) return;
@@ -981,11 +984,13 @@ export default function VolunteerHome() {
     useDispatchSocket({
         onNewSos: useCallback((incident: SosRequest) => {
             if (rejectedSosIdsRef.current.has(String(incident.id))) return;
+            if (verificationRecord?.status !== 'verified') return;
+            if (Number.isFinite(Number(incident.distanceKm)) && Number(incident.distanceKm) > 5) return;
             setSosRequests(prev => {
                 const withoutDuplicate = prev.filter(item => item.id !== incident.id);
                 return [incident, ...withoutDuplicate];
             });
-        }, []),
+        }, [verificationRecord?.status]),
         onAccepted: useCallback(({ incidentId, volunteer }: { incidentId: string; volunteer: { id: string; name: string; photoUrl: string | null } }) => {
             setReviewQueue(prev => {
                 if (prev.some(item => item.id === volunteer.id)) return prev;
@@ -1038,6 +1043,23 @@ export default function VolunteerHome() {
     }, [navigateSafely, signOut]);
 
     const needsVolunteerVerification = verificationRecord?.status !== 'verified';
+    const isAddSafePlaceOpen = placeSheetOpen && placeSheetMode === 'add_safe_place' && !placeSheetIsDangerZone && selectedPlace?.source !== 'safe_place';
+    const safePlaceKeyboardLift = Platform.OS === 'android' && isAddSafePlaceOpen
+        ? Math.min(keyboardHeight, height * 0.32)
+        : 0;
+
+    useEffect(() => {
+        const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+            setKeyboardHeight(event.endCoordinates?.height ?? 0);
+        });
+        const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+            setKeyboardHeight(0);
+        });
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
 
     // Animation values
     const [searchProgress] = useState(() => new RNAnimated.Value(0));
@@ -1464,6 +1486,31 @@ export default function VolunteerHome() {
     const currentReviewVolunteer = reviewQueue[0] ?? null;
     const searchOverlayOpen = searchActive || startSearchActive;
     const routeOverlayBlocked = searchOverlayOpen;
+    const selectedPlaceOverlayOpen = placeSheetOpen && !!selectedPlace && !searchOverlayOpen;
+    const routeWorkflowOpen = directionsMode || isLiveNav || isReviewMode;
+    const safePathWorkflowOpen = showSafePath || !!scanState;
+    const keyboardVisibleOnMapForm = keyboardHeight > 0 && (
+        searchOverlayOpen
+        || selectedPlaceOverlayOpen
+        || isAddSafePlaceOpen
+        || directionsMode
+    );
+    const isMapWorkflowActive =
+        searchOverlayOpen
+        || selectedPlaceOverlayOpen
+        || isAddSafePlaceOpen
+        || routeWorkflowOpen
+        || safePathWorkflowOpen
+        || showLocationCard
+        || sosPanelOpen
+        || !!activeSosView
+        || showSafePlace
+        || reviewVisible
+        || maxRespondersVisible
+        || responderSheetVisible
+        || verificationGateVisible
+        || keyboardVisibleOnMapForm;
+    const shouldShowLargeSosLiveButton = isSosButtonVisible && !isMapWorkflowActive;
 
     // Location
     useEffect(() => {
@@ -2269,6 +2316,7 @@ export default function VolunteerHome() {
     }, [placeSheetDragY, placeSheetOpacity, placeSheetY]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
+        clearRouteState();
         setSelectedPlace(place);
         setSearchText(place.name);
         setRecentPlaces(prev => [
@@ -2287,7 +2335,7 @@ export default function VolunteerHome() {
             longitudeDelta,
         }, 700);
         openPlaceSheet(place);
-    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
+    }, [clearRouteState, closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
 
     const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
         if (!GOOGLE_MAPS_API_KEY) {
@@ -2440,6 +2488,14 @@ export default function VolunteerHome() {
     }, [activeSosView, exitSosView, fetchNearbySosRequests]);
 
     const handleAcceptSos = useCallback(async (req: SosRequest) => {
+        if (verificationRecord?.status !== 'verified') {
+            showSosNotice('Volunteer verification is required before responding to SOS requests.');
+            return;
+        }
+        if (Number.isFinite(Number(req.distanceKm)) && Number(req.distanceKm) > 5) {
+            showSosNotice('You can only accept SOS requests within 5 km.');
+            return;
+        }
         setAcceptingSosId(req.id);
         try {
             const result = await incidentService.acceptIncident(req.id);
@@ -2469,7 +2525,7 @@ export default function VolunteerHome() {
         } finally {
             if (isMountedRef.current) setAcceptingSosId(null);
         }
-    }, [activeSosView?.id, exitSosView, fetchNearbySosRequests, navigateSafely]);
+    }, [activeSosView?.id, exitSosView, fetchNearbySosRequests, navigateSafely, showSosNotice, verificationRecord?.status]);
 
     const openAddSafePlace = useCallback(() => {
         setPlaceSheetMode('add_safe_place');
@@ -2526,19 +2582,21 @@ export default function VolunteerHome() {
 
     const enterDirectionsMode = useCallback(async (destination: PlaceSuggestion) => {
         clearRouteState();
+        const routeIntentId = routeRequestIdRef.current;
         let origin = userLocRef.current;
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status === 'granted') {
                 const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
                 origin = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, heading: pos.coords.heading ?? undefined };
-                if (isMountedRef.current) {
-                    userLocRef.current = origin;
-                    setUserLoc(origin);
-                }
             }
         } catch (err) {
             console.warn('[VolunteerHome] Unable to refresh route origin:', err);
+        }
+        if (!isMountedRef.current || routeRequestIdRef.current !== routeIntentId) return;
+        if (origin) {
+            userLocRef.current = origin;
+            setUserLoc(origin);
         }
         setDirectionsMode(true);
         if (origin) {
@@ -2683,6 +2741,26 @@ export default function VolunteerHome() {
             ? visibleSosRouteCoords[visibleSosRouteCoords.length - 1]
             : null;
 
+    const mapDiagnostics = useMapRenderDiagnostics({
+        screenName: 'VolunteerHomeMap',
+        location: userLoc,
+        regionSource: userLoc ? 'user-location' : 'fallback-dhaka',
+        overlayState: {
+            searchOverlayOpen,
+            placeSheetOpen,
+            showLocationCard,
+            responderSheetVisible,
+            directionsMode,
+            isLiveNav,
+            isReviewMode,
+            activeSosView: Boolean(activeSosView),
+            zones: normalizedIncidentZones.length,
+            safePlaces: confirmedSafePlaces.length,
+            routePoints: routeCoords.length,
+            sosRoutePoints: visibleSosRouteCoords.length,
+        },
+    });
+
     return (
         <AtmosphericShell>
             <View style={s.root}>
@@ -2690,10 +2768,15 @@ export default function VolunteerHome() {
 
                 {/* ── Map ─────────────────────────────────────────────────────── */}
                 <MapView
+                    key={mapDiagnostics.mapKey}
                     ref={mapRef}
+                    debugName="VolunteerHomeMap"
                     style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
+                    onLayout={mapDiagnostics.onMapLayout}
+                    onMapReady={mapDiagnostics.onMapReady}
+                    onMapLoaded={mapDiagnostics.onMapLoaded}
                     showsUserLocation={!isLiveNav && !activeSosView}
                     showsMyLocationButton={false}
                     showsCompass={false}
@@ -2888,6 +2971,7 @@ export default function VolunteerHome() {
                     {/* LAYER 2 — Blue progress trail (live nav: completed segments) */}
                     {completedRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-completed-${endLocation?.id ?? 'none'}`}
                             coordinates={completedRouteCoords}
                             strokeColor="#3B82F6"
                             strokeWidth={5}
@@ -2900,6 +2984,7 @@ export default function VolunteerHome() {
                     {/* LAYER 3 — Active safe track: remaining path during live nav */}
                     {remainingRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-remaining-glow-${endLocation?.id ?? 'none'}`}
                             coordinates={remainingRouteCoords}
                             strokeColor="rgba(138, 56, 246, 0.22)"
                             strokeWidth={10}
@@ -2911,6 +2996,7 @@ export default function VolunteerHome() {
                     {/* High-contrast purple core */}
                     {remainingRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-remaining-core-${endLocation?.id ?? 'none'}`}
                             coordinates={remainingRouteCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -2921,8 +3007,9 @@ export default function VolunteerHome() {
                     )}
 
                     {/* LAYER 3 — Active safe track: static preview (before live nav starts) */}
-                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
+                    {remainingRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
+                            key={`route-preview-glow-${endLocation?.id ?? 'none'}`}
                             coordinates={routeCoords}
                             strokeColor="rgba(138, 56, 246, 0.22)"
                             strokeWidth={10}
@@ -2932,8 +3019,9 @@ export default function VolunteerHome() {
                         />
                     )}
                     {/* High-contrast purple core */}
-                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
+                    {remainingRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
+                            key={`route-preview-core-${endLocation?.id ?? 'none'}`}
                             coordinates={routeCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -3634,7 +3722,7 @@ export default function VolunteerHome() {
                 )}
 
                 {/* ── SOS Overlay — centered on screen ───────────────────── */}
-                {isSosButtonVisible && !showSafePlace && !searchActive && !startSearchActive && !sosPanelOpen && (
+                {shouldShowLargeSosLiveButton && (
                     <View style={s.sosSection} pointerEvents="box-none">
                         <View style={s.sosWrap}>
                             {sosActive && cancelCountdown > 0 ? (
@@ -4036,6 +4124,7 @@ export default function VolunteerHome() {
                             style={[
                                 s.placeSheet,
                                 { transform: [{ translateY: RNAnimated.add(placeSheetY, placeSheetDragY) }] },
+                                safePlaceKeyboardLift > 0 && { transform: [{ translateY: RNAnimated.add(placeSheetY, placeSheetDragY) }, { translateY: -safePlaceKeyboardLift }] },
                                 { opacity: placeSheetOpacity },
                             ]}
                             {...sheetPanResponder.panHandlers}
@@ -4077,11 +4166,19 @@ export default function VolunteerHome() {
                             </View>
 
                             <KeyboardAvoidingView
-                                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                                keyboardVerticalOffset={insets.top + 56}
+                                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                                keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
                                 style={s.safePlaceKeyboardAvoiding}
                             >
-                                <View style={s.placeSheetSection}>
+                                <ScrollView
+                                    contentContainerStyle={[
+                                        s.placeSheetSection,
+                                        isAddSafePlaceOpen && { paddingBottom: Math.max(28, insets.bottom + 28) },
+                                    ]}
+                                    keyboardShouldPersistTaps="handled"
+                                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                                    showsVerticalScrollIndicator={false}
+                                >
                                     {selectedPlace.source === 'safe_place' ? (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Safe Place</Text>
@@ -4127,6 +4224,17 @@ export default function VolunteerHome() {
                                     ) : (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Add Safe Place</Text>
+                                            {sosActive && (
+                                                <View style={s.safePlaceSosStatusPill}>
+                                                    <View style={[s.pillDot, { backgroundColor: T.danger }]} />
+                                                    <Text style={[s.pillTxt, s.pillTxtLive]} numberOfLines={1}>
+                                                        {cancelCountdown > 0
+                                                            ? `Alert triggered · Cancel in ${cancelCountdown}s`
+                                                            : 'Sharing your location'
+                                                        }
+                                                    </Text>
+                                                </View>
+                                            )}
                                             {safePlaceSubmitState === 'success' ? (
                                                 <RNAnimated.View
                                                     style={[
@@ -4197,7 +4305,7 @@ export default function VolunteerHome() {
                                             )}
                                         </>
                                     )}
-                                </View>
+                                </ScrollView>
                             </KeyboardAvoidingView>
                         </RNAnimated.View>
                     </View>
@@ -4324,7 +4432,11 @@ export default function VolunteerHome() {
                             ) : (
                                 <TouchableOpacity
                                     style={ns.endLiveBtn}
-                                    onPress={() => setIsLiveNav(false)}
+                                    onPress={() => {
+                                        setCompletedRouteCoords([]);
+                                        setRemainingRouteCoords([]);
+                                        setIsLiveNav(false);
+                                    }}
                                     activeOpacity={0.7}
                                 >
                                     <Text style={ns.endLiveBtnText}>Exit Live Mode</Text>
@@ -5522,6 +5634,7 @@ const s = StyleSheet.create({
     placeSheetSection: {
         paddingHorizontal: 18,
         paddingTop: 6,
+        paddingBottom: 18,
         gap: 10,
     },
     safePlaceQuestion: {
@@ -5552,6 +5665,19 @@ const s = StyleSheet.create({
         flexDirection: 'row',
         gap: 10,
         marginTop: 4,
+    },
+    safePlaceSosStatusPill: {
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        maxWidth: '100%',
+        backgroundColor: `${T.danger}15`,
+        borderRadius: R.full,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        borderWidth: 1,
+        borderColor: `${T.danger}30`,
     },
     safePlaceSuccessWrap: {
         flexDirection: 'row',
@@ -5630,6 +5756,7 @@ const s = StyleSheet.create({
     },
     safePlaceKeyboardAvoiding: {
         width: '100%',
+        flex: 1,
     },
     placeSheetSectionTitle: {
         fontSize: 11,

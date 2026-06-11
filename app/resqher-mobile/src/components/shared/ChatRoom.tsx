@@ -26,6 +26,7 @@ import { DEFAULT_GROUP_CHAT_NAME, type Incident, type Message, type Role } from 
 import { decodePolyline } from './map/decodePolyline';
 import { st } from './ChatRoom.styles';
 import UserAvatar from './UserAvatar';
+import { LiveSafetyVideoPlayerModal, VideoMessageCard } from './LiveSafetyVideoPlayer';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const SELF_ID = 'self';
@@ -101,13 +102,14 @@ const SystemBubble = memo(function SystemBubble({ msg }: { msg: Message }) {
 });
 
 // ─── PillBubble — Directional tail (R.pill 3 corners, 0 near avatar) ───────
-const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
+const PillBubble = memo(function PillBubble({ msg, isOwn, onPlayVideo }: { msg: Message; isOwn: boolean; onPlayVideo: (uri: string, title?: string) => void }) {
     if (msg.type === 'SYSTEM') return <SystemBubble msg={msg} />;
 
     const role = msg.sender.role;
     const isVictimMessage = role === 'USER' && msg.sender.id !== 'system';
     const alignRight = isOwn || isVictimMessage;
 
+    const videoUri = msg.mediaUrl || (/^https?:\/\//i.test(msg.content) ? msg.content : '');
     const tailStyle = alignRight
         ? { borderBottomRightRadius: 6 }
         : { borderBottomLeftRadius: 6 };
@@ -142,6 +144,17 @@ const PillBubble = memo(function PillBubble({ msg, isOwn }: { msg: Message; isOw
                             <Feather name="image" size={22} color={T.ink4} />
                             <Text style={st.imageLabel}>Photo attached</Text>
                         </View>
+                    ) : msg.type === 'VIDEO' ? (
+                        <VideoMessageCard
+                            filename={msg.mediaFilename}
+                            onPress={() => {
+                                if (!videoUri) {
+                                    Alert.alert('Live Safety Video', 'Video could not be played on this device.');
+                                    return;
+                                }
+                                onPlayVideo(videoUri, msg.mediaFilename || 'Live Safety Video');
+                            }}
+                        />
                     ) : (
                         <Text style={[st.msgText, alignRight && st.msgTextOwn]}>{msg.content}</Text>
                     )}
@@ -195,7 +208,7 @@ function FloatingInput({ onSend, bottomInset }: { onSend: (text: string) => void
                     <TouchableOpacity style={st.inputAction} onPress={() => { Haptics.selectionAsync(); setAttachMenuVisible(!isAttachMenuVisible); }} activeOpacity={0.7}>
                         <Feather name="paperclip" size={20} color={isAttachMenuVisible ? T.violet : "#FFFFFF"} />
                     </TouchableOpacity>
-                    <TextInput ref={inputRef} style={st.input} placeholder="Type a message…" placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} onFocus={() => setAttachMenuVisible(false)} />
+                    <TextInput ref={inputRef} style={st.input} placeholder="Type a message…" placeholderTextColor="rgba(255, 255, 255, 0.5)" value={text} onChangeText={setText} multiline maxLength={2000} textAlignVertical="top" onFocus={() => setAttachMenuVisible(false)} />
                     <TouchableOpacity style={[st.sendBtn, !hasText && st.sendBtnOff]} onPress={handleSend} disabled={!hasText} activeOpacity={0.7}>
                         <Ionicons name="send" size={18} color="#FFFFFF" />
                     </TouchableOpacity>
@@ -239,6 +252,7 @@ export function SharedChatRoom({
     const flatRef = useRef<FlatList>(null);
     const isLive = incident.status === 'LIVE';
     const [isHeaderMenuOpen, setHeaderMenuOpen] = useState(false);
+    const [videoPlayer, setVideoPlayer] = useState<{ uri: string; title: string } | null>(null);
 
     // ── Map Overlay State (hooks declared unconditionally per React rules) ──
     const [isMapOverlayOpen, setIsMapOverlayOpen] = useState(false);
@@ -321,7 +335,11 @@ export function SharedChatRoom({
     }, [incident.id, selfRole, autoReplies]);
 
     const renderMessage = useCallback(({ item }: { item: Message }) => (
-        <PillBubble msg={item} isOwn={item.sender.id === SELF_ID} />
+        <PillBubble
+            msg={item}
+            isOwn={item.sender.id === SELF_ID}
+            onPlayVideo={(uri, title = 'Live Safety Video') => setVideoPlayer({ uri, title })}
+        />
     ), []);
 
     return (
@@ -363,7 +381,11 @@ export function SharedChatRoom({
 
                 <View style={{ marginTop: 12 }} />
 
-                <KeyboardAvoidingView style={st.chatArea} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 56}>
+                <KeyboardAvoidingView
+                    style={st.chatArea}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
+                >
                     <FlatList
                         ref={flatRef}
                         data={messages}
@@ -372,6 +394,7 @@ export function SharedChatRoom({
                         contentContainerStyle={st.messageList}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                         onScrollBeginDrag={Keyboard.dismiss}
                         ListEmptyComponent={
                             <View style={st.emptyChat}>
@@ -413,6 +436,7 @@ export function SharedChatRoom({
                         <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
                         <MapView
                             ref={mapRef}
+                            debugName="SharedChatRouteMap"
                             style={StyleSheet.absoluteFill}
                             userInterfaceStyle="dark"
                             customMapStyle={[
@@ -494,6 +518,12 @@ export function SharedChatRoom({
                         </View>
                     </View>
                 )}
+                <LiveSafetyVideoPlayerModal
+                    visible={!!videoPlayer}
+                    sourceUri={videoPlayer?.uri}
+                    title={videoPlayer?.title}
+                    onClose={() => setVideoPlayer(null)}
+                />
             </View>
         </AtmosphericShell>
     );

@@ -5,8 +5,8 @@
 export const DEFAULT_GROUP_CHAT_NAME = 'SheSafe Emergency Chat' as const;
 
 export type Role = 'USER' | 'VOLUNTEER' | 'POLICE';
-export type IncidentStatus = 'ACTIVE' | 'LIVE' | 'RESOLVED' | 'CANCELLED';
-export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM';
+export type IncidentStatus = 'ACTIVE' | 'IN_PROGRESS' | 'LIVE' | 'RESOLVED' | 'CANCELLED';
+export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'VIDEO';
 
 /**
  * Volunteer incident category:
@@ -40,8 +40,12 @@ export interface Message {
     content: string;
     type: MessageType;
     timestamp: string;
-    /** URL for IMAGE type messages */
+    /** URL for IMAGE/VIDEO type messages */
     mediaUrl?: string;
+    mediaPublicId?: string;
+    mediaMimeType?: string;
+    mediaFilename?: string;
+    mediaSizeBytes?: number;
     /** Evidence vault reference for SYSTEM deep-links */
     evidenceId?: string;
 }
@@ -58,4 +62,32 @@ export interface Incident {
     participantCount: number;
     acceptedAt?: string | null;
     createdAt: string;
+}
+
+export type LiveVideoRequestStatus =
+    | 'PENDING'
+    | 'APPROVED'
+    | 'STREAMING'
+    | 'RECORDING'
+    | 'STOPPED'
+    | 'DECLINED'
+    | 'EXPIRED'
+    | 'FAILED'
+    | 'COMPLETED';
+
+export interface LiveVideoRequest {
+    id: string;
+    incidentId: string;
+    requesterId: string;
+    victimId: string;
+    status: LiveVideoRequestStatus;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+    expiresAt?: string | null;
+    requester?: {
+        id: string;
+        name?: string;
+        username?: string;
+        photoUrl?: string | null;
+    };
 }

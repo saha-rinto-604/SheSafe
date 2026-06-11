@@ -22,15 +22,45 @@ type NotificationListResponse = {
   unreadCount: number;
 };
 
-function sanitizeNotificationText(value: string): string {
+function sanitizeNotificationText(value: unknown): string {
   return String(value || '').replace(/\+?\d[\d\s().-]{6,}\d/g, 'Someone');
 }
 
-function sanitizeBackendNotification(notification: BackendNotification): BackendNotification {
+function normalizeBackendNotification(value: unknown): BackendNotification | null {
+  if (!value || typeof value !== 'object') return null;
+  const notification = value as Record<string, unknown>;
+  const id = String(notification.id ?? '').trim();
+  if (!id) return null;
+
+  const data = notification.data && typeof notification.data === 'object' && !Array.isArray(notification.data)
+    ? notification.data as Record<string, any>
+    : {};
+
   return {
-    ...notification,
+    id,
+    type: String(notification.type || 'SYSTEM'),
     title: sanitizeNotificationText(notification.title),
     body: sanitizeNotificationText(notification.body),
+    incidentId: notification.incidentId == null ? null : String(notification.incidentId),
+    chatId: notification.chatId == null ? null : String(notification.chatId),
+    data,
+    read: Boolean(notification.read),
+    readAt: notification.readAt == null ? null : String(notification.readAt),
+    seenAt: notification.seenAt == null ? null : String(notification.seenAt),
+    shownInAppAt: notification.shownInAppAt == null ? null : String(notification.shownInAppAt),
+    createdAt: notification.createdAt ? String(notification.createdAt) : new Date().toISOString(),
+  };
+}
+
+function normalizeNotificationListResponse(value: unknown): NotificationListResponse {
+  const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const notifications = Array.isArray(data.notifications)
+    ? data.notifications.map(normalizeBackendNotification).filter((item): item is BackendNotification => item !== null)
+    : [];
+  const parsedUnreadCount = Number(data.unreadCount);
+  return {
+    notifications,
+    unreadCount: Number.isFinite(parsedUnreadCount) && parsedUnreadCount >= 0 ? parsedUnreadCount : 0,
   };
 }
 
@@ -109,14 +139,12 @@ export async function deactivateCurrentPushToken(): Promise<void> {
 export const notificationService = {
   async list(limit = 50): Promise<NotificationListResponse> {
     const res = await api.get('/api/notifications', { params: { limit } });
-    const data = res.data as NotificationListResponse;
-    return { ...data, notifications: (data.notifications || []).map(sanitizeBackendNotification) };
+    return normalizeNotificationListResponse(res.data);
   },
 
   async missed(limit = 10): Promise<NotificationListResponse> {
     const res = await api.get('/api/notifications/missed', { params: { limit } });
-    const data = res.data as NotificationListResponse;
-    return { ...data, notifications: (data.notifications || []).map(sanitizeBackendNotification) };
+    return normalizeNotificationListResponse(res.data);
   },
 
   async markRead(id: string): Promise<{ unreadCount: number }> {
@@ -130,7 +158,9 @@ export const notificationService = {
   },
 
   async markShown(ids: string[]): Promise<{ unreadCount: number }> {
-    const res = await api.patch('/api/notifications/shown', { ids });
+    const safeIds = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))];
+    if (!safeIds.length) return { unreadCount: 0 };
+    const res = await api.patch('/api/notifications/shown', { ids: safeIds });
     return res.data as { unreadCount: number };
   },
 };

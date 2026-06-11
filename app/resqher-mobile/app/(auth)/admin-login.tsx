@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, ScrollView,
@@ -15,14 +15,14 @@ import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
 import SecureTextField from '../../components/auth/SecureTextField';
-import { getApiBaseUrlError } from '../../src/services/api';
+import { getApiBaseUrlError, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
 
 type FormData = { phone: string; password: string };
 
 export default function AdminLogin() {
   const router = useRouter();
-  const { signInAdmin, signOut, isLoading: authLoading } = useAuth();
-  const { showToast } = useToast();
+  const { signInAdmin, signOut, isLoading: authLoading, isSignedIn, role } = useAuth();
+  const { showToast, clearToast } = useToast();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -30,11 +30,22 @@ export default function AdminLogin() {
   const [focused, setFocused] = useState<'phone' | 'password' | null>(null);
   const submittingRef = useRef(false);
 
+  useEffect(() => {
+    void warmAuthBackend();
+  }, []);
+
+  useEffect(() => {
+    if (!authLoading && isSignedIn && role === 'ADMIN') {
+      router.replace(ROLE_DEFAULT_ROUTE.ADMIN as any);
+    }
+  }, [authLoading, isSignedIn, role, router]);
+
   const onSubmit = async (data: FormData) => {
     if (submittingRef.current || submitting || authLoading) return;
+    clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
       return;
     }
     submittingRef.current = true;
@@ -54,24 +65,17 @@ export default function AdminLogin() {
         });
         return;
       }
+      showToast({ type: 'success', title: 'Admin access confirmed', message: 'Welcome back to SheSafe administration.' });
       router.replace(ROLE_DEFAULT_ROUTE.ADMIN as any);
     } catch (e: any) {
-      const msg = e?.message ?? '';
-      const code = e?.code;
-      if (msg.toLowerCase().includes('sign up')) {
-        showToast({
-          type: 'warning',
-          title: 'Account Not Found',
-          message: 'No admin account exists with this phone number.',
-        });
-      } else {
-        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
-        showToast({
-          type: 'error',
-          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Authentication Failed',
-          message: msg || 'Please check your phone number and password, then try again.',
-        });
-      }
+      const connectionIssue = isAuthConnectionError(e);
+      showToast({
+        type: 'error',
+        title: connectionIssue ? 'Connection unavailable' : 'Admin sign-in failed',
+        message: connectionIssue
+          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          : 'Invalid admin credentials.',
+      });
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -81,7 +85,7 @@ export default function AdminLogin() {
   const busy = submitting || authLoading;
 
   return (
-    <AuthShell>
+    <AuthShell variant="admin">
       <ScrollView
         style={{ borderRadius: R.xl }}
         showsVerticalScrollIndicator={false}
@@ -115,7 +119,7 @@ export default function AdminLogin() {
                       style={st.inputIcon}
                     />
                     <TextInput
-                      placeholder="Phone number"
+                      placeholder="Admin phone number"
                       placeholderTextColor={T.ink5}
                       value={value}
                       onChangeText={onChange}
@@ -123,7 +127,7 @@ export default function AdminLogin() {
                       style={st.input}
                       onFocus={() => setFocused('phone')}
                       onBlur={() => setFocused(null)}
-                      accessibilityLabel="Phone number"
+                      accessibilityLabel="Admin phone number"
                     />
                   </View>
                   {!!errors.phone && <Text style={st.errTxt}>{errors.phone.message}</Text>}
@@ -182,7 +186,7 @@ export default function AdminLogin() {
             >
               {busy
                 ? <ActivityIndicator color={T.onPrimary} />
-                : <Text style={st.btnTxt}>Login</Text>
+                : <Text style={st.btnTxt}>Sign in to Admin Portal</Text>
               }
             </LinearGradient>
           </TouchableOpacity>

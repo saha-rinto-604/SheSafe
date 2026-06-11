@@ -12,6 +12,7 @@ import {
     Animated as RNAnimated, Easing,
 } from 'react-native';
 import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
+import { useMapRenderDiagnostics } from '../../../../src/components/shared/MapRenderDiagnostics';
 import * as Location from 'expo-location';
 import * as Speech from 'expo-speech';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -574,6 +575,7 @@ export default function ExploreScreen() {
     const [safePlaceSubmitState, setSafePlaceSubmitState] = useState<'idle' | 'submitting' | 'success'>('idle');
     const [safePlaceError, setSafePlaceError] = useState<string | null>(null);
     const safePlaceSuccessAnim = useAnimatedValue(0);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
 
     const [routeUnsafe, setRouteUnsafe] = useState(false);
     const [blockedZoneName, setBlockedZoneName] = useState<string | null>(null);
@@ -825,6 +827,23 @@ export default function ExploreScreen() {
     const navBottom = Math.max(insets.bottom, 0) + NAV_BOT_OFFSET;
     const searchOverlayOpen = searchActive || startSearchActive;
     const routeOverlayBlocked = searchOverlayOpen;
+    const isAddSafePlaceOpen = placeSheetOpen && placeSheetMode === 'safe_place' && !placeSheetIsDangerZone && selectedPlace?.source !== 'safe_place';
+    const safePlaceKeyboardLift = Platform.OS === 'android' && isAddSafePlaceOpen
+        ? Math.min(keyboardHeight, height * 0.32)
+        : 0;
+
+    useEffect(() => {
+        const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
+            setKeyboardHeight(event.endCoordinates?.height ?? 0);
+        });
+        const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+            setKeyboardHeight(0);
+        });
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
 
     useEffect(() => {
         (async () => {
@@ -1578,6 +1597,7 @@ export default function ExploreScreen() {
     }, [closeLocationCard, openPlaceSheet, showLocationCard]);
 
     const handleResolvedPlaceSelect = useCallback((place: PlaceSuggestion) => {
+        clearRouteState();
         setSelectedPlace(place);
         setSearchText(place.name);
         setRecentPlaces(prev => [
@@ -1596,7 +1616,7 @@ export default function ExploreScreen() {
             longitudeDelta,
         }, 700);
         openPlaceSheet(place);
-    }, [closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
+    }, [clearRouteState, closeLocationCard, deactivateSearch, openPlaceSheet, showLocationCard]);
 
     const handlePlaceSelect = useCallback(async (prediction: PlacePrediction) => {
         if (!GOOGLE_MAPS_API_KEY) {
@@ -1669,17 +1689,19 @@ export default function ExploreScreen() {
 
     const enterDirectionsMode = useCallback(async (destination: PlaceSuggestion) => {
         clearRouteState();
+        const routeIntentId = routeRequestIdRef.current;
         let origin = userLoc;
         try {
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status === 'granted') {
                 const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation });
                 origin = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, heading: pos.coords.heading ?? undefined };
-                if (isMountedRef.current) setUserLoc(origin);
             }
         } catch (err) {
             console.warn('[ExploreScreen] Unable to refresh route origin:', err);
         }
+        if (!isMountedRef.current || routeRequestIdRef.current !== routeIntentId) return;
+        if (origin) setUserLoc(origin);
         setDirectionsMode(true);
         if (origin) {
             setStartLocation({
@@ -1820,6 +1842,24 @@ export default function ExploreScreen() {
         [closePlaceSheet, placeSheetDragY],
     );
 
+    const mapDiagnostics = useMapRenderDiagnostics({
+        screenName: 'StandardExploreMap',
+        location: userLoc,
+        regionSource: userLoc ? 'user-location' : 'fallback-dhaka',
+        overlayState: {
+            searchOverlayOpen,
+            placeSheetOpen,
+            showLocationCard,
+            drawerOpen,
+            directionsMode,
+            isLiveNav,
+            isReviewMode,
+            zones: normalizedIncidentZones.length,
+            safePlaces: confirmedSafePlaces.length,
+            routePoints: routeCoords.length,
+        },
+    });
+
     return (
         <AtmosphericShell>
             <View style={s.root}>
@@ -1828,10 +1868,15 @@ export default function ExploreScreen() {
 
                 {/* ── Map Framework ── */}
                 <MapView
+                    key={mapDiagnostics.mapKey}
                     ref={mapRef}
+                    debugName="StandardExploreMap"
                     style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
+                    onLayout={mapDiagnostics.onMapLayout}
+                    onMapReady={mapDiagnostics.onMapReady}
+                    onMapLoaded={mapDiagnostics.onMapLoaded}
                     showsUserLocation={!isLiveNav}
                     showsMyLocationButton={false}
                     showsCompass={false}
@@ -2004,6 +2049,7 @@ export default function ExploreScreen() {
                     {/* LAYER 2 — Blue progress trail (live nav: completed segments) */}
                     {completedRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-completed-${endLocation?.id ?? 'none'}`}
                             coordinates={completedRouteCoords}
                             strokeColor="#3B82F6"
                             strokeWidth={5}
@@ -2016,6 +2062,7 @@ export default function ExploreScreen() {
                     {/* LAYER 3 — Active safe track: remaining path during live nav */}
                     {remainingRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-remaining-glow-${endLocation?.id ?? 'none'}`}
                             coordinates={remainingRouteCoords}
                             strokeColor="rgba(138, 56, 246, 0.22)"
                             strokeWidth={10}
@@ -2027,6 +2074,7 @@ export default function ExploreScreen() {
                     {/* High-contrast purple core */}
                     {remainingRouteCoords.length > 1 && (
                         <Polyline
+                            key={`route-remaining-core-${endLocation?.id ?? 'none'}`}
                             coordinates={remainingRouteCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -2037,8 +2085,9 @@ export default function ExploreScreen() {
                     )}
 
                     {/* LAYER 3 — Active safe track: static preview (before live nav starts) */}
-                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
+                    {remainingRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
+                            key={`route-preview-glow-${endLocation?.id ?? 'none'}`}
                             coordinates={routeCoords}
                             strokeColor="rgba(138, 56, 246, 0.22)"
                             strokeWidth={10}
@@ -2048,8 +2097,9 @@ export default function ExploreScreen() {
                         />
                     )}
                     {/* High-contrast purple core */}
-                    {completedRouteCoords.length === 0 && routeCoords.length > 1 && (
+                    {remainingRouteCoords.length === 0 && routeCoords.length > 1 && (
                         <Polyline
+                            key={`route-preview-core-${endLocation?.id ?? 'none'}`}
                             coordinates={routeCoords}
                             strokeColor={T.violet}
                             strokeWidth={4}
@@ -2520,6 +2570,7 @@ export default function ExploreScreen() {
                             style={[
                                 s.placeSheet,
                                 { transform: [{ translateY: RNAnimated.add(placeSheetY, placeSheetDragY) }] },
+                                safePlaceKeyboardLift > 0 && { transform: [{ translateY: RNAnimated.add(placeSheetY, placeSheetDragY) }, { translateY: -safePlaceKeyboardLift }] },
                                 { opacity: placeSheetOpacity },
                             ]}
                             {...sheetPanResponder.panHandlers}
@@ -2561,11 +2612,19 @@ export default function ExploreScreen() {
                             </View>
 
                             <KeyboardAvoidingView
-                                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                                keyboardVerticalOffset={insets.top + 56}
+                                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                                keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
                                 style={s.safePlaceKeyboardAvoiding}
                             >
-                                <View style={s.placeSheetSection}>
+                                <ScrollView
+                                    contentContainerStyle={[
+                                        s.placeSheetSection,
+                                        isAddSafePlaceOpen && { paddingBottom: Math.max(28, insets.bottom + 28) },
+                                    ]}
+                                    keyboardShouldPersistTaps="handled"
+                                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                                    showsVerticalScrollIndicator={false}
+                                >
                                     {selectedPlace.source === 'safe_place' ? (
                                         <>
                                             <Text style={s.placeSheetSectionTitle}>Safe Place</Text>
@@ -2681,7 +2740,7 @@ export default function ExploreScreen() {
                                             )}
                                         </>
                                     )}
-                                </View>
+                                </ScrollView>
                             </KeyboardAvoidingView>
                         </RNAnimated.View>
                     </>
@@ -2803,7 +2862,11 @@ export default function ExploreScreen() {
                             ) : (
                                 <TouchableOpacity
                                     style={ns.endLiveBtn}
-                                    onPress={() => setIsLiveNav(false)}
+                                    onPress={() => {
+                                        setCompletedRouteCoords([]);
+                                        setRemainingRouteCoords([]);
+                                        setIsLiveNav(false);
+                                    }}
                                     activeOpacity={0.7}
                                 >
                                     <Text style={ns.endLiveBtnText}>Exit Live Mode</Text>
@@ -3021,8 +3084,8 @@ const s = StyleSheet.create({
     safePlaceBtnTextSecondary: { fontSize: 12, fontWeight: '800', color: T.violet, letterSpacing: 0.2 },
     safePlaceBtnTextCancel: { fontSize: 12, fontWeight: '800', color: T.danger, letterSpacing: 0.2 },
     safePlaceBtnTextPrimary: { fontSize: 12, fontWeight: '800', color: T.onPrimary, letterSpacing: 0.2 },
-    safePlaceKeyboardAvoiding: { width: '100%' },
-    placeSheetSection: { paddingHorizontal: 18, paddingTop: 6, gap: 10 },
+    safePlaceKeyboardAvoiding: { width: '100%', flex: 1 },
+    placeSheetSection: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 18, gap: 10 },
     placeSheetSectionTitle: { fontSize: 11, fontWeight: '700', color: T.ink3, letterSpacing: 1.0, textTransform: 'uppercase' },
     placeSheetEmpty: { fontSize: 13, color: T.ink4 },
     safePlaceInfoCard: {

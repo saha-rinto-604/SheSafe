@@ -28,6 +28,10 @@ function toMessage(raw: any): Message {
       type: raw.type ?? raw.message_type ?? (isSystem ? 'SYSTEM' : 'TEXT'),
       timestamp: raw.createdAt ?? raw.timestamp ?? raw.created_at,
       mediaUrl: raw.mediaUrl ?? raw.media_url,
+      mediaPublicId: raw.mediaPublicId ?? raw.media_public_id,
+      mediaMimeType: raw.mediaMimeType ?? raw.media_mime_type,
+      mediaFilename: raw.mediaFilename ?? raw.media_filename,
+      mediaSizeBytes: raw.mediaSizeBytes ?? raw.media_size_bytes,
     };
   }
 
@@ -54,6 +58,10 @@ function toMessage(raw: any): Message {
     type: raw.type ?? raw.message_type ?? (isSystem ? 'SYSTEM' : 'TEXT'),
     timestamp: raw.timestamp ?? raw.created_at,
     mediaUrl: raw.mediaUrl ?? raw.media_url,
+    mediaPublicId: raw.mediaPublicId ?? raw.media_public_id,
+    mediaMimeType: raw.mediaMimeType ?? raw.media_mime_type,
+    mediaFilename: raw.mediaFilename ?? raw.media_filename,
+    mediaSizeBytes: raw.mediaSizeBytes ?? raw.media_size_bytes,
   };
 }
 

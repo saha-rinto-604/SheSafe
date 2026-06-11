@@ -8,7 +8,7 @@ import { chatService } from '../services/chatService';
 import { chatStore } from '../services/chatStore';
 import { notificationStore } from '../services/notificationStore';
 import api, { getAccessToken, getWebSocketUrl } from '../services/api';
-import type { Message, Participant, IncidentLocation } from '../types/chat';
+import type { Message, Participant, IncidentLocation, LiveVideoRequest } from '../types/chat';
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -20,7 +20,59 @@ type WSEvent =
     | { type: 'incident:responders_updated'; payload: { incidentId: string } }
     | { type: 'incident:status_updated'; payload: { incidentId: string; status?: string; message?: string; requestId?: string | null } }
     | { type: 'incident.location.updated'; payload: IncidentLocation }
+    | { type: 'live-video:requested'; payload: { incidentId: string; request?: LiveVideoRequest; autoStartAllowed?: boolean } }
+    | { type: 'live-video:approved'; payload: { incidentId: string; request?: LiveVideoRequest } }
+    | { type: 'live-video:recording'; payload: { incidentId: string; request?: LiveVideoRequest } }
+    | { type: 'live-video:uploading'; payload: { incidentId: string; request?: LiveVideoRequest } }
+    | { type: 'live-video:clip'; payload: { incidentId: string; request?: LiveVideoRequest; message?: Message } }
+    | { type: 'live-video:stopped'; payload: { incidentId: string; request?: LiveVideoRequest } }
+    | { type: 'live-video:declined'; payload: { incidentId: string; request?: LiveVideoRequest } }
+    | { type: 'live-video:completed'; payload: { incidentId: string; request?: LiveVideoRequest; message?: Message } }
+    | { type: LiveStreamSocketType; payload: LiveStreamSocketPayload }
     | { type: 'error'; payload: { message?: string } };
+
+type LiveVideoEvent =
+    | { type: 'requested'; request: LiveVideoRequest | null; autoStartAllowed: boolean }
+    | { type: 'approved'; request: LiveVideoRequest | null }
+    | { type: 'recording'; request: LiveVideoRequest | null }
+    | { type: 'uploading'; request: LiveVideoRequest | null }
+    | { type: 'clip'; request: LiveVideoRequest | null; message?: Message | null }
+    | { type: 'stopped'; request: LiveVideoRequest | null }
+    | { type: 'declined'; request: LiveVideoRequest | null }
+    | { type: 'completed'; request: LiveVideoRequest | null; message?: Message | null };
+
+export type LiveStreamSocketType =
+    | 'live-stream:request'
+    | 'live-stream:approved'
+    | 'live-stream:declined'
+    | 'live-stream:start'
+    | 'live-stream:join'
+    | 'live-stream:offer'
+    | 'live-stream:answer'
+    | 'live-stream:ice-candidate'
+    | 'live-stream:viewer-left'
+    | 'live-stream:stop'
+    | 'live-stream:error'
+    | 'live-stream:state';
+
+export type LiveStreamSocketPayload = {
+    incidentId?: string;
+    senderId?: string;
+    viewerId?: string;
+    targetUserId?: string;
+    request?: LiveVideoRequest;
+    autoStartAllowed?: boolean;
+    offer?: any;
+    answer?: any;
+    candidate?: any;
+    message?: string;
+    role?: 'victim' | 'viewer' | string;
+};
+
+export type LiveStreamEvent = {
+    type: LiveStreamSocketType;
+    payload: LiveStreamSocketPayload;
+};
 
 function isPhoneLike(value: string) {
     const compact = value.replace(/[\s().-]/g, '');
@@ -52,6 +104,11 @@ function normalizeSocketMessage(raw: any): Message {
                 notificationName: raw.sender.notificationName,
                 avatarUrl: raw.sender.avatarUrl ?? raw.sender.photoUrl ?? raw.sender.photoUri,
             },
+            mediaUrl: raw.mediaUrl ?? raw.media_url,
+            mediaPublicId: raw.mediaPublicId ?? raw.media_public_id,
+            mediaMimeType: raw.mediaMimeType ?? raw.media_mime_type,
+            mediaFilename: raw.mediaFilename ?? raw.media_filename,
+            mediaSizeBytes: raw.mediaSizeBytes ?? raw.media_size_bytes,
         } as Message;
     }
     return {
@@ -69,6 +126,25 @@ function normalizeSocketMessage(raw: any): Message {
         type: raw.type ?? raw.message_type ?? (raw.senderRole === 'system' ? 'SYSTEM' : 'TEXT'),
         timestamp: raw.createdAt ?? raw.timestamp ?? raw.created_at,
         mediaUrl: raw.mediaUrl ?? raw.media_url,
+        mediaPublicId: raw.mediaPublicId ?? raw.media_public_id,
+        mediaMimeType: raw.mediaMimeType ?? raw.media_mime_type,
+        mediaFilename: raw.mediaFilename ?? raw.media_filename,
+        mediaSizeBytes: raw.mediaSizeBytes ?? raw.media_size_bytes,
+    };
+}
+
+function normalizeLiveVideoRequest(raw: any): LiveVideoRequest | null {
+    if (!raw) return null;
+    return {
+        id: String(raw.id),
+        incidentId: String(raw.incidentId ?? raw.incident_id),
+        requesterId: String(raw.requesterId ?? raw.requester_id),
+        victimId: String(raw.victimId ?? raw.victim_id),
+        status: raw.status,
+        createdAt: raw.createdAt ?? raw.created_at ?? null,
+        updatedAt: raw.updatedAt ?? raw.updated_at ?? null,
+        expiresAt: raw.expiresAt ?? raw.expires_at ?? null,
+        requester: raw.requester,
     };
 }
 
@@ -79,6 +155,13 @@ interface UseChatSocketReturn {
     liveLocation: IncidentLocation | null;
     isConnected: boolean;
     error: string | null;
+    liveVideoRequest: LiveVideoRequest | null;
+    liveVideoEvent: LiveVideoEvent | null;
+    liveStreamEvent: LiveStreamEvent | null;
+    clearLiveVideoRequest: () => void;
+    clearLiveVideoEvent: () => void;
+    clearLiveStreamEvent: () => void;
+    sendLiveStreamSignal: (type: LiveStreamSocketType, payload?: LiveStreamSocketPayload) => void;
     sendMessage: (content: string, type?: 'TEXT' | 'IMAGE' | 'AUDIO') => Promise<void>;
     sendImage: (localUri: string) => Promise<void>;
     sendLocationUpdate: (location: { latitude: number; longitude: number; heading?: number | null }) => Promise<void>;
@@ -97,6 +180,9 @@ export function useChatSocket(
     const [liveLocation, setLiveLocation] = useState<IncidentLocation | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [liveVideoRequest, setLiveVideoRequest] = useState<LiveVideoRequest | null>(null);
+    const [liveVideoEvent, setLiveVideoEvent] = useState<LiveVideoEvent | null>(null);
+    const [liveStreamEvent, setLiveStreamEvent] = useState<LiveStreamEvent | null>(null);
 
     const wsRef = useRef<WebSocket | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -170,6 +256,27 @@ export function useChatSocket(
         }
     }, []);
 
+    const appendMessage = useCallback((incoming: Message) => {
+        setMessages(prev => {
+            if (prev.find(m => m.id === incoming.id)) return prev;
+            const sid = selfIdRef.current;
+            if (sid && incoming.sender.id === sid) {
+                const optIdx = prev.findIndex(
+                    m => m.id.startsWith('opt-') && m.content === incoming.content
+                );
+                if (optIdx !== -1) {
+                    const next = [...prev];
+                    next[optIdx] = incoming;
+                    chatStore.save(incidentId, next);
+                    return next;
+                }
+            }
+            const next = [...prev, incoming];
+            chatStore.save(incidentId, next);
+            return next;
+        });
+    }, [incidentId]);
+
     // ── WebSocket connection ──
     const connectWS = useCallback(async () => {
         if (!incidentId) return;
@@ -194,26 +301,7 @@ export function useChatSocket(
                         case 'chat.message.new':
                         case 'message:new': {
                             const incoming = normalizeSocketMessage(data.payload);
-                            setMessages(prev => {
-                                // Deduplicate: drop if real ID already present
-                                if (prev.find(m => m.id === incoming.id)) return prev;
-                                // If this is an echo of our own send, replace the optimistic entry
-                                const sid = selfIdRef.current;
-                                if (sid && incoming.sender.id === sid) {
-                                    const optIdx = prev.findIndex(
-                                        m => m.id.startsWith('opt-') && m.content === incoming.content
-                                    );
-                                    if (optIdx !== -1) {
-                                        const next = [...prev];
-                                        next[optIdx] = incoming;
-                                        chatStore.save(incidentId, next);
-                                        return next;
-                                    }
-                                }
-                                const next = [...prev, incoming];
-                                chatStore.save(incidentId, next);
-                                return next;
-                            });
+                            appendMessage(incoming);
                             // Notify if message is from someone else
                             if (incoming.type !== 'SYSTEM' && incoming.sender.id !== selfIdRef.current) {
                                 notificationStore.add({
@@ -223,6 +311,108 @@ export function useChatSocket(
                                     incidentId,
                                     createdAt: new Date().toISOString(),
                                 });
+                            }
+                            break;
+                        }
+                        case 'live-video:requested': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(request);
+                            setLiveVideoEvent({
+                                type: 'requested',
+                                request,
+                                autoStartAllowed: Boolean(data.payload?.autoStartAllowed),
+                            });
+                            notificationStore.add({
+                                type: 'live_video_request',
+                                title: 'Live Safety Video Request',
+                                body: 'An accepted responder is requesting emergency video.',
+                                incidentId,
+                                createdAt: new Date().toISOString(),
+                            });
+                            break;
+                        }
+                        case 'live-video:approved': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(request);
+                            setLiveVideoEvent({ type: 'approved', request });
+                            break;
+                        }
+                        case 'live-video:recording': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(request);
+                            setLiveVideoEvent({ type: 'recording', request });
+                            break;
+                        }
+                        case 'live-video:uploading': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(request);
+                            setLiveVideoEvent({ type: 'uploading', request });
+                            break;
+                        }
+                        case 'live-video:clip': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            const message = data.payload?.message ? normalizeSocketMessage(data.payload.message) : null;
+                            setLiveVideoRequest(request);
+                            setLiveVideoEvent({ type: 'clip', request, message });
+                            if (message) appendMessage(message);
+                            refreshMessages();
+                            break;
+                        }
+                        case 'live-video:stopped': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(null);
+                            setLiveVideoEvent({ type: 'stopped', request });
+                            refreshMessages();
+                            break;
+                        }
+                        case 'live-video:declined': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            setLiveVideoRequest(null);
+                            setLiveVideoEvent({ type: 'declined', request });
+                            refreshMessages();
+                            notificationStore.add({
+                                type: 'live_video_declined',
+                                title: 'Live Safety Video',
+                                body: 'Live Safety Video was declined.',
+                                incidentId,
+                                createdAt: new Date().toISOString(),
+                            });
+                            break;
+                        }
+                        case 'live-video:completed': {
+                            const request = normalizeLiveVideoRequest(data.payload?.request);
+                            const message = data.payload?.message ? normalizeSocketMessage(data.payload.message) : null;
+                            setLiveVideoRequest(null);
+                            setLiveVideoEvent({ type: 'completed', request, message });
+                            if (message) appendMessage(message);
+                            refreshMessages();
+                            break;
+                        }
+                        case 'live-stream:request':
+                        case 'live-stream:approved':
+                        case 'live-stream:declined':
+                        case 'live-stream:start':
+                        case 'live-stream:join':
+                        case 'live-stream:offer':
+                        case 'live-stream:answer':
+                        case 'live-stream:ice-candidate':
+                        case 'live-stream:viewer-left':
+                        case 'live-stream:stop':
+                        case 'live-stream:error':
+                        case 'live-stream:state': {
+                            const payload = {
+                                ...(data.payload || {}),
+                                request: normalizeLiveVideoRequest((data.payload as any)?.request) || undefined,
+                            } as LiveStreamSocketPayload;
+                            setLiveStreamEvent({ type: data.type, payload });
+                            if (data.type === 'live-stream:request' && payload.request) {
+                                setLiveVideoRequest(payload.request);
+                            }
+                            if (data.type === 'live-stream:approved' && payload.request) {
+                                setLiveVideoRequest(payload.request);
+                            }
+                            if (data.type === 'live-stream:declined' || data.type === 'live-stream:stop') {
+                                setLiveVideoRequest(null);
                             }
                             break;
                         }
@@ -285,7 +475,7 @@ export function useChatSocket(
                 startPolling();
             }
         }
-    }, [incidentId, refreshMessages, startPolling, stopPolling]);
+    }, [appendMessage, incidentId, refreshMessages, startPolling, stopPolling]);
 
     useEffect(() => {
         connectWSRef.current = connectWS;
@@ -380,6 +570,9 @@ export function useChatSocket(
                 setParticipants([]);
                 setVictimLocation(null);
                 setLiveLocation(null);
+                setLiveVideoRequest(null);
+                setLiveVideoEvent(null);
+                setLiveStreamEvent(null);
                 setIsConnected(false);
                 setError('Missing incident id. Open this chat from a valid incident.');
             }, 0);
@@ -422,5 +615,37 @@ export function useChatSocket(
         };
     }, [connectWS, incidentId, refreshMessages, stopPolling]);
 
-    return { messages, participants, victimLocation, liveLocation, isConnected, error, sendMessage, sendImage, sendLocationUpdate, refreshMessages };
+    const clearLiveVideoRequest = useCallback(() => setLiveVideoRequest(null), []);
+    const clearLiveVideoEvent = useCallback(() => setLiveVideoEvent(null), []);
+    const clearLiveStreamEvent = useCallback(() => setLiveStreamEvent(null), []);
+    const sendLiveStreamSignal = useCallback((type: LiveStreamSocketType, payload: LiveStreamSocketPayload = {}) => {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            setLiveStreamEvent({
+                type: 'live-stream:error',
+                payload: { incidentId, message: 'Live Safety Video connection is not ready.' },
+            });
+            return;
+        }
+        wsRef.current.send(JSON.stringify({ type, payload }));
+    }, [incidentId]);
+
+    return {
+        messages,
+        participants,
+        victimLocation,
+        liveLocation,
+        isConnected,
+        error,
+        liveVideoRequest,
+        liveVideoEvent,
+        liveStreamEvent,
+        clearLiveVideoRequest,
+        clearLiveVideoEvent,
+        clearLiveStreamEvent,
+        sendLiveStreamSignal,
+        sendMessage,
+        sendImage,
+        sendLocationUpdate,
+        refreshMessages,
+    };
 }

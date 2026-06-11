@@ -60,7 +60,22 @@ async function uploadDocument(userId, docType, fileBuffer) {
   }
 
   const folder = `resqher/verification/${userId}`;
-  const { secure_url } = await uploadBuffer(fileBuffer, folder, `${docType}_${userId}`);
+  let secure_url;
+  try {
+    ({ secure_url } = await uploadBuffer(fileBuffer, folder, `${docType}_${userId}`));
+    console.log('[verification upload] Cloudinary upload succeeded', {
+      userId,
+      docType,
+      category: 'IMAGE_UPLOAD',
+    });
+  } catch (error) {
+    console.error('[verification upload] Cloudinary upload failed', {
+      userId,
+      docType,
+      code: error?.http_code || error?.code || 'UPLOAD_FAILED',
+    });
+    throw httpError(500, 'Document upload failed. Please try again.');
+  }
 
   const updateMap = {
     idCard: 'idCardUrl',

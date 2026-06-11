@@ -28,6 +28,8 @@ const ICON_MAP: Record<NotifType, { name: React.ComponentProps<typeof Feather>['
   sos_triggered: { name: 'radio', color: T.violet },
   message_received: { name: 'message-circle', color: T.violet },
   volunteer_joined: { name: 'user-plus', color: T.success },
+  live_video_request: { name: 'video', color: T.danger },
+  live_video_declined: { name: 'video-off', color: T.ink4 },
   incident_resolved: { name: 'check-circle', color: T.success },
   incident_cancelled: { name: 'x-circle', color: T.dangerText },
   system: { name: 'bell', color: T.violet },

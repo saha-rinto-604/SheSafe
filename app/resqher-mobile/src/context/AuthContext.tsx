@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
+import { AppState } from 'react-native';
 import { authService, getAccessToken, getStoredIdentity } from '../services/api';
 import { incidentService } from '../services/incidentService';
 import { getUserProfile, toIdentity } from '../services/profile';
@@ -46,7 +47,7 @@ type AuthContextValue = AuthState & {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 const SOS_BLOCKED_ROLES = new Set<Role>(['USER', 'VOLUNTEER']);
-const ACTIVE_SOS_STATUSES = new Set(['ACTIVE', 'LIVE', 'IN_PROGRESS']);
+const ACTIVE_SOS_STATUSES = new Set(['ACTIVE', 'LIVE', 'IN_PROGRESS', 'ACCEPTED', 'ASSISTING']);
 
 function isActiveSosStatus(status: unknown) {
   const normalized = String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
@@ -119,6 +120,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsSosLive(live);
   }, []);
 
+  const refreshActiveSosState = useCallback(async () => {
+    if (!accessToken || !role || !SOS_BLOCKED_ROLES.has(role)) {
+      setIsSosLive(false);
+      return;
+    }
+    try {
+      const activeSos = await incidentService.getMyActiveSos();
+      setIsSosLive(Boolean(activeSos && isActiveSosStatus(activeSos.status)));
+    } catch (error) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[AuthContext] Active SOS hydration failed:', error instanceof Error ? error.message : error);
+      }
+    }
+  }, [accessToken, role]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      refreshActiveSosState().catch(() => undefined);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [refreshActiveSosState]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        refreshActiveSosState().catch(() => undefined);
+      }
+    });
+    return () => sub.remove();
+  }, [refreshActiveSosState]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       isLoading,
@@ -139,7 +171,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const loginResult = await authService.login(username, password);
           const token = loginResult.accessToken;
           const resolvedRole = await applyAuthSession(token);
-          return { role: resolvedRole, verificationStatus: loginResult.user?.verificationStatus ?? null, user: loginResult.user };
+          return {
+            role: resolvedRole,
+            verificationStatus: loginResult.verificationStatus ?? loginResult.user?.verificationStatus ?? null,
+            user: loginResult.user,
+          };
         } catch (error) {
           await resetAuthSession();
           throw error;

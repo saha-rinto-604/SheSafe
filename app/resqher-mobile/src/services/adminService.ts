@@ -60,7 +60,12 @@ function normalizeError(error: any) {
     error?.response?.data?.detail ||
     error?.message ||
     'Admin request failed.';
-  return new Error(message);
+  const normalized = new Error(message) as Error & { status?: number; retryAfterSeconds?: number };
+  const status = Number(error?.response?.status || error?.status);
+  if (Number.isFinite(status)) normalized.status = status;
+  const retryAfter = Number(error?.retryAfterSeconds || error?.response?.headers?.['retry-after']);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) normalized.retryAfterSeconds = retryAfter;
+  return normalized;
 }
 
 function timeLabel(value?: string | null) {

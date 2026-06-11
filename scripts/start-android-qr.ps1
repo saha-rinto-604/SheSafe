@@ -2,14 +2,14 @@ param(
   [int]$BackendPort = 4000,
   [int]$MetroPort   = 8081,
   [switch]$SkipMigrations,
-  [switch]$ExpoTunnel
+  [switch]$ExpoTunnel,
+  [string]$PublicApiUrl = $env:RESQHER_PUBLIC_API_URL
 )
 
 $ErrorActionPreference = 'Stop'
 
-$UseNgrok = $true
-$PublicApiUrl = "https://citric-scuba-duh.ngrok-free.dev"
-$UseExpoTunnel = $true
+$UseNgrok = -not [string]::IsNullOrWhiteSpace($PublicApiUrl)
+$UseExpoTunnel = [bool]$ExpoTunnel
 $StartBackend = $true
 
 $scriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -163,7 +163,8 @@ Write-Host "  API URL : $apiUrl"
 $expoMode = if ($UseExpoTunnel) { "TUNNEL" } else { "LAN" }
 Write-Host "  Expo Mode: $expoMode"
 if ($UseNgrok -and -not $UseExpoTunnel) {
-  Write-Host "  Note    : backend uses ngrok; Expo uses LAN to avoid a second ngrok agent."
+  Write-Host "  Note    : backend uses ngrok; Expo uses LAN for a more stable QR session."
+  Write-Host "            Pass -ExpoTunnel to this script only when the phone cannot reach this PC on LAN."
 }
 Update-ExpoApiEnv -EnvPath $mobileEnvPath -ApiUrl $apiUrl
 

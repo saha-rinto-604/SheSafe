@@ -6,7 +6,7 @@
  * Upload: expo-image-picker (gallery for ID/Certificate, camera+gallery for Selfie)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -26,6 +26,10 @@ import api from '../../../../src/services/api';
 import { T, R } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
 import SheSafeMark from '../../../../src/components/SheSafeMark';
+import {
+    isUploadedVerificationDocument,
+    uploadVerificationDocument,
+} from '../../../../src/services/verificationUploadService';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export type VerificationStatus =
@@ -45,6 +49,8 @@ export type VerificationRecord = {
     };
     rejectionReason?: string;
 };
+
+type LocalDocuments = NonNullable<VerificationRecord['documents']>;
 
 const INITIAL_RECORD: VerificationRecord = { status: 'not_applied' };
 
@@ -67,12 +73,8 @@ function apiToRecord(v: any): VerificationRecord {
 }
 
 export async function loadVerificationRecord(): Promise<VerificationRecord> {
-    try {
-        const { data } = await api.get('/api/verification');
-        return apiToRecord(data?.verification);
-    } catch {
-        return { ...INITIAL_RECORD };
-    }
+    const { data } = await api.get('/api/verification');
+    return apiToRecord(data?.verification);
 }
 
 function formatDate(iso: string): string {
@@ -89,29 +91,6 @@ function getErrorMessage(err: any, fallback: string) {
         || err?.response?.data?.error
         || err?.message
         || fallback;
-}
-
-/** Upload a document image to the backend. */
-async function uploadDocument(type: 'id_card' | 'selfie' | 'certificate', localUri: string): Promise<string | null> {
-    const formData = new FormData();
-    const filename = localUri.split('/').pop() || 'doc.jpg';
-    const match = /\.(\w+)$/.exec(filename);
-    const ext = match?.[1]?.toLowerCase();
-    const mimeType = ext === 'jpg' ? 'image/jpeg' : ext ? `image/${ext}` : 'image/jpeg';
-
-    formData.append('document', {
-        uri: localUri,
-        name: filename,
-        type: mimeType,
-    } as any);
-
-    const { data } = await api.post(`/api/verification/upload/${type}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    const docs = data?.verification?.documents || {};
-    if (type === 'id_card') return docs.idCardUrl || data?.verification?.idCardUrl || data?.verification?.id_card_url || localUri;
-    if (type === 'selfie') return docs.selfieUrl || data?.verification?.selfieUrl || data?.verification?.selfie_url || localUri;
-    return docs.certificateUrl || data?.verification?.certificateUrl || data?.verification?.certificate_url || localUri;
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -211,10 +190,22 @@ export default function VolunteerVerificationScreen() {
 
     const [record, setRecord] = useState<VerificationRecord>(INITIAL_RECORD);
     const [viewState, setViewState] = useState<'loading' | 'initial' | 'form' | 'status'>('loading');
-    const [idCardUri, setIdCardUri] = useState<string | undefined>();
-    const [selfieUri, setSelfieUri] = useState<string | undefined>();
-    const [certUri, setCertUri] = useState<string | undefined>();
+    const [documents, setDocuments] = useState<LocalDocuments>({});
+    const { idCardUri, selfieUri, certificateUri: certUri } = documents;
+    const setIdCardUri = useCallback((uri?: string) => {
+        setDocuments(prev => ({ ...prev, idCardUri: uri }));
+    }, []);
+    const setSelfieUri = useCallback((uri?: string) => {
+        setDocuments(prev => ({ ...prev, selfieUri: uri }));
+    }, []);
+    const setCertUri = useCallback((uri?: string) => {
+        setDocuments(prev => ({ ...prev, certificateUri: uri }));
+    }, []);
     const [submitting, setSubmitting] = useState(false);
+
+    useEffect(() => {
+        if (__DEV__) console.log('[volunteer-verification] ACTIVE SCREEN MOUNTED', { route: 'standard-user' });
+    }, []);
 
     // ── Load verification status from API on mount ────────────────────────
     useEffect(() => {
@@ -226,9 +217,7 @@ export default function VolunteerVerificationScreen() {
                 if (rec.status === 'not_applied') {
                     setViewState('initial');
                 } else if (rec.status === 'draft') {
-                    setIdCardUri(rec.documents?.idCardUri);
-                    setSelfieUri(rec.documents?.selfieUri);
-                    setCertUri(rec.documents?.certificateUri);
+                    setDocuments(rec.documents || {});
                     setViewState('form');
                 } else {
                     setViewState('status');
@@ -254,6 +243,26 @@ export default function VolunteerVerificationScreen() {
     };
 
     const handleSubmit = async () => {
+        const hasIdCard = Boolean(idCardUri);
+        const hasSelfie = Boolean(selfieUri);
+        const hasCertificate = Boolean(certUri);
+        const buttonDisabled = !hasIdCard || !hasSelfie || submitting;
+        if (__DEV__) {
+            console.log('[volunteer-verification] submit pressed', {
+                hasIdCard,
+                hasSelfie,
+                hasCertificate,
+                isSubmitting: submitting,
+                buttonDisabled,
+                selectedDocumentKeys: Object.entries(documents)
+                    .filter(([, uri]) => Boolean(uri) && !isUploadedVerificationDocument(uri))
+                    .map(([key]) => key),
+                uploadedDocumentKeys: Object.entries(documents)
+                    .filter(([, uri]) => isUploadedVerificationDocument(uri))
+                    .map(([key]) => key),
+            });
+        }
+        if (submitting) return;
         if (!idCardUri || !selfieUri) {
             Alert.alert(
                 'Documents required',
@@ -263,12 +272,22 @@ export default function VolunteerVerificationScreen() {
         }
         setSubmitting(true);
         try {
-            // Upload documents to backend
-            await uploadDocument('id_card', idCardUri);
-            await uploadDocument('selfie', selfieUri);
-            if (certUri) await uploadDocument('certificate', certUri);
+            // Existing HTTPS URLs are already uploaded; only picker URIs need multipart upload.
+            if (!isUploadedVerificationDocument(idCardUri)) {
+                const uploadedIdCard = await uploadVerificationDocument('id_card', idCardUri);
+                if (uploadedIdCard) setIdCardUri(uploadedIdCard);
+            }
+            if (!isUploadedVerificationDocument(selfieUri)) {
+                const uploadedSelfie = await uploadVerificationDocument('selfie', selfieUri);
+                if (uploadedSelfie) setSelfieUri(uploadedSelfie);
+            }
+            if (certUri && !isUploadedVerificationDocument(certUri)) {
+                const uploadedCertificate = await uploadVerificationDocument('certificate', certUri);
+                if (uploadedCertificate) setCertUri(uploadedCertificate);
+            }
 
             // Submit for review
+            if (__DEV__) console.log('[volunteer-verification] calling submit endpoint');
             const { data } = await api.post('/api/verification/submit');
             const rec = apiToRecord(data?.verification);
             setRecord(rec);
@@ -286,9 +305,7 @@ export default function VolunteerVerificationScreen() {
             const { data } = await api.post('/api/verification/reapply');
             const rec = apiToRecord(data?.verification);
             setRecord(rec);
-            setIdCardUri(undefined);
-            setSelfieUri(undefined);
-            setCertUri(undefined);
+            setDocuments({});
             setViewState('form');
         } catch (err: any) {
             const msg = getErrorMessage(err, 'Could not reapply.');
@@ -346,6 +363,7 @@ export default function VolunteerVerificationScreen() {
     // Draft state is now managed by the API — no local auto-save needed
 
     const canSubmit = !!idCardUri && !!selfieUri;
+    const buttonDisabled = !canSubmit || submitting;
 
     // ─────────────────────────────────────────────────────────────────────
     if (viewState === 'loading') return null;
@@ -475,12 +493,13 @@ export default function VolunteerVerificationScreen() {
 
                             {/* Submit */}
                             <TouchableOpacity
-                                style={[s.primaryBtn, !canSubmit && s.primaryBtnDisabled]}
-                                onPress={canSubmit && !submitting ? handleSubmit : undefined}
-                                activeOpacity={canSubmit ? 0.8 : 1}
+                                style={[s.primaryBtn, buttonDisabled && s.primaryBtnDisabled]}
+                                onPress={handleSubmit}
+                                activeOpacity={buttonDisabled ? 1 : 0.8}
+                                accessibilityState={{ disabled: buttonDisabled }}
                             >
-                                <Feather name="send" size={17} color={canSubmit ? T.onPrimary : T.disabledText} />
-                                <Text style={[s.primaryBtnText, !canSubmit && s.primaryBtnTextDisabled]}>
+                                <Feather name="send" size={17} color={buttonDisabled ? T.disabledText : T.onPrimary} />
+                                <Text style={[s.primaryBtnText, buttonDisabled && s.primaryBtnTextDisabled]}>
                                     {submitting ? 'Submitting…' : 'Submit Verification Request'}
                                 </Text>
                             </TouchableOpacity>
@@ -541,9 +560,7 @@ export default function VolunteerVerificationScreen() {
                                                 const { data } = await api.post('/api/verification/edit');
                                                 const rec = apiToRecord(data?.verification);
                                                 setRecord(rec);
-                                                setIdCardUri(rec.documents?.idCardUri);
-                                                setSelfieUri(rec.documents?.selfieUri);
-                                                setCertUri(rec.documents?.certificateUri);
+                                                setDocuments(rec.documents || {});
                                                 setViewState('form');
                                             } catch (err: any) {
                                                 const msg = err?.response?.data?.message || 'Could not edit documents.';

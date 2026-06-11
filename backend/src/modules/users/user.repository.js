@@ -18,6 +18,8 @@ const { phoneSearchVariants } = require('../../utils/phone');
 const { ensureVolunteerDispatchSchema } = require('../incidents/incident.repository');
 
 let hasPoliceProfilesTableCache;
+let policeProfilesSchemaReady = false;
+let policeProfilesSchemaPromise = null;
 let userBlockSchemaReady = false;
 let userIdentitySchemaReady = false;
 
@@ -173,62 +175,78 @@ async function preparePoliceProfilesForRead() {
 }
 
 async function ensurePoliceProfilesSchema(conn = null) {
-  const execute = conn
-    ? (sql, params = []) => conn.execute(sql, params)
-    : (sql, params = []) => query(sql, params);
+  if (!conn && policeProfilesSchemaReady) return;
+  if (!conn && policeProfilesSchemaPromise) return policeProfilesSchemaPromise;
 
-  await execute(
-    `CREATE TABLE IF NOT EXISTS police_profiles (
-      user_id BIGINT UNSIGNED NOT NULL,
-      police_station_or_unit VARCHAR(255) NOT NULL,
-      badge_number VARCHAR(120) NOT NULL,
-      nid_card_url TEXT DEFAULT NULL,
-      selfie_url TEXT DEFAULT NULL,
-      job_id_card_url TEXT DEFAULT NULL,
-      verification_status ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING',
-      rejection_reason TEXT DEFAULT NULL,
-      submitted_at TIMESTAMP NULL DEFAULT NULL,
-      reviewed_by BIGINT UNSIGNED DEFAULT NULL,
-      reviewed_at TIMESTAMP NULL DEFAULT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (user_id),
-      UNIQUE KEY uq_police_profiles_badge_number (badge_number),
-      KEY idx_police_profiles_status (verification_status),
-      CONSTRAINT fk_police_profiles_user FOREIGN KEY (user_id)
-        REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE,
-      CONSTRAINT fk_police_profiles_reviewed_by FOREIGN KEY (reviewed_by)
-        REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
-    )`
-  );
+  const ensureSchema = async () => {
+    const execute = conn
+      ? (sql, params = []) => conn.execute(sql, params)
+      : (sql, params = []) => query(sql, params);
 
-  for (const column of [
-    ['nid_card_url', 'TEXT DEFAULT NULL AFTER badge_number'],
-    ['selfie_url', 'TEXT DEFAULT NULL AFTER nid_card_url'],
-    ['job_id_card_url', 'TEXT DEFAULT NULL AFTER selfie_url'],
-    ['verification_status', "ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING' AFTER job_id_card_url"],
-    ['rejection_reason', 'TEXT DEFAULT NULL AFTER verification_status'],
-    ['submitted_at', 'TIMESTAMP NULL DEFAULT NULL AFTER rejection_reason'],
-    ['reviewed_by', 'BIGINT UNSIGNED DEFAULT NULL AFTER submitted_at'],
-    ['reviewed_at', 'TIMESTAMP NULL DEFAULT NULL AFTER reviewed_by'],
-  ]) {
-    const [name, definition] = column;
-    const result = await execute(
-      `SELECT COUNT(*) AS count
-       FROM INFORMATION_SCHEMA.COLUMNS
-       WHERE TABLE_SCHEMA = DATABASE()
-         AND TABLE_NAME = 'police_profiles'
-         AND COLUMN_NAME = ?`,
-      [name]
+    await execute(
+      `CREATE TABLE IF NOT EXISTS police_profiles (
+        user_id BIGINT UNSIGNED NOT NULL,
+        police_station_or_unit VARCHAR(255) NOT NULL,
+        badge_number VARCHAR(120) NOT NULL,
+        nid_card_url TEXT DEFAULT NULL,
+        selfie_url TEXT DEFAULT NULL,
+        job_id_card_url TEXT DEFAULT NULL,
+        verification_status ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING',
+        rejection_reason TEXT DEFAULT NULL,
+        submitted_at TIMESTAMP NULL DEFAULT NULL,
+        reviewed_by BIGINT UNSIGNED DEFAULT NULL,
+        reviewed_at TIMESTAMP NULL DEFAULT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id),
+        UNIQUE KEY uq_police_profiles_badge_number (badge_number),
+        KEY idx_police_profiles_status (verification_status),
+        CONSTRAINT fk_police_profiles_user FOREIGN KEY (user_id)
+          REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE,
+        CONSTRAINT fk_police_profiles_reviewed_by FOREIGN KEY (reviewed_by)
+          REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+      )`
     );
-    const rows = Array.isArray(result?.[0]) ? result[0] : result;
-    const count = Number(rows?.[0]?.count || 0);
-    if (!count) {
-      await execute(`ALTER TABLE police_profiles ADD COLUMN ${name} ${definition}`);
-    }
-  }
 
-  hasPoliceProfilesTableCache = true;
+    for (const column of [
+      ['nid_card_url', 'TEXT DEFAULT NULL AFTER badge_number'],
+      ['selfie_url', 'TEXT DEFAULT NULL AFTER nid_card_url'],
+      ['job_id_card_url', 'TEXT DEFAULT NULL AFTER selfie_url'],
+      ['verification_status', "ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING' AFTER job_id_card_url"],
+      ['rejection_reason', 'TEXT DEFAULT NULL AFTER verification_status'],
+      ['submitted_at', 'TIMESTAMP NULL DEFAULT NULL AFTER rejection_reason'],
+      ['reviewed_by', 'BIGINT UNSIGNED DEFAULT NULL AFTER submitted_at'],
+      ['reviewed_at', 'TIMESTAMP NULL DEFAULT NULL AFTER reviewed_by'],
+    ]) {
+      const [name, definition] = column;
+      const result = await execute(
+        `SELECT COUNT(*) AS count
+         FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'police_profiles'
+           AND COLUMN_NAME = ?`,
+        [name]
+      );
+      const rows = Array.isArray(result?.[0]) ? result[0] : result;
+      const count = Number(rows?.[0]?.count || 0);
+      if (!count) {
+        await execute(`ALTER TABLE police_profiles ADD COLUMN ${name} ${definition}`);
+      }
+    }
+
+    hasPoliceProfilesTableCache = true;
+  };
+
+  if (conn) return ensureSchema();
+
+  policeProfilesSchemaPromise = ensureSchema()
+    .then(() => {
+      policeProfilesSchemaReady = true;
+    })
+    .finally(() => {
+      policeProfilesSchemaPromise = null;
+    });
+  return policeProfilesSchemaPromise;
 }
 
 function policeProfileSelect(hasTable) {

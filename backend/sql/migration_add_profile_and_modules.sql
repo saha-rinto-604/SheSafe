@@ -64,9 +64,22 @@ CREATE TABLE IF NOT EXISTS safety_settings (
   push_notifications        BOOLEAN DEFAULT TRUE,
   sms_backup_alert          BOOLEAN DEFAULT FALSE,
   max_responders            TINYINT UNSIGNED DEFAULT 5,
+  allow_emergency_auto_evidence_recording BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at                TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'safety_settings'
+    AND COLUMN_NAME = 'allow_emergency_auto_evidence_recording'
+);
+SET @sql = IF(@col_exists = 0,
+  'ALTER TABLE safety_settings ADD COLUMN allow_emergency_auto_evidence_recording BOOLEAN NOT NULL DEFAULT FALSE AFTER max_responders',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 
 -- ── 4. Volunteer Verifications ──────────────────────────────────────────

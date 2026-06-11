@@ -1271,7 +1271,7 @@ export default function AICopilotWorkspace({ visible, mode, incidentId, onClose 
         />
         <KeyboardAvoidingView
           style={st.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior="padding"
           keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
         >
           <View style={st.headerWrap}>
@@ -1299,6 +1299,7 @@ export default function AICopilotWorkspace({ visible, mode, incidentId, onClose 
             style={st.scroll}
             contentContainerStyle={[st.scrollContent, { paddingBottom: insets.bottom + 104 }]}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             showsVerticalScrollIndicator={false}
           >
             <View style={st.focusCard}>
@@ -1324,8 +1325,10 @@ export default function AICopilotWorkspace({ visible, mode, incidentId, onClose 
                 placeholder={config.inputPlaceholder}
                 placeholderTextColor="rgba(245,245,247,0.38)"
                 style={st.followInput}
-                returnKeyType="send"
-                onSubmitEditing={handleFollowUp}
+                multiline
+                maxLength={2000}
+                textAlignVertical="top"
+                scrollEnabled
               />
               <TouchableOpacity
                 style={st.sendBtn}
@@ -1560,12 +1563,15 @@ const st = StyleSheet.create({
     minHeight: 44,
     borderRadius: R.md,
     paddingHorizontal: S.s3,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     color: T.ink,
     fontSize: 14,
+    lineHeight: 20,
     fontWeight: '700',
     backgroundColor: 'rgba(0,0,0,0.20)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.10)',
+    includeFontPadding: false,
   },
   segment: {
     flexDirection: 'row',
@@ -1852,12 +1858,11 @@ const st = StyleSheet.create({
     fontWeight: '700',
   },
   inputWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     paddingHorizontal: S.s3,
     paddingTop: S.s2,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 760,
     backgroundColor: 'rgba(0,0,0,0.72)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.08)',
@@ -1865,21 +1870,27 @@ const st = StyleSheet.create({
   inputBar: {
     minHeight: 50,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: S.s2,
     borderRadius: R.pill,
     paddingLeft: S.s4,
     paddingRight: 6,
+    paddingVertical: 5,
     backgroundColor: T.surfaceBulkyGlass,
     borderWidth: 1,
     borderColor: T.hairlineMicro,
   },
   followInput: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 40,
+    maxHeight: 112,
+    paddingTop: Platform.OS === 'ios' ? 10 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 8,
     color: T.ink,
     fontSize: 14,
+    lineHeight: 20,
     fontWeight: '600',
+    includeFontPadding: false,
   },
   sendBtn: {
     width: 40,

@@ -55,6 +55,18 @@ async function listNotifications(userId, { limit = 50 } = {}) {
 }
 
 async function listMissedNotifications(userId, { limit = 10 } = {}) {
+  const safeUserId = Number(userId);
+  if (!Number.isSafeInteger(safeUserId) || safeUserId <= 0) {
+    const error = new Error('Authentication required.');
+    error.status = 401;
+    throw error;
+  }
+
+  const parsedLimit = Number(limit);
+  const safeLimit = Number.isFinite(parsedLimit)
+    ? Math.min(Math.max(Math.trunc(parsedLimit), 1), 50)
+    : 10;
+
   const rows = await query(
     `SELECT *
        FROM notifications
@@ -62,8 +74,8 @@ async function listMissedNotifications(userId, { limit = 10 } = {}) {
         AND read_at IS NULL
         AND shown_in_app_at IS NULL
       ORDER BY created_at DESC, id DESC
-      LIMIT ?`,
-    [userId, Number(limit)]
+      LIMIT ${safeLimit}`,
+    [safeUserId]
   );
   return rows.reverse().map(formatNotification);
 }

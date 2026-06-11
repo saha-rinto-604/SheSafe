@@ -2,7 +2,7 @@
  * Admin Dashboard — Emergency Coordination Center
  * Responsive layout: Desktop sidebar (>768px) / Mobile drawer (≤768px)
  */
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   Dimensions, Platform, TextInput, StatusBar, Modal, Animated, Easing, Image
@@ -17,24 +17,27 @@ import UserAvatar from '../../../../src/components/shared/UserAvatar';
 import { DesktopSidebar, MobileDrawer } from '../../../../src/features/admin/_components/AdminSidebar';
 import {
   HeroCard, StatCard, SectionHeader,
-  VerificationCard, ReportCard,
+  VerificationCard,
 } from '../../../../src/features/admin/_components/AdminDashboardCards';
 import { IncidentCenterWorkspace } from '../../../../src/features/admin/_components/IncidentCenterWorkspace';
 import { UsersWorkspace } from '../../../../src/features/admin/_components/UsersWorkspace';
 import { VerificationsWorkspace } from '../../../../src/features/admin/_components/VerificationsWorkspace';
 import { SafePlacesWorkspace } from '../../../../src/features/admin/_components/SafePlacesWorkspace';
-import { ReportsWorkspace } from '../../../../src/features/admin/_components/ReportsWorkspace';
 import { PoliceWorkspace } from '../../../../src/features/admin/_components/PoliceWorkspace';
 import { AdminNotificationsDrawer } from '../../../../src/features/admin/_components/AdminNotificationsDrawer';
 import { adminService, type AdminOverview } from '../../../../src/services/adminService';
-import { ROLE_DEFAULT_ROUTE } from '../../../../src/constants/routes';
 import { SIDEBAR_ITEMS } from '../../../../src/features/admin/_data/adminMockData';
 import { useDispatchSocket } from '../../../../src/hooks/useDispatchSocket';
+import { useNotificationBanner } from '../../../../src/components/NotificationBannerProvider';
+import type { BackendNotification } from '../../../../src/services/notificationService';
 const DESKTOP_BREAKPOINT = 768;
 const USE_NATIVE_DRIVER = Platform.OS !== 'web';
 const ADMIN_SECTION_KEYS = new Set(SIDEBAR_ITEMS.map(item => item.key));
 const ACTIVE_LAW_REQUEST_STATUSES = new Set(['PENDING_ADMIN_REVIEW', 'ASSIGNED_TO_POLICE', 'ACCEPTED_BY_POLICE', 'REJECTED_BY_POLICE']);
 const INACTIVE_LAW_STATUSES = new Set(['RESOLVED', 'CANCELLED']);
+const ADMIN_REFRESH_INTERVAL_MS = 60_000;
+const ADMIN_REFRESH_MIN_GAP_MS = 10_000;
+const ADMIN_RATE_LIMIT_FALLBACK_MS = 60_000;
 
 function normalizeAdminSection(value?: string | string[]) {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -235,16 +238,23 @@ export default function AdminDashboard() {
   const [overviewError, setOverviewError] = useState('');
   const [ovVerifs, setOvVerifs] = useState<any[]>([]);
   const [ovSafePlaces, setOvSafePlaces] = useState<any[]>([]);
-  const [ovReports, setOvReports] = useState<any[]>([]);
   const [ovLawRequests, setOvLawRequests] = useState<any[]>([]);
-  const [globalActionedReports, setGlobalActionedReports] = useState<Record<string, 'DISMISSED' | 'WARNED' | 'BLOCKED'>>({});
   
-  const recentReports = ovReports.filter(r => !globalActionedReports[r.id]);
   const attentionLawRequests = ovLawRequests.filter(needsAdminAttention);
 
   const [selectedVerif, setSelectedVerif] = useState<any>(null);
-  const [selectedReport, setSelectedReport] = useState<any>(null);
   const { showToast } = useToast();
+  const { enqueue } = useNotificationBanner();
+  const [latestAdminNotification, setLatestAdminNotification] = useState<BackendNotification | null>(null);
+  const enqueueAdminNotification = useCallback((notification: BackendNotification) => {
+    enqueue(notification);
+    setLatestAdminNotification(notification);
+  }, [enqueue]);
+  const knownAdminReviewIds = useRef<Set<string> | null>(null);
+  const overviewFetchInFlight = useRef(false);
+  const overviewLastFetchedAt = useRef(0);
+  const overviewBackoffUntil = useRef(0);
+  const rateLimitToastShownAt = useRef(0);
 
   const handleApproveVerif = (item: any) => {
     showToast({ type: 'success', title: 'Volunteer Approved', message: `${item.name} has been verified.` });
@@ -255,11 +265,6 @@ export default function AdminDashboard() {
     showToast({ type: 'info', title: 'Application Rejected', message: `${item.name}'s verification was rejected.` });
     setSelectedVerif(null);
     setTimeout(() => setOvVerifs(prev => prev.filter(v => v.id !== item.id)), 300);
-  };
-  const handleReportAction = (item: any, action: string) => {
-    showToast({ type: 'success', title: 'Action Taken', message: `Report marked as ${action.toLowerCase()}.` });
-    setGlobalActionedReports(prev => ({ ...prev, [item.id]: action }));
-    setSelectedReport(null);
   };
   useEffect(() => {
     if (authLoading) return;
@@ -273,51 +278,154 @@ export default function AdminDashboard() {
         title: 'Admin Access Only',
         message: 'Please sign in with an admin account.',
       });
-      router.replace((role ? ROLE_DEFAULT_ROUTE[role] : '/(auth)/login') as any);
+      router.replace('/(auth)/admin-login' as any);
     }
   }, [authLoading, isSignedIn, role, router, showToast]);
 
   const loadOverview = useCallback(async () => {
+    const now = Date.now();
+    if (overviewFetchInFlight.current || now < overviewBackoffUntil.current) return;
+    if (now - overviewLastFetchedAt.current < ADMIN_REFRESH_MIN_GAP_MS) return;
+    if (Platform.OS === 'web' && typeof document !== 'undefined' && document.hidden) return;
+
+    overviewFetchInFlight.current = true;
+    overviewLastFetchedAt.current = now;
     setOverviewLoading(true);
     setOverviewError('');
     try {
-      const [nextOverview, verifs, safePlaces, reports, lawRequests] = await Promise.all([
+      if (__DEV__) console.info('[admin-dashboard] refresh cycle started');
+      const [nextOverview, verifs, safePlaces, lawRequests] = await Promise.all([
         adminService.getOverview(),
         adminService.getVerifications('pending'),
         adminService.getSafePlaces('PENDING'),
-        adminService.getReports('PENDING'),
         adminService.getLawEnforcementRequests(),
       ]);
+      const nextReviewIds = new Set<string>();
+      const reviewNotifications = [
+        ...verifs.filter((item: any) => item.kind !== 'police').map((item: any) => ({
+          key: `admin-volunteer-verification:${item.id}`,
+          type: 'ADMIN_VERIFICATION_REQUEST',
+          title: 'New volunteer verification request',
+          body: `${item.name || 'A volunteer'} submitted documents for review.`,
+          context: 'admin_volunteer_verification',
+        })),
+        ...verifs.filter((item: any) => item.kind === 'police').map((item: any) => ({
+          key: `admin-police-verification:${item.id}`,
+          type: 'ADMIN_VERIFICATION_REQUEST',
+          title: 'New police verification request',
+          body: `${item.name || 'A police applicant'} submitted documents for review.`,
+          context: 'admin_police_verification',
+        })),
+        ...safePlaces.map((item: any) => ({
+          key: `admin-safe-place:${item.id}`,
+          type: 'ADMIN_SAFE_PLACE_REQUEST',
+          title: 'New safe place request',
+          body: `${item.placeName || 'A safe place'} is waiting for review.`,
+          context: 'admin_safe_place',
+        })),
+      ];
+      reviewNotifications.forEach(item => nextReviewIds.add(item.key));
+      if (knownAdminReviewIds.current) {
+        reviewNotifications
+          .filter(item => !knownAdminReviewIds.current?.has(item.key))
+          .forEach(item => enqueueAdminNotification({
+            id: item.key,
+            type: item.type,
+            title: item.title,
+            body: item.body,
+            data: { context: item.context },
+            read: false,
+            createdAt: new Date().toISOString(),
+          }));
+      }
+      knownAdminReviewIds.current = nextReviewIds;
       setOverview(nextOverview);
       setOvVerifs(verifs);
       setOvSafePlaces(safePlaces);
-      setOvReports(reports);
       setOvLawRequests(lawRequests);
     } catch (err: any) {
-      setOverviewError(err?.message || 'Could not load admin overview.');
+      if (Number(err?.status) === 429) {
+        const retryAfterMs = Math.max(Number(err?.retryAfterSeconds || 0) * 1000, ADMIN_RATE_LIMIT_FALLBACK_MS);
+        overviewBackoffUntil.current = Date.now() + retryAfterMs;
+        setOverviewError('');
+        if (Date.now() - rateLimitToastShownAt.current >= retryAfterMs) {
+          rateLimitToastShownAt.current = Date.now();
+          showToast({
+            type: 'warning',
+            title: 'Dashboard refresh paused',
+            message: 'Admin dashboard is refreshing too often. Please wait a moment.',
+          });
+        }
+        if (__DEV__) console.info(`[admin-dashboard] 429 received; polling paused for ${Math.ceil(retryAfterMs / 1000)} seconds`);
+      } else {
+        setOverviewError(err?.message || 'Could not load admin overview.');
+      }
     } finally {
+      overviewFetchInFlight.current = false;
       setOverviewLoading(false);
     }
-  }, []);
+  }, [enqueueAdminNotification, showToast]);
 
   useEffect(() => {
     if (role !== 'ADMIN') return undefined;
-    const timer = setTimeout(() => {
+    const initialTimer = setTimeout(() => {
       loadOverview();
     }, 0);
-    return () => clearTimeout(timer);
+    const refreshTimer = setInterval(loadOverview, ADMIN_REFRESH_INTERVAL_MS);
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && !document.hidden) loadOverview();
+    };
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(refreshTimer);
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibility);
+      }
+    };
   }, [role, loadOverview]);
 
-  const refreshLawRequestsFromSocket = useCallback(() => {
+  const refreshLawRequestsFromSocket = useCallback((payload?: any) => {
     if (role === 'ADMIN') {
+      if (payload?.notificationId || payload?.requestId) {
+        enqueueAdminNotification({
+          id: String(payload.notificationId || `admin-law-request:${payload.requestId}:${payload.status || 'updated'}`),
+          type: String(payload.type || 'LAW_ENFORCEMENT_REQUESTED'),
+          title: String(payload.title || 'Law enforcement request'),
+          body: String(payload.message || 'A law enforcement request needs admin attention.'),
+          incidentId: payload.incidentId ? String(payload.incidentId) : null,
+          data: { context: 'admin_law_enforcement', requestId: payload.requestId || null },
+          read: false,
+          createdAt: String(payload.createdAt || new Date().toISOString()),
+        });
+      }
       loadOverview();
     }
-  }, [loadOverview, role]);
+  }, [enqueueAdminNotification, loadOverview, role]);
+
+  const notifyCriticalSos = useCallback((incident: any) => {
+    if (role !== 'ADMIN') return;
+    enqueueAdminNotification({
+      id: `admin-critical-sos:${incident.id}`,
+      type: 'ADMIN_CRITICAL_SOS',
+      title: 'New critical SOS incident',
+      body: `${incident.victimName || 'A user'} needs immediate assistance.`,
+      incidentId: String(incident.id),
+      data: { context: 'admin_incident' },
+      read: false,
+      createdAt: String(incident.createdAt || new Date().toISOString()),
+    });
+    loadOverview();
+  }, [enqueueAdminNotification, loadOverview, role]);
 
   useDispatchSocket({
     enabled: role === 'ADMIN' && isSignedIn,
+    onNewSos: notifyCriticalSos,
     onLawEnforcementRequest: refreshLawRequestsFromSocket,
     onIncidentStatusUpdated: refreshLawRequestsFromSocket,
+    onNotificationCreated: enqueueAdminNotification,
   });
 
   const workspaceOpacity = useMemo(() => new Animated.Value(1), []);
@@ -391,7 +499,6 @@ export default function AdminDashboard() {
     { label: 'Total Incidents', value: overview?.totals.totalIncidents ?? 0, icon: 'layers', color: T.violet, bgColor: T.violetDim },
     { label: 'Resolved Incidents', value: overview?.totals.resolvedIncidents ?? 0, icon: 'shield', color: T.success, bgColor: T.safeLight },
     { label: 'Pending Safe Places', value: overview?.live.pendingSafePlaces ?? 0, icon: 'map-pin', color: T.accent, bgColor: T.accentLight },
-    { label: 'User Reports', value: overview?.totals.userReports ?? 0, icon: 'file-text', color: T.accent, bgColor: T.accentLight },
   ];
 
   if (authLoading || role !== 'ADMIN') {
@@ -475,22 +582,14 @@ export default function AdminDashboard() {
                     {ovVerifs.length === 0 && <Text style={ds.emptyQuickText}>No pending verifications.</Text>}
                   </View>
 
-                  {/* Recent Reports */}
+                  {/* Law Enforcement Requests */}
                   <View style={[ds.bigCard, isDesktop ? ds.colThird : { marginTop: 20 }]}>
-                    <SectionHeader title="Recent User Reports" icon="file-text" onViewAll={() => handleMenuSelect('reports')} />
-                    {recentReports.slice(0, 3).map((item) => (
-                      <ReportCard key={item.id} item={item} onPress={() => handleMenuSelect('reports')} />
+                    <SectionHeader title="Law Enforcement Requests" icon="shield" onViewAll={() => handleMenuSelect('law-enforcement-requests')} />
+                    {attentionLawRequests.slice(0, 3).map(item => (
+                      <LawRequestPreviewCard key={item.id} item={item} onPress={() => handleMenuSelect('law-enforcement-requests')} />
                     ))}
-                    {recentReports.length === 0 && <Text style={ds.emptyQuickText}>No pending reports.</Text>}
+                    {attentionLawRequests.length === 0 && <Text style={ds.emptyQuickText}>No active law enforcement requests need admin attention.</Text>}
                   </View>
-                </View>
-
-                <View style={[ds.bigCard, { marginTop: 20 }]}>
-                  <SectionHeader title="Law Enforcement Requests" icon="shield" onViewAll={() => handleMenuSelect('law-enforcement-requests')} />
-                  {attentionLawRequests.slice(0, 4).map(item => (
-                    <LawRequestPreviewCard key={item.id} item={item} onPress={() => handleMenuSelect('law-enforcement-requests')} />
-                  ))}
-                  {attentionLawRequests.length === 0 && <Text style={ds.emptyQuickText}>No active law enforcement requests need admin attention.</Text>}
                 </View>
               </ScrollView>
             ) : activeMenu === 'incidents' ? (
@@ -517,14 +616,6 @@ export default function AdminDashboard() {
               <View style={{ flex: 1, padding: 20 }}>
                 <SafePlacesWorkspace insetsBottom={insets.bottom} />
               </View>
-            ) : activeMenu === 'reports' ? (
-              <View style={{ flex: 1, padding: 20 }}>
-                <ReportsWorkspace 
-                  insetsBottom={insets.bottom} 
-                  globalActionedReports={globalActionedReports}
-                  setGlobalActionedReports={setGlobalActionedReports}
-                />
-              </View>
             ) : (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <Feather name="tool" size={48} color={T.ink4} />
@@ -545,9 +636,10 @@ export default function AdminDashboard() {
       )}
 
       {/* Notifications Drawer */}
-      <AdminNotificationsDrawer 
-        isOpen={notifDrawerOpen} 
-        onClose={() => setNotifDrawerOpen(false)} 
+      <AdminNotificationsDrawer
+        isOpen={notifDrawerOpen}
+        onClose={() => setNotifDrawerOpen(false)}
+        liveNotification={latestAdminNotification}
       />
 
       {/* Custom Logout Modal */}
@@ -638,87 +730,6 @@ export default function AdminDashboard() {
         </View>
       </Modal>
 
-      {/* Report Modal */}
-      <Modal visible={!!selectedReport} transparent animationType="slide" onRequestClose={() => setSelectedReport(null)}>
-        <View style={ds.modalOverlay}>
-          <View style={ds.detailsModalContent}>
-            {selectedReport && (
-              <>
-                <View style={ds.modalHeader}>
-                  <Text style={ds.modalTitle}>Report Details</Text>
-                  <TouchableOpacity onPress={() => setSelectedReport(null)} style={ds.closeBtn}>
-                    <Feather name="x" size={20} color={T.ink3} />
-                  </TouchableOpacity>
-                </View>
-                <ScrollView contentContainerStyle={ds.modalScroll}>
-                  {/* Reporter & Reported Info */}
-                  <View style={ds.usersSection}>
-                    <View style={ds.userBox}>
-                      <Text style={ds.userLabel}>Reported User</Text>
-                      <View style={ds.userRow}>
-                        <UserAvatar size={40} />
-                        <Text style={ds.userName}>{selectedReport.reported}</Text>
-                      </View>
-                    </View>
-                    
-                    <View style={ds.arrowBox}>
-                      <Feather name="arrow-left" size={16} color={T.danger} />
-                    </View>
-                    
-                    <View style={ds.userBox}>
-                      <Text style={ds.userLabel}>Reported By</Text>
-                      <View style={ds.userRow}>
-                        <UserAvatar size={40} />
-                        <Text style={ds.userName}>{selectedReport.by}</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Report Reason & Details */}
-                  <View style={ds.repSection}>
-                    <Text style={ds.repSectionTitle}>Incident Details</Text>
-                    
-                    <View style={ds.detailRowCol}>
-                      <Text style={ds.detailLbl}>Reason</Text>
-                      <Text style={ds.detailValLeft}>{selectedReport.reason}</Text>
-                    </View>
-                    
-                    <View style={ds.detailRow}>
-                      <Text style={ds.detailLbl}>Related Incident ID</Text>
-                      <Text style={ds.detailValHi}>{selectedReport.incidentId}</Text>
-                    </View>
-                    
-                    <View style={ds.detailRow}>
-                      <Text style={ds.detailLbl}>Date</Text>
-                      <Text style={ds.detailVal}>{selectedReport.date}</Text>
-                    </View>
-                  </View>
-
-                  {/* Action Area */}
-                  <View style={ds.actionArea}>
-                    <View style={ds.actionButtonsColumn}>
-                      <TouchableOpacity style={ds.dismissBtn} onPress={() => handleReportAction(selectedReport, 'DISMISSED')} activeOpacity={0.7}>
-                        <Feather name="trash-2" size={18} color={T.ink3} />
-                        <Text style={ds.dismissTxt}>Dismiss</Text>
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity style={ds.warnBtn} onPress={() => handleReportAction(selectedReport, 'WARNED')} activeOpacity={0.7}>
-                        <Feather name="alert-triangle" size={18} color="#E25B3A" />
-                        <Text style={ds.warnTxt}>Warn User</Text>
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity style={ds.blockBtn} onPress={() => handleReportAction(selectedReport, 'BLOCKED')} activeOpacity={0.7}>
-                        <Feather name="slash" size={18} color="#FFF" />
-                        <Text style={ds.blockTxt}>Block User</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </ScrollView>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -837,36 +848,6 @@ const ds = StyleSheet.create({
   btnReject: { backgroundColor: T.dangerLight },
   btnApprove: { backgroundColor: T.success },
   actionBtnTxt: { fontSize: 15, fontWeight: '700' },
-  
-  // Report Modal Specific Styles
-  usersSection: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: T.surfaceCard, borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: T.lineMid },
-  userBox: { flex: 1 },
-  userLabel: { fontSize: 11, color: T.ink4, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  userName: { fontSize: 13, fontWeight: '700', color: T.ink, flex: 1 },
-  arrowBox: { width: 30, alignItems: 'center', justifyContent: 'center' },
-
-  repSection: { backgroundColor: T.surfaceCard, borderRadius: 14, padding: 16, marginBottom: 20, borderWidth: 1, borderColor: T.lineMid },
-  repSectionTitle: { fontSize: 13, fontWeight: '700', color: T.ink4, textTransform: 'uppercase', marginBottom: 12, letterSpacing: 0.5 },
-  
-  detailRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.03)' },
-  detailRowCol: { flexDirection: 'column', alignItems: 'flex-start', paddingVertical: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.03)' },
-  detailLbl: { fontSize: 13, color: T.ink4 },
-  detailVal: { flex: 1, fontSize: 14, fontWeight: '600', color: T.ink, textAlign: 'right', paddingLeft: 24 },
-  detailValLeft: { fontSize: 14, fontWeight: '600', color: T.ink, textAlign: 'left', marginTop: 8, lineHeight: 20 },
-  detailValHi: { flex: 1, fontSize: 14, fontWeight: '700', color: T.violet, textAlign: 'right', paddingLeft: 24 },
-  
-  actionArea: { marginTop: 10 },
-  actionButtonsColumn: { gap: 12 },
-  
-  dismissBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: T.surfaceCard, borderWidth: 1, borderColor: T.lineMid, paddingVertical: 14, borderRadius: 12 },
-  dismissTxt: { fontSize: 15, fontWeight: '700', color: T.ink3 },
-  
-  warnBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: 'rgba(226,91,58,0.1)', borderWidth: 1, borderColor: 'rgba(226,91,58,0.3)', paddingVertical: 14, borderRadius: 12 },
-  warnTxt: { fontSize: 15, fontWeight: '700', color: '#E25B3A' },
-  
-  blockBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: T.danger, paddingVertical: 14, borderRadius: 12 },
-  blockTxt: { fontSize: 15, fontWeight: '700', color: '#FFF' },
   
   logoutModalContent: {
     backgroundColor: '#0F1020',

@@ -145,6 +145,7 @@ export default function AICopilotSheet({ visible, onClose, incidentId }: Props) 
             <ScrollView
               style={st.body}
               contentContainerStyle={st.bodyContent}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
               <FeatureSection

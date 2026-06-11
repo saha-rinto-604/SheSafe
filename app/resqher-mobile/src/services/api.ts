@@ -10,10 +10,12 @@ const REFRESH_KEY = 'resqher_refresh_token';
 const IDENTITY_KEY = 'resqher_identity_v1';
 
 type StoredIdentity = { role: string; userId: string };
-type FriendlyError = Error & { code?: string; status?: number; maxResponders?: number };
+type FriendlyError = Error & { code?: string; status?: number; maxResponders?: number; retryAfterSeconds?: number };
 
 const isDevelopment = process.env.NODE_ENV !== 'production';
-const AUTH_REQUEST_TIMEOUT_MS = 30000;
+const AUTH_REQUEST_TIMEOUT_MS = 15000;
+const AUTH_WARMUP_TIMEOUT_MS = 5000;
+const AUTH_RETRY_DELAY_MS = 450;
 let apiBaseUrlError = '';
 
 const canUseWebStorage = () => (
@@ -152,6 +154,14 @@ export async function getStoredIdentity(): Promise<StoredIdentity | null> {
 api.interceptors.request.use(async (config) => {
   config.headers = config.headers ?? {};
   config.headers[NGROK_SKIP_BROWSER_WARNING_HEADER] = 'true';
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    // React Native/Axios must create the multipart boundary itself.
+    if (typeof config.headers.delete === 'function') {
+      config.headers.delete('Content-Type');
+    } else {
+      delete config.headers['Content-Type'];
+    }
+  }
   const path = String(config.url || '');
   const isPublicAuthRequest = /^\/api\/auth\/(login|admin-login|signup|forgot-password|reset-password)\b/.test(path);
   const token = isPublicAuthRequest ? null : await getAccessToken();
@@ -189,6 +199,7 @@ function createFriendlyError(message: string, code?: string, status?: number, ex
   error.code = code;
   error.status = status;
   if (extra?.maxResponders) error.maxResponders = extra.maxResponders;
+  if (extra?.retryAfterSeconds) error.retryAfterSeconds = extra.retryAfterSeconds;
   return error;
 }
 
@@ -250,11 +261,51 @@ function friendlyError(err: unknown) {
       messages.join('\n') || (status ? fallbackByStatus[status] : '') || ax.message || 'Request failed',
       data?.code,
       status,
-      { maxResponders: data?.maxResponders }
+      {
+        maxResponders: data?.maxResponders,
+        retryAfterSeconds: Number(ax.response?.headers?.['retry-after']) || undefined,
+      }
     );
   }
   if (err instanceof Error) return err;
   return new Error('Request failed');
+}
+
+function isTransientAuthFailure(err: unknown) {
+  if (!isAxiosError(err)) return false;
+  const status = err.response?.status;
+  return !err.response
+    || err.code === 'ECONNABORTED'
+    || status === 502
+    || status === 503
+    || status === 504;
+}
+
+async function authRequestWithRetry<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (err) {
+    if (!isTransientAuthFailure(err)) throw err;
+    await new Promise(resolve => setTimeout(resolve, AUTH_RETRY_DELAY_MS));
+    return request();
+  }
+}
+
+export function isAuthConnectionError(err: unknown) {
+  const code = (err as FriendlyError | undefined)?.code;
+  return code === 'NETWORK_ERROR'
+    || code === 'TIMEOUT'
+    || code === 'SERVER_ERROR'
+    || code === 'API_CONFIG_ERROR';
+}
+
+export async function warmAuthBackend() {
+  try {
+    assertApiConfigured();
+    await api.get('/api/health', { timeout: AUTH_WARMUP_TIMEOUT_MS });
+  } catch {
+    // Warm-up is intentionally silent; the real auth request reports failures.
+  }
 }
 
 const ROLE_MAP: Record<'USER' | 'VOLUNTEER' | 'POLICE', string> = {
@@ -277,14 +328,14 @@ export const authService = {
     }
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/signup/request-otp', {
+      const res = await authRequestWithRetry(() => api.post('/api/auth/signup/request-otp', {
         phoneNumber: phone,
         password,
         firstName,
         lastName,
         role: ROLE_MAP[role],
         ...(role === 'POLICE' ? policeDetails : {}),
-      }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       return res.data as { message?: string };
     } catch (e) {
       throw friendlyError(e);
@@ -294,7 +345,7 @@ export const authService = {
   async verifySignupOtp(phoneNumber: string, otpCode: string) {
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/signup/verify-otp', { phoneNumber, otpCode }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      const res = await authRequestWithRetry(() => api.post('/api/auth/signup/verify-otp', { phoneNumber, otpCode }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
@@ -317,14 +368,14 @@ export const authService = {
     }
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/signup', {
+      const res = await authRequestWithRetry(() => api.post('/api/auth/signup', {
         phoneNumber: phone,
         password,
         firstName,
         lastName,
         role: ROLE_MAP[role],
         ...(role === 'POLICE' ? policeDetails : {}),
-      }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
@@ -337,11 +388,11 @@ export const authService = {
   async login(username: string, password: string) {
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/login', { phoneNumber: username, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      const res = await authRequestWithRetry(() => api.post('/api/auth/login', { phoneNumber: username, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
-      return res.data as { accessToken: string; user?: any };
+      return res.data as { accessToken: string; user?: any; role?: string; verificationStatus?: string | null };
     } catch (e) {
       throw friendlyError(e);
     }
@@ -350,7 +401,7 @@ export const authService = {
   async adminLogin(phone: string, password: string) {
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/admin-login', { phoneNumber: phone, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      const res = await authRequestWithRetry(() => api.post('/api/auth/admin-login', { phoneNumber: phone, password }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       const { accessToken } = res.data || {};
       if (!accessToken) throw new Error('Invalid token response');
       await setTokens(accessToken, accessToken);
@@ -367,7 +418,7 @@ export const authService = {
   async forgotPassword(phoneNumber: string) {
     try {
       assertApiConfigured();
-      const res = await api.post('/api/auth/forgot-password', { phoneNumber }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      const res = await authRequestWithRetry(() => api.post('/api/auth/forgot-password', { phoneNumber }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
       return res.data as { message?: string };
     } catch (e) {
       throw friendlyError(e);
@@ -377,7 +428,7 @@ export const authService = {
   async resetPassword(phoneNumber: string, otpCode: string, newPassword: string) {
     try {
       assertApiConfigured();
-      await api.post('/api/auth/reset-password', { phoneNumber, otpCode, newPassword }, { timeout: AUTH_REQUEST_TIMEOUT_MS });
+      await authRequestWithRetry(() => api.post('/api/auth/reset-password', { phoneNumber, otpCode, newPassword }, { timeout: AUTH_REQUEST_TIMEOUT_MS }));
     } catch (e) {
       throw friendlyError(e);
     }

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, ScrollView,
@@ -11,18 +11,18 @@ import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S, Ty } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
 import { useAuth } from '../../src/context/AuthContext';
-import { ROLE_DEFAULT_ROUTE, routeForPoliceStatus } from '../../src/constants/routes';
+import { routeForRoleStatus } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
 import SecureTextField from '../../components/auth/SecureTextField';
-import { getApiBaseUrlError } from '../../src/services/api';
+import { getApiBaseUrlError, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
 
 type FormData = { phone: string; password: string };
 
 export default function Login() {
   const router = useRouter();
   const { signIn, isLoading: authLoading } = useAuth();
-  const { showToast } = useToast();
+  const { showToast, clearToast } = useToast();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     defaultValues: { phone: '', password: '' },
   });
@@ -30,11 +30,16 @@ export default function Login() {
   const [focused, setFocused] = useState<'phone' | 'password' | null>(null);
   const submittingRef = useRef(false);
 
+  useEffect(() => {
+    void warmAuthBackend();
+  }, []);
+
   const onSubmit = async (data: FormData) => {
     if (submittingRef.current || submitting || authLoading) return;
+    clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Backend URL Required', message: apiError });
+      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
       return;
     }
     submittingRef.current = true;
@@ -44,28 +49,22 @@ export default function Login() {
       const password = data.password;
 
       const { role, verificationStatus, user } = await signIn(phone, password);
-      let route = role === 'POLICE'
-        ? routeForPoliceStatus(verificationStatus, user?.policeProfile)
-        : (ROLE_DEFAULT_ROUTE[role] || ROLE_DEFAULT_ROUTE.USER);
+      const route = routeForRoleStatus(role, verificationStatus, user);
+      showToast({
+        type: 'success',
+        title: role === 'POLICE' ? 'Police access confirmed' : 'Welcome back.',
+        message: role === 'POLICE' ? 'Welcome back to SheSafe law enforcement.' : 'You’re signed in securely.',
+      });
       router.replace(route as any);
     } catch (e: any) {
-      const msg = e?.message ?? '';
-      const code = e?.code;
-      if (msg.toLowerCase().includes('sign up')) {
-        showToast({
-          type: 'warning',
-          title: 'Account Not Found',
-          message: 'No account exists with this phone number. Please create an account first.',
-          action: { label: 'Sign Up', onPress: () => router.push('/(auth)/signup') },
-        });
-      } else {
-        const serverIssue = code === 'NETWORK_ERROR' || code === 'TIMEOUT' || code === 'API_CONFIG_ERROR';
-        showToast({
-          type: 'error',
-          title: code === 'SERVER_ERROR' ? 'Server Error' : serverIssue ? 'Server Unreachable' : 'Authentication Failed',
-          message: msg || 'Please check your phone number and password, then try again.',
-        });
-      }
+      const connectionIssue = isAuthConnectionError(e);
+      showToast({
+        type: 'error',
+        title: connectionIssue ? 'Connection unavailable' : 'Sign-in failed',
+        message: connectionIssue
+          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          : 'The phone number or password is incorrect.',
+      });
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

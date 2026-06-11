@@ -165,6 +165,19 @@ export interface IncidentMessageResponse {
   senderRole: 'volunteer' | 'standard_user' | 'system' | string;
   senderPhotoUri?: string | null;
   text: string;
+  type?: 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'VIDEO' | string;
+  messageType?: 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'VIDEO' | string;
+  message_type?: 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'VIDEO' | string;
+  mediaUrl?: string | null;
+  media_url?: string | null;
+  mediaPublicId?: string | null;
+  media_public_id?: string | null;
+  mediaMimeType?: string | null;
+  media_mime_type?: string | null;
+  mediaFilename?: string | null;
+  media_filename?: string | null;
+  mediaSizeBytes?: number | null;
+  media_size_bytes?: number | null;
   createdAt: string;
 }
 

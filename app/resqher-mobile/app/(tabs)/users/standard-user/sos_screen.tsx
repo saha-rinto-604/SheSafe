@@ -16,6 +16,7 @@ import {
     View, Text, TouchableOpacity, StyleSheet,
     Dimensions, StatusBar, Platform,
     Modal, ScrollView, ViewStyle, TextInput, ActivityIndicator,
+    AppState,
  Animated as RNAnimated, Easing } from 'react-native';
 import { useAuth } from '../../../../src/context/AuthContext';
 import Animated, {
@@ -23,6 +24,7 @@ import Animated, {
     withRepeat, Easing as REasing, runOnJS,
 } from 'react-native-reanimated';
 import MapView, { Marker, PROVIDER_GOOGLE, type MapViewRef } from '../../../../src/components/shared/MapViewCompat';
+import { useMapRenderDiagnostics } from '../../../../src/components/shared/MapRenderDiagnostics';
 import * as Location from 'expo-location';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather , Ionicons } from '@expo/vector-icons';
@@ -93,6 +95,7 @@ const CANCEL_DURATION_DEFAULT = 10;
 const HOLD_MS = 2000;
 
 const NAV_HEIGHT = 58;
+const ACTIVE_SOS_STATUSES = new Set(['ACTIVE', 'LIVE', 'IN_PROGRESS', 'ACCEPTED', 'ASSISTING']);
 
 type ReviewVolunteer = {
     id: string;
@@ -103,6 +106,11 @@ type ReviewVolunteer = {
 function isUsableVolunteerId(value: unknown) {
     const id = String(value ?? '').trim();
     return !!id && id !== 'undefined' && id !== 'null' && id !== 'NaN';
+}
+
+function isLiveSosStatus(status: unknown) {
+    const normalized = String(status || '').trim().toUpperCase().replace(/\s+/g, '_');
+    return ACTIVE_SOS_STATUSES.has(normalized);
 }
 
 function reviewDisplayName(volunteer: any) {
@@ -623,6 +631,7 @@ export default function SOSScreen() {
     const cancelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const navigatedRef = useRef(false);
     const sosCreateSeqRef = useRef(0);
+    const activeSosHydrateSeqRef = useRef(0);
     const isEmergencyLive = sosActive && cancelCountdown === 0;
     const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
     const [endSosModalVisible, setEndSosModalVisible] = useState(false);
@@ -663,6 +672,101 @@ export default function SOSScreen() {
 
     // (navigation now happens immediately inside triggerSOS, not here)
 
+    const applyActiveStandardSos = useCallback(async (incident: any, options?: { showNotice?: boolean }) => {
+        const id = String(incident?.incidentId ?? incident?.id ?? '').trim();
+        if (!id || !isLiveSosStatus(incident?.status)) return false;
+
+        const lat = incident.latitude == null ? null : Number(incident.latitude);
+        const lng = incident.longitude == null ? null : Number(incident.longitude);
+        navigatedRef.current = true;
+        setActiveIncidentId(id);
+        setSosActive(true);
+        setCancelCountdown(0);
+        setLocationStatus('sharing');
+        setHoldPhase('idle');
+        setSosLive(true);
+
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            setUserLoc(prev => prev ?? { latitude: lat as number, longitude: lng as number });
+        }
+        if (incident.address) {
+            setAddress(prev => prev || String(incident.address));
+        }
+
+        try {
+            const SecureStore = await import('expo-secure-store');
+            await SecureStore.setItemAsync('resqher_active_sos_v1', JSON.stringify({
+                incidentId: id,
+                displayNumber: Number(id),
+                lat,
+                lng,
+                address: incident.address || '',
+                createdAt: incident.createdAt || new Date().toISOString(),
+            }));
+        } catch { /* cache write is best-effort */ }
+
+        if (options?.showNotice) {
+            notificationStore.add({
+                type: 'sos_triggered',
+                title: 'Your SOS is still active',
+                body: 'SheSafe restored your live emergency state from the server.',
+                incidentId: id,
+                createdAt: new Date().toISOString(),
+            }).catch(() => undefined);
+        }
+        return true;
+    }, [setSosLive]);
+
+    const clearRestoredStandardSos = useCallback(async () => {
+        const SecureStore = await import('expo-secure-store');
+        await SecureStore.deleteItemAsync('resqher_active_sos_v1');
+        await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
+        if (!isMountedRef.current) return;
+        setSosActive(false);
+        setSosLive(false);
+        setActiveIncidentId(null);
+        setCancelCountdown(0);
+    }, [setSosLive]);
+
+    const hydrateActiveStandardSos = useCallback(async (options?: { showNotice?: boolean; clearWhenMissing?: boolean }) => {
+        const seq = ++activeSosHydrateSeqRef.current;
+        try {
+            const incident = await incidentService.getMyActiveSos();
+            if (!isMountedRef.current || seq !== activeSosHydrateSeqRef.current) return null;
+            if (incident && isLiveSosStatus(incident.status)) {
+                await applyActiveStandardSos(incident, options);
+                return incident;
+            }
+            if (options?.clearWhenMissing) {
+                await clearRestoredStandardSos();
+            }
+            return null;
+        } catch (error) {
+            if (process.env.NODE_ENV !== 'production') {
+                console.warn('[SOS] Unable to verify active SOS from backend:', error instanceof Error ? error.message : error);
+            }
+            try {
+                const SecureStore = await import('expo-secure-store');
+                const raw = await SecureStore.getItemAsync('resqher_active_sos_v1');
+                if (!raw || !isMountedRef.current || seq !== activeSosHydrateSeqRef.current) return null;
+                const parsed = JSON.parse(raw);
+                const cachedIncident = {
+                    id: parsed?.incidentId,
+                    incidentId: parsed?.incidentId,
+                    status: 'ACTIVE',
+                    latitude: parsed?.lat,
+                    longitude: parsed?.lng,
+                    address: parsed?.address,
+                    createdAt: parsed?.createdAt,
+                };
+                await applyActiveStandardSos(cachedIncident);
+                return cachedIncident;
+            } catch {
+                return null;
+            }
+        }
+    }, [applyActiveStandardSos, clearRestoredStandardSos]);
+
     // Load persisted SOS cancel timer setting on mount
     useEffect(() => {
         import('../../../../src/constants/theme').then(() => {
@@ -681,60 +785,28 @@ export default function SOSScreen() {
         });
     }, []);
 
-    // Reset active tab and restore SOS state when screen regains focus
+    // Reset active tab and restore SOS state from backend when screen regains focus.
     useFocusEffect(
         useCallback(() => {
             let isFocused = true;
             setActiveTab('Home');
             (async () => {
-                const SecureStore = await import('expo-secure-store');
-                const clearRestoredSos = async () => {
-                    await SecureStore.deleteItemAsync('resqher_active_sos_v1');
-                    await SecureStore.deleteItemAsync('resqher_sos_autosent_v1');
-                    if (!isFocused) return;
-                    setSosActive(false);
-                    setSosLive(false);
-                    setActiveIncidentId(null);
-                };
-
-                const raw = await SecureStore.getItemAsync('resqher_active_sos_v1');
                 if (!isFocused) return;
-
-                if (raw) {
-                    try {
-                        const parsed = JSON.parse(raw);
-                        const restoredIncidentId = String(parsed?.incidentId || '');
-                        const isBackendIncidentId = /^\d+$/.test(restoredIncidentId);
-                        if (isBackendIncidentId) {
-                            const incident = await incidentService.getOne(restoredIncidentId);
-                            if (!isFocused) return;
-                            const status = String(incident?.status || '').toUpperCase();
-                            if (status !== 'ACTIVE' && status !== 'IN_PROGRESS') {
-                                await clearRestoredSos();
-                                return;
-                            }
-                            navigatedRef.current = true; // Prevent auto-redirect when restoring state
-                            setActiveIncidentId(restoredIncidentId);
-                            setSosActive(true);
-                            setCancelCountdown(0);
-                            setSosLive(true);
-                            return;
-                        }
-                    } catch {
-                        // Corrupt or stale local SOS state should not reopen an old chat.
-                    }
-                    await clearRestoredSos();
-                    return;
-                }
-
-                setSosActive(false);
-                setSosLive(false);
-                setActiveIncidentId(null);
+                await hydrateActiveStandardSos({ clearWhenMissing: true });
             })();
 
             return () => { isFocused = false; };
-        }, [setSosLive])
+        }, [hydrateActiveStandardSos])
     );
+
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active') {
+                hydrateActiveStandardSos({ clearWhenMissing: true }).catch(() => undefined);
+            }
+        });
+        return () => sub.remove();
+    }, [hydrateActiveStandardSos]);
 
     // Pulse ring anims (SOS active state - RN Animated for compatibility)
     const [p0s] = useState(() => new RNAnimated.Value(1)); const [p0o] = useState(() => new RNAnimated.Value(0));
@@ -875,18 +947,29 @@ export default function SOSScreen() {
                 incidentId: id,
                 createdAt: new Date().toISOString(),
             });
-        } catch {
+        } catch (error: any) {
             if (sosCreateSeqRef.current !== createSeq || !isMountedRef.current) return;
+            const code = error?.response?.data?.code || error?.code;
+            if (code === 'ACTIVE_SOS_EXISTS') {
+                const existingSos = await hydrateActiveStandardSos({ showNotice: true });
+                if (existingSos) return;
+            }
             setSosActive(false);
             setCancelCountdown(0);
             setLocationStatus('ready');
             setHoldPhase('idle');
             setSosLive(false);
         }
-    }, [address, setSosLive, userLoc]);
+    }, [address, hydrateActiveStandardSos, setSosLive, userLoc]);
 
-    const triggerSOS = useCallback(() => {
+    const triggerSOS = useCallback(async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        if (activeIncidentId || isEmergencyLive) {
+            const existingSos = await hydrateActiveStandardSos({ showNotice: true });
+            if (existingSos) return;
+        }
+        const existingSos = await hydrateActiveStandardSos({ showNotice: true });
+        if (existingSos) return;
         setHoldPhase('idle');
         setSosActive(true);
         setLocationStatus('sharing');
@@ -895,7 +978,7 @@ export default function SOSScreen() {
         setActiveIncidentId(null);
         navigatedRef.current = false;
         sosCreateSeqRef.current += 1;
-    }, [cancelDuration, setSosLive]);
+    }, [activeIncidentId, cancelDuration, hydrateActiveStandardSos, isEmergencyLive, setSosLive]);
 
     useEffect(() => {
         if (!sosActive || cancelCountdown <= 0) return;
@@ -1138,6 +1221,23 @@ export default function SOSScreen() {
     const maxTop = Math.max(headerSafeTop, height - bottomSafe - (SOS_WRAP_SIZE + extraBelowWrap));
     const sosTop = Math.min(Math.max(targetCenterY - SOS_WRAP_SIZE / 2, headerSafeTop), maxTop);
 
+    const mapDiagnostics = useMapRenderDiagnostics({
+        screenName: 'StandardSosMap',
+        location: userLoc,
+        regionSource: userLoc ? 'user-location' : 'fallback-dhaka',
+        overlayState: {
+            drawerOpen,
+            sosActive,
+            cancelCountdown,
+            isEmergencyLive,
+            reviewVisible,
+            endSosModalVisible,
+            logoutBlockModalVisible,
+            deactivateSheetVisible,
+            locationStatus,
+        },
+    });
+
     return (
         <AtmosphericShell>
             <View style={s.root}>
@@ -1369,10 +1469,15 @@ export default function SOSScreen() {
 
                 {/* Map - Encrypted Professional Dark Tactical Style */}
                 <MapView
+                    key={mapDiagnostics.mapKey}
                     ref={mapRef}
+                    debugName="StandardSosMap"
                     style={StyleSheet.absoluteFill}
                     provider={PROVIDER_GOOGLE}
                     initialRegion={DEFAULT_REGION}
+                    onLayout={mapDiagnostics.onMapLayout}
+                    onMapReady={mapDiagnostics.onMapReady}
+                    onMapLoaded={mapDiagnostics.onMapLoaded}
                     showsUserLocation
                     showsMyLocationButton={false}
                     showsCompass={false}

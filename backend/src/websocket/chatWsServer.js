@@ -5,6 +5,9 @@ const env = require('../config/env');
 const chatService = require('../modules/chat/chat.service');
 const locationService = require('../modules/locations/location.service');
 const notificationService = require('../modules/notifications/notification.service');
+const { getVolunteerEligibility } = require('../modules/volunteers/volunteerEligibility');
+const { isIncidentMember, getIncidentParticipantState } = require('../modules/incidents/incident.repository');
+const liveVideoService = require('../modules/incidents/liveVideo.service');
 const { query } = require('../config/db');
 const { jwt: jwtConfig } = env;
 
@@ -93,6 +96,48 @@ function broadcastAll(incidentId, event) {
   broadcast(incidentId, event, null);
 }
 
+async function broadcastAuthorizedIncidentMembers(incidentId, event) {
+  const room = rooms.get(String(incidentId));
+  if (!room) return;
+  const data = JSON.stringify(event);
+  await Promise.all(Array.from(room).map(async (client) => {
+    if (client.ws.readyState !== 1) return;
+    try {
+      const allowed = await isIncidentMember(incidentId, client.userId);
+      const participant = allowed
+        ? await getIncidentParticipantState(incidentId, client.userId)
+        : null;
+      if (allowed && !participant?.left_at) client.ws.send(data);
+    } catch {
+      // Do not emit privileged live-video events when membership cannot be verified.
+    }
+  }));
+}
+
+async function sendToIncidentUser(incidentId, userId, event) {
+  const room = rooms.get(String(incidentId));
+  if (!room) return false;
+  const targetId = String(userId);
+  const data = JSON.stringify(event);
+  let sent = false;
+  await Promise.all(Array.from(room).map(async (client) => {
+    if (String(client.userId) !== targetId || client.ws.readyState !== 1) return;
+    try {
+      const allowed = await isIncidentMember(incidentId, client.userId);
+      const participant = allowed
+        ? await getIncidentParticipantState(incidentId, client.userId)
+        : null;
+      if (allowed && !participant?.left_at) {
+        client.ws.send(data);
+        sent = true;
+      }
+    } catch {
+      // Privileged stream signaling is skipped if membership cannot be verified.
+    }
+  }));
+  return sent;
+}
+
 /**
  * Broadcast an event to all connected dispatch clients (online volunteers).
  */
@@ -129,6 +174,17 @@ function sendToUser(userId, event) {
   }
 }
 
+function sendToDispatchRole(role, event) {
+  const data = JSON.stringify(event);
+  const targetRole = String(role || '').toLowerCase();
+  for (const client of dispatchClients) {
+    const clientRole = String(client.userInfo?.role || '').toLowerCase();
+    if (clientRole === targetRole && client.ws.readyState === 1) {
+      client.ws.send(data);
+    }
+  }
+}
+
 // ── Exported broadcast helpers for use by HTTP controllers ──────────────────
 
 /**
@@ -161,6 +217,8 @@ function notifyNewSOS(incident, dispatchList) {
       },
     });
   }
+
+  sendToDispatchRole('admin', event);
 }
 
 /**
@@ -372,6 +430,16 @@ async function notifyClosed(incidentId, status = 'CLOSED', message) {
     type: 'sos.claimed',
     payload: { incidentId: String(incidentId) },
   });
+  const stoppedStream = await liveVideoService.stopLiveStreamForIncident(
+    incidentId,
+    message || 'Live Safety Video ended.'
+  ).catch(() => null);
+  if (stoppedStream) {
+    await notifyLiveVideoEvent(incidentId, 'live-stream:stop', {
+      request: stoppedStream.request,
+      message: stoppedStream.message,
+    });
+  }
   await notifyPoliceIncidentStatus({
     incidentId,
     status,
@@ -391,6 +459,61 @@ function notifyMessageNew(incidentId, message) {
     type: 'message:new',
     payload: message,
   });
+}
+
+async function notifyAuthorizedMessageNew(incidentId, message) {
+  await broadcastAuthorizedIncidentMembers(String(incidentId), {
+    type: 'message:new',
+    payload: message,
+  });
+}
+
+async function notifyLiveVideoEvent(incidentId, type, payload) {
+  await broadcastAuthorizedIncidentMembers(String(incidentId), {
+    type,
+    payload: {
+      incidentId: String(incidentId),
+      ...(payload || {}),
+    },
+  });
+}
+
+async function relayLiveStreamSignal({ incidentId, userId, ws, data }) {
+  try {
+    const result = await liveVideoService.handleLiveStreamSignal(
+      userId,
+      incidentId,
+      data.type,
+      data.payload || {}
+    );
+    const event = {
+      type: result.type,
+      payload: {
+        incidentId: String(incidentId),
+        senderId: String(userId),
+        ...(result.payload || {}),
+      },
+    };
+    if (result.selfOnly) {
+      ws.send(JSON.stringify(event));
+      return;
+    }
+    if (result.echoToRoom) {
+      await broadcastAuthorizedIncidentMembers(String(incidentId), event);
+      return;
+    }
+    if (result.targetUserId) {
+      await sendToIncidentUser(String(incidentId), result.targetUserId, event);
+    }
+  } catch (err) {
+    ws.send(JSON.stringify({
+      type: 'live-stream:error',
+      payload: {
+        incidentId: String(incidentId),
+        message: err.message || 'Live Safety Video connection failed.',
+      },
+    }));
+  }
 }
 
 function normalizeSocketRole(role) {
@@ -508,6 +631,13 @@ function attach(server) {
 
     // ── Dispatch channel (volunteer presence) ──
     if (isDispatch) {
+      if (String(userInfo?.role || '').toLowerCase() === 'volunteer') {
+        const { approved } = await getVolunteerEligibility(userId);
+        if (!approved) {
+          ws.close(1008, 'Volunteer verification required');
+          return;
+        }
+      }
       const client = { ws, userId, userInfo };
       dispatchClients.add(client);
 
@@ -615,6 +745,10 @@ function attach(server) {
           },
         }, ws);
       }
+
+      if (String(data.type || '').startsWith('live-stream:')) {
+        await relayLiveStreamSignal({ incidentId, userId, ws, data });
+      }
     });
 
     ws.on('close', () => {
@@ -623,6 +757,19 @@ function attach(server) {
         room.delete(client);
         if (room.size === 0) rooms.delete(incidentId);
       }
+      liveVideoService.handleLiveStreamDisconnect(userId, incidentId)
+        .then(async (event) => {
+          if (!event) return;
+          await sendToIncidentUser(String(incidentId), event.targetUserId, {
+            type: event.type,
+            payload: {
+              incidentId: String(incidentId),
+              senderId: String(userId),
+              ...(event.payload || {}),
+            },
+          });
+        })
+        .catch(() => undefined);
     });
   });
 
@@ -637,6 +784,9 @@ module.exports = {
   notifyClosed,
   notifyRespondersUpdated,
   notifyMessageNew,
+  notifyAuthorizedMessageNew,
+  notifyLiveVideoEvent,
+  sendToIncidentUser,
   notifyPoliceIncidentStatus,
   notifyPoliceAssignment,
   notifyLawEnforcementRequestCreated,

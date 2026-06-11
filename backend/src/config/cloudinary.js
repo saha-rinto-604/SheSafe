@@ -15,17 +15,25 @@
 
 const { v2: cloudinary } = require('cloudinary');
 
+const REQUIRED_CLOUDINARY_KEYS = [
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+];
+const missingCloudinaryKeys = REQUIRED_CLOUDINARY_KEYS.filter((key) => !process.env[key]);
+const isCloudinaryConfigured = missingCloudinaryKeys.length === 0;
+
 // Configure only if credentials exist (graceful degradation for dev without cloud)
-if (process.env.CLOUDINARY_CLOUD_NAME) {
+if (isCloudinaryConfigured) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
     secure: true, // Always use HTTPS URLs
   });
-  console.log('[CLOUDINARY] Configured for cloud:', process.env.CLOUDINARY_CLOUD_NAME);
+  console.log('[CLOUDINARY] Configured.');
 } else {
-  console.warn('[CLOUDINARY] No credentials found — photo uploads will return placeholder URLs.');
+  console.warn('[CLOUDINARY] Incomplete configuration; using dev fallback. Missing:', missingCloudinaryKeys.join(', '));
 }
 
 /**
@@ -42,7 +50,7 @@ if (process.env.CLOUDINARY_CLOUD_NAME) {
  * @returns {Promise<{secure_url: string, public_id: string}>}
  */
 async function uploadBuffer(buffer, folder, publicId) {
-  if (!process.env.CLOUDINARY_CLOUD_NAME) {
+  if (!isCloudinaryConfigured) {
     // Dev fallback — return a placeholder so the flow doesn't break
     const devId = publicId || `${folder}/${Date.now()}`;
     console.log('[CLOUDINARY] Dev mode — skipping actual upload, publicId:', devId);
@@ -74,17 +82,63 @@ async function uploadBuffer(buffer, folder, publicId) {
   });
 }
 
+async function uploadVideoBuffer(buffer, folder, publicId) {
+  if (!isCloudinaryConfigured) {
+    const devId = publicId || `${folder}/${Date.now()}`;
+    console.log('[CLOUDINARY] Dev mode — skipping video upload, publicId:', devId);
+    return {
+      secure_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      public_id: devId,
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        public_id: publicId || undefined,
+        overwrite: true,
+        resource_type: 'video',
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({ secure_url: result.secure_url, public_id: result.public_id });
+      }
+    );
+    uploadStream.end(buffer);
+  });
+}
+
+async function uploadVideoFile(filePath, folder, publicId) {
+  if (!isCloudinaryConfigured) {
+    const devId = publicId || `${folder}/${Date.now()}`;
+    console.log('[CLOUDINARY] Dev mode — skipping video file upload, publicId:', devId);
+    return {
+      secure_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      public_id: devId,
+    };
+  }
+
+  const result = await cloudinary.uploader.upload(filePath, {
+    folder,
+    public_id: publicId || undefined,
+    overwrite: true,
+    resource_type: 'video',
+  });
+  return { secure_url: result.secure_url, public_id: result.public_id };
+}
+
 /**
  * Delete an asset from Cloudinary by its public_id.
  * Used when a user removes their profile photo or re-uploads.
  */
-async function deleteAsset(publicId) {
-  if (!process.env.CLOUDINARY_CLOUD_NAME || !publicId) return;
+async function deleteAsset(publicId, resourceType = 'image') {
+  if (!isCloudinaryConfigured || !publicId) return;
   try {
-    await cloudinary.uploader.destroy(publicId);
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
   } catch (err) {
     console.error('[CLOUDINARY] Delete failed:', err.message);
   }
 }
 
-module.exports = { cloudinary, uploadBuffer, deleteAsset };
+module.exports = { cloudinary, uploadBuffer, uploadVideoBuffer, uploadVideoFile, deleteAsset };

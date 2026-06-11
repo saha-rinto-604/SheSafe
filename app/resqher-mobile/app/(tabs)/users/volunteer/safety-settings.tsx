@@ -15,33 +15,30 @@ import {
     ScrollView,
     StatusBar,
     Switch,
+    Alert,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import * as SecureStore from 'expo-secure-store';
 import { T, R, S } from '../../../../src/constants/theme';
 import AtmosphericShell from '../../../../src/components/AtmosphericShell';
+import {
+    DEFAULT_SAFETY_SETTINGS as BASE_DEFAULT_SAFETY_SETTINGS,
+    SAFETY_SETTINGS_KEY as SHARED_SAFETY_SETTINGS_KEY,
+    safetySettingsService,
+    type SafetySettingsBase,
+} from '../../../../src/services/safetySettingsService';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-export const SAFETY_SETTINGS_KEY = 'resqher_safety_settings_v1';
+export const SAFETY_SETTINGS_KEY = SHARED_SAFETY_SETTINGS_KEY;
 
-export type SafetySettings = {
-    sosCancelTimerSec: 10 | 15 | 20;
-    notifyEmergencyContacts: boolean;
-    pushNotifications: boolean;
-    smsBackupAlert: boolean;
-    maxResponders: 3 | 5;
+export type SafetySettings = SafetySettingsBase & {
     maxResponseDistance: 3 | 4 | 5;
     receiveSosAlerts: boolean;
 };
 
 export const DEFAULT_SAFETY_SETTINGS: SafetySettings = {
-    sosCancelTimerSec: 10,
-    notifyEmergencyContacts: true,
-    pushNotifications: true,
-    smsBackupAlert: false,
-    maxResponders: 5,
+    ...BASE_DEFAULT_SAFETY_SETTINGS,
     maxResponseDistance: 3,
     receiveSosAlerts: true,
 };
@@ -52,15 +49,7 @@ const MAX_DISTANCE_OPTIONS: (3 | 4 | 5)[] = [3, 4, 5];
 
 // ── Helper — load settings from SecureStore with fallback ─────────────────────
 export async function loadSafetySettings(): Promise<SafetySettings> {
-    try {
-        const raw = await SecureStore.getItemAsync(SAFETY_SETTINGS_KEY);
-        if (raw) {
-            return { ...DEFAULT_SAFETY_SETTINGS, ...JSON.parse(raw) };
-        }
-    } catch {
-        // Corrupted — fall through to default
-    }
-    return { ...DEFAULT_SAFETY_SETTINGS };
+    return safetySettingsService.getSettings(DEFAULT_SAFETY_SETTINGS) as Promise<SafetySettings>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,9 +162,11 @@ export default function SafetySettingsScreen() {
     // ── Persist whenever settings change (after initial load) ──────────────
     const persist = useCallback(async (next: SafetySettings) => {
         try {
-            await SecureStore.setItemAsync(SAFETY_SETTINGS_KEY, JSON.stringify(next));
-        } catch {
-            // Best-effort
+            const saved = await safetySettingsService.saveSettings(next);
+            setSettings({ ...next, ...saved } as SafetySettings);
+        } catch (error: any) {
+            Alert.alert('Safety Settings', error?.message || 'Could not save safety settings. Please check your connection and try again.');
+            loadSafetySettings().then(saved => setSettings(saved));
         }
     }, []);
 
@@ -251,6 +242,13 @@ export default function SafetySettingsScreen() {
                             description="Send an SMS to emergency contacts if push notification fails."
                             value={settings.smsBackupAlert}
                             onValueChange={v => update('smsBackupAlert', v)}
+                        />
+                        <RowDivider />
+                        <ToggleRow
+                            label="Allow emergency auto evidence recording during active SOS"
+                            description="When enabled, SheSafe may start visible front-camera recording during an active SOS if an accepted responder requests it and you do not cancel the countdown."
+                            value={settings.allowEmergencyAutoEvidenceRecording}
+                            onValueChange={v => update('allowEmergencyAutoEvidenceRecording', v)}
                         />
                         <RowDivider />
                         <View style={s.settingRow}>

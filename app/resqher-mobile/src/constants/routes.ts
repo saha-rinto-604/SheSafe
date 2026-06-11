@@ -18,6 +18,7 @@ export const ROLE_DEFAULT_ROUTE: Record<Role, string> = {
 // ── Auth routes ──────────────────────────────────────────────────────────────
 export const AUTH = {
   LOGIN: '/(auth)/login',
+  ADMIN_LOGIN: '/(auth)/admin-login',
   SIGNUP: '/(auth)/signup',
 } as const;
 
@@ -84,3 +85,22 @@ export function routeForPoliceStatus(
 export const ADMIN = {
   DASHBOARD: '/(tabs)/users/admin/dashboard',
 } as const;
+
+export function routeForRoleStatus(
+  role: Role,
+  verificationStatus?: string | null,
+  user?: { policeProfile?: Parameters<typeof routeForPoliceStatus>[1] } | null
+) {
+  if (role === 'POLICE') {
+    if (!verificationStatus) return ROLE_DEFAULT_ROUTE.POLICE;
+    return routeForPoliceStatus(verificationStatus, user?.policeProfile);
+  }
+  if (role === 'VOLUNTEER') {
+    const normalized = String(verificationStatus || '').trim().toLowerCase();
+    if (!normalized || normalized === 'verified' || normalized === 'approved' || normalized === 'active') {
+      return ROLE_DEFAULT_ROUTE.VOLUNTEER;
+    }
+    return VOLUNTEER.VOLUNTEER_VERIFICATION;
+  }
+  return ROLE_DEFAULT_ROUTE[role];
+}

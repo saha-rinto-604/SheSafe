@@ -362,6 +362,26 @@ async function acceptIncident(volunteerId, incidentId) {
     if (result.reason === 'PREVIOUSLY_LEFT') {
       throw httpError(409, 'You have already left this incident.');
     }
+    if (result.reason === 'VOLUNTEER_NOT_VERIFIED') {
+      throw httpError(403, 'Volunteer verification is required before responding to SOS requests.', {
+        code: 'VOLUNTEER_NOT_VERIFIED',
+      });
+    }
+    if (result.reason === 'VOLUNTEER_LOCATION_MISSING') {
+      throw httpError(400, 'We could not confirm your current location. Please refresh your location and try again.', {
+        code: 'VOLUNTEER_LOCATION_MISSING',
+      });
+    }
+    if (result.reason === 'INCIDENT_LOCATION_MISSING') {
+      throw httpError(409, 'This SOS location is unavailable. Please wait for an updated location and try again.', {
+        code: 'INCIDENT_LOCATION_MISSING',
+      });
+    }
+    if (result.reason === 'OUTSIDE_ACCEPT_RADIUS') {
+      throw httpError(403, 'You can only accept SOS requests within 5 km.', {
+        code: 'OUTSIDE_ACCEPT_RADIUS',
+      });
+    }
     throw httpError(500, 'Failed to accept incident.');
   }
 
@@ -450,7 +470,7 @@ function mapOwnActiveSos(row) {
     incidentNumber: Number(row.id),
     incidentCode: `#${row.id}`,
     status: row.status,
-    isLive: ['ACTIVE', 'IN_PROGRESS', 'LIVE'].includes(String(row.status || '').toUpperCase()),
+    isLive: ['ACTIVE', 'IN_PROGRESS', 'LIVE', 'ACCEPTED', 'ASSISTING'].includes(String(row.status || '').toUpperCase()),
     latitude: row.latitude == null ? null : Number(row.latitude),
     longitude: row.longitude == null ? null : Number(row.longitude),
     address: row.address || null,
@@ -747,6 +767,10 @@ async function getIncidentMessages(userId, incidentId, role) {
     text: message.content,
     type: message.type,
     mediaUrl: message.mediaUrl || null,
+    mediaPublicId: message.mediaPublicId || null,
+    mediaMimeType: message.mediaMimeType || null,
+    mediaFilename: message.mediaFilename || null,
+    mediaSizeBytes: message.mediaSizeBytes == null ? null : Number(message.mediaSizeBytes),
     createdAt: message.timestamp,
   }));
 }
@@ -771,6 +795,10 @@ async function sendIncidentMessage(userId, incidentId, payload, role) {
     text: message.content,
     type: message.type,
     mediaUrl: message.mediaUrl || null,
+    mediaPublicId: message.mediaPublicId || null,
+    mediaMimeType: message.mediaMimeType || null,
+    mediaFilename: message.mediaFilename || null,
+    mediaSizeBytes: message.mediaSizeBytes == null ? null : Number(message.mediaSizeBytes),
     createdAt: message.timestamp,
   };
 }

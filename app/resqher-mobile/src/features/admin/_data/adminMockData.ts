@@ -302,5 +302,4 @@ export const SIDEBAR_ITEMS: SidebarItem[] = [
   { key: 'police', label: 'Police', icon: 'shield' },
   { key: 'law-enforcement-requests', label: 'Law Requests', icon: 'radio' },
   { key: 'safeplaces', label: 'Safe Places', icon: 'map-pin' },
-  { key: 'reports', label: 'Reports', icon: 'file-text' },
 ];

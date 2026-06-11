@@ -14,10 +14,12 @@ import SheSafeMark from '../../src/components/SheSafeMark';
 type Props = {
   children: React.ReactNode;
   onBack?: () => void;
+  variant?: 'default' | 'admin';
 };
 
 // ─── Auth Shell ─────────────────────────────────────────────────────────────
-export default function AuthShell({ children, onBack }: Props) {
+export default function AuthShell({ children, onBack, variant = 'default' }: Props) {
+  const adminWeb = variant === 'admin' && Platform.OS === 'web';
   return (
     <View style={styles.main}>
       {/* OLED Black → subtle violet aura from bottom */}
@@ -46,13 +48,13 @@ export default function AuthShell({ children, onBack }: Props) {
             </TouchableOpacity>
           )}
 
-          <View style={styles.logoContainer}>
+          <View style={[styles.logoContainer, adminWeb && styles.adminLogoContainer]}>
             <View style={styles.logoIconBg}>
               <SheSafeMark size={76} />
             </View>
           </View>
 
-          <View style={styles.content}>
+          <View style={[styles.content, adminWeb && styles.adminContent]}>
             {children}
           </View>
         </KeyboardAvoidingView>
@@ -94,6 +96,16 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     paddingBottom: 40,
+  },
+  adminLogoContainer: {
+    paddingTop: 48,
+    paddingBottom: 24,
+  },
+  adminContent: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    paddingHorizontal: 24,
   },
   backButton: {
     position: 'absolute',

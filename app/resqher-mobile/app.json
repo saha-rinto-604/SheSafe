@@ -13,11 +13,6 @@
         "foregroundImage": "./assets/images/SheSafe_logo.png"
       },
       "predictiveBackGestureEnabled": false,
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyBSdciGcsJ3mnlvBjGwKtE3ypIj-4llEq8"
-        }
-      },
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -34,9 +29,6 @@
     },
     "ios": {
       "supportsTablet": true,
-      "config": {
-        "googleMapsApiKey": "AIzaSyBSdciGcsJ3mnlvBjGwKtE3ypIj-4llEq8"
-      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "SheSafe needs your location for emergency assistance.",
         "NSLocationAlwaysUsageDescription": "SheSafe needs your location for emergency assistance.",
@@ -80,6 +72,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9231df45-5699-4c65-b52f-77038e544d5f"
+      }
     }
   }
 }

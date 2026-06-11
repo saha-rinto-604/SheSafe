@@ -4,7 +4,7 @@
  * Step 2: Enter OTP + new password → reset
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ActivityIndicator, Platform, ScrollView,
@@ -16,7 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
-import { authService } from '../../src/services/api';
+import { authService, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
 import { useToast } from '../../src/components/Toast';
 import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 
@@ -63,7 +63,7 @@ function Field({
 
 export default function ForgotPassword() {
   const router = useRouter();
-  const { showToast } = useToast();
+  const { showToast, clearToast } = useToast();
   const [step, setStep] = useState<1 | 2>(1);
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
@@ -71,26 +71,43 @@ export default function ForgotPassword() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
+  const submittingRef = useRef(false);
+
+  useEffect(() => {
+    void warmAuthBackend();
+  }, []);
 
   const handleRequestOtp = async () => {
+    if (submittingRef.current || loading) return;
+    clearToast();
     const trimmed = phone.trim();
     if (!trimmed) {
       showToast({ type: 'warning', title: 'Phone Required', message: 'Please enter your registered phone number.' });
       return;
     }
+    submittingRef.current = true;
     setLoading(true);
     try {
       await authService.forgotPassword(trimmed);
       showToast({ type: 'success', title: 'OTP Sent', message: 'Check your phone for the verification code.' });
       setStep(2);
     } catch (e: any) {
-      showToast({ type: 'error', title: 'Request Failed', message: e?.message ?? 'Unable to send OTP. Please verify your phone number.' });
+      showToast({
+        type: 'error',
+        title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification code not sent',
+        message: isAuthConnectionError(e)
+          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          : 'We couldn’t send the verification code. Please try again.',
+      });
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
 
   const handleResetPassword = async () => {
+    if (submittingRef.current || loading) return;
+    clearToast();
     const trimmedOtp = otp.trim();
     if (!trimmedOtp || trimmedOtp.length !== 6) {
       showToast({ type: 'warning', title: 'Invalid OTP', message: 'Please enter the 6-digit verification code.' });
@@ -109,6 +126,7 @@ export default function ForgotPassword() {
       showToast({ type: 'warning', title: 'Password Mismatch', message: 'The passwords you entered do not match. Please try again.' });
       return;
     }
+    submittingRef.current = true;
     setLoading(true);
     try {
       await authService.resetPassword(phone.trim(), trimmedOtp, newPassword);
@@ -122,8 +140,15 @@ export default function ForgotPassword() {
       // Navigate after a short delay so the toast is visible
       setTimeout(() => router.replace('/(auth)/login' as any), 2000);
     } catch (e: any) {
-      showToast({ type: 'error', title: 'Reset Failed', message: e?.message ?? 'Invalid or expired OTP. Please try again.' });
+      showToast({
+        type: 'error',
+        title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Password reset failed',
+        message: isAuthConnectionError(e)
+          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          : 'The verification code is invalid or expired. Please try again.',
+      });
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
