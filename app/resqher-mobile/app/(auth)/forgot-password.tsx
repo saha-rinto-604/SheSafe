@@ -16,7 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AuthShell from '../../components/auth/AuthShell';
 import { T, R, S } from '../../src/constants/theme';
 import { G } from '../../src/constants/gradients';
-import { authService, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
+import { authService, isAuthConnectionError, SERVER_UNREACHABLE_MESSAGE, warmAuthBackend } from '../../src/services/api';
 import { useToast } from '../../src/components/Toast';
 import PasswordStrength, { isStrongPassword } from '../../src/components/PasswordStrength';
 
@@ -96,7 +96,7 @@ export default function ForgotPassword() {
         type: 'error',
         title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification code not sent',
         message: isAuthConnectionError(e)
-          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          ? SERVER_UNREACHABLE_MESSAGE
           : 'We couldn’t send the verification code. Please try again.',
       });
     } finally {
@@ -144,7 +144,7 @@ export default function ForgotPassword() {
         type: 'error',
         title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Password reset failed',
         message: isAuthConnectionError(e)
-          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          ? SERVER_UNREACHABLE_MESSAGE
           : 'The verification code is invalid or expired. Please try again.',
       });
     } finally {

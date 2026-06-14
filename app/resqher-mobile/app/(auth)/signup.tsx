@@ -19,7 +19,7 @@ import PasswordStrength, { isStrongPassword } from '../../src/components/Passwor
 import SheSafeLogo from '../../src/components/SheSafeLogo';
 import { routeForRoleStatus } from '../../src/constants/routes';
 import SecureTextField from '../../components/auth/SecureTextField';
-import { getApiBaseUrlError, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
+import { getApiBaseUrlError, isAuthConnectionError, SERVER_UNREACHABLE_MESSAGE, warmAuthBackend } from '../../src/services/api';
 
 type Role = UserRole;
 type FormData = {
@@ -266,7 +266,7 @@ export default function Signup() {
     clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
+      showToast({ type: 'error', title: 'Connection unavailable', message: SERVER_UNREACHABLE_MESSAGE });
       return;
     }
     if (!role) {
@@ -315,7 +315,7 @@ export default function Signup() {
           type: 'error',
           title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification code not sent',
           message: isAuthConnectionError(e)
-            ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+            ? SERVER_UNREACHABLE_MESSAGE
             : 'We couldn’t send the verification code. Please try again.',
         });
       }
@@ -330,7 +330,7 @@ export default function Signup() {
     clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
+      showToast({ type: 'error', title: 'Connection unavailable', message: SERVER_UNREACHABLE_MESSAGE });
       return;
     }
     const trimmedOtp = data.otpCode.trim();
@@ -358,7 +358,7 @@ export default function Signup() {
           type: 'error',
           title: isAuthConnectionError(e) ? 'Connection unavailable' : 'Verification failed',
           message: isAuthConnectionError(e)
-            ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+            ? SERVER_UNREACHABLE_MESSAGE
             : 'The verification code is invalid or expired. Please try again.',
         });
       }

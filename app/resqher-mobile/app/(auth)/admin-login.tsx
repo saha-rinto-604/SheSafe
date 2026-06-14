@@ -15,7 +15,7 @@ import { ROLE_DEFAULT_ROUTE } from '../../src/constants/routes';
 import { useToast } from '../../src/components/Toast';
 import SheSafeLogo from '../../src/components/SheSafeLogo';
 import SecureTextField from '../../components/auth/SecureTextField';
-import { getApiBaseUrlError, isAuthConnectionError, warmAuthBackend } from '../../src/services/api';
+import { getApiBaseUrlError, isAuthConnectionError, SERVER_UNREACHABLE_MESSAGE, warmAuthBackend } from '../../src/services/api';
 
 type FormData = { phone: string; password: string };
 
@@ -45,7 +45,7 @@ export default function AdminLogin() {
     clearToast();
     const apiError = getApiBaseUrlError();
     if (apiError) {
-      showToast({ type: 'error', title: 'Connection unavailable', message: 'We couldn’t reach SheSafe servers. Please check your connection and try again.' });
+      showToast({ type: 'error', title: 'Connection unavailable', message: SERVER_UNREACHABLE_MESSAGE });
       return;
     }
     submittingRef.current = true;
@@ -73,7 +73,7 @@ export default function AdminLogin() {
         type: 'error',
         title: connectionIssue ? 'Connection unavailable' : 'Admin sign-in failed',
         message: connectionIssue
-          ? 'We couldn’t reach SheSafe servers. Please check your connection and try again.'
+          ? SERVER_UNREACHABLE_MESSAGE
           : 'Invalid admin credentials.',
       });
     } finally {

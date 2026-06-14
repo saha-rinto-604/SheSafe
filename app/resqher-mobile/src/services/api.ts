@@ -16,6 +16,7 @@ const isDevelopment = process.env.NODE_ENV !== 'production';
 const AUTH_REQUEST_TIMEOUT_MS = 15000;
 const AUTH_WARMUP_TIMEOUT_MS = 5000;
 const AUTH_RETRY_DELAY_MS = 450;
+export const SERVER_UNREACHABLE_MESSAGE = 'Cannot reach ResQher server. Please check your internet connection or server status.';
 let apiBaseUrlError = '';
 
 const canUseWebStorage = () => (
@@ -58,18 +59,53 @@ function normalizeBaseUrl(url: string) {
   return url.replace(/\/+$/, '');
 }
 
+function setApiBaseUrlError(diagnostic: string) {
+  apiBaseUrlError = SERVER_UNREACHABLE_MESSAGE;
+  if (isDevelopment) console.warn(`[api] ${diagnostic}`);
+}
+
+function isPrivateOrLoopbackHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost'
+    || host.endsWith('.localhost')
+    || host === '0.0.0.0'
+    || host === '127.0.0.1'
+    || host === '::1'
+    || host === '10.0.2.2'
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    || /^169\.254\./.test(host);
+}
+
 function resolveApiBaseUrl() {
   const raw = process.env.EXPO_PUBLIC_API_URL?.trim();
   if (!raw) {
-    apiBaseUrlError = 'Missing EXPO_PUBLIC_API_URL. Set the backend URL before signing in.';
-    if (isDevelopment) console.warn(`[api] ${apiBaseUrlError}`);
+    setApiBaseUrlError('Missing EXPO_PUBLIC_API_URL. Set a public HTTPS backend URL before building.');
     return '';
   }
 
   const normalized = normalizeBaseUrl(raw);
   if (!/^https?:\/\//i.test(normalized)) {
-    apiBaseUrlError = 'EXPO_PUBLIC_API_URL must start with http:// or https://.';
-    if (isDevelopment) console.warn(`[api] ${apiBaseUrlError}`);
+    setApiBaseUrlError('EXPO_PUBLIC_API_URL must start with http:// or https://.');
+    return '';
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    setApiBaseUrlError('EXPO_PUBLIC_API_URL is not a valid URL.');
+    return '';
+  }
+
+  if (!isDevelopment && parsed.protocol !== 'https:') {
+    setApiBaseUrlError('Production builds require an HTTPS EXPO_PUBLIC_API_URL.');
+    return '';
+  }
+
+  if (!isDevelopment && isPrivateOrLoopbackHost(parsed.hostname)) {
+    setApiBaseUrlError('Production builds cannot use localhost, emulator, or private-LAN backend URLs.');
     return '';
   }
 
@@ -79,10 +115,10 @@ function resolveApiBaseUrl() {
 
 function toWebSocketBaseUrl(apiBaseUrl: string) {
   if (!apiBaseUrl) return '';
-  if (apiBaseUrl.startsWith('https://')) {
-    return apiBaseUrl.replace(/^https:\/\//, 'wss://');
+  if (/^https:\/\//i.test(apiBaseUrl)) {
+    return apiBaseUrl.replace(/^https:\/\//i, 'wss://');
   }
-  return apiBaseUrl.replace(/^http:\/\//, 'ws://');
+  return apiBaseUrl.replace(/^http:\/\//i, 'ws://');
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
@@ -102,6 +138,7 @@ function assertApiConfigured() {
 }
 
 export function getWebSocketUrl(path: string) {
+  assertApiConfigured();
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${WS_BASE_URL}${normalizedPath}`;
 }
@@ -186,9 +223,15 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (isDevelopment && isAxiosError(error)) {
-      const method = (error.config?.method || 'get').toUpperCase();
-      console.log('[api] error', method, error.config?.url, error.response?.status ?? 'no-response', error.code ?? 'no-code');
+    if (isAxiosError(error)) {
+      const status = error.response?.status;
+      if (isDevelopment) {
+        const method = (error.config?.method || 'get').toUpperCase();
+        console.log('[api] error', method, error.config?.url, status ?? 'no-response', error.code ?? 'no-code');
+      }
+      if (!error.response || error.code === 'ECONNABORTED' || (status && status >= 500)) {
+        error.message = SERVER_UNREACHABLE_MESSAGE;
+      }
     }
     return Promise.reject(error);
   }
@@ -240,13 +283,13 @@ function friendlyError(err: unknown) {
     const status = ax.response?.status;
 
     if (ax.code === 'ECONNABORTED' || /timeout/i.test(ax.message || '')) {
-      return createFriendlyError('Server timed out. Please check backend/tunnel and try again.', 'TIMEOUT', status);
+      return createFriendlyError(SERVER_UNREACHABLE_MESSAGE, 'TIMEOUT', status);
     }
     if (!ax.response) {
-      return createFriendlyError('Cannot reach the server. Check backend URL, internet connection, or restart tunnel.', 'NETWORK_ERROR');
+      return createFriendlyError(SERVER_UNREACHABLE_MESSAGE, 'NETWORK_ERROR');
     }
     if (status && status >= 500) {
-      return createFriendlyError('Server error. Please try again after checking backend logs.', 'SERVER_ERROR', status);
+      return createFriendlyError(SERVER_UNREACHABLE_MESSAGE, 'SERVER_ERROR', status);
     }
 
     const messages = collectBackendMessages(data);
