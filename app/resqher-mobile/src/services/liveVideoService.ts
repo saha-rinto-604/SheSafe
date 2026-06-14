@@ -24,6 +24,18 @@ export type LiveStreamIceConfig = {
   request?: LiveVideoRequest | null;
 };
 
+export type LiveStreamState = {
+  request: LiveVideoRequest | null;
+  sessionId: string | null;
+  incidentId: string;
+  status: string;
+  canRequest: boolean;
+  canRejoin: boolean;
+  canRestart: boolean;
+  viewerRole: 'victim' | 'requester' | 'responder' | string;
+  victimUserId: string;
+};
+
 const mimeByExtension: Record<string, string> = {
   mp4: 'video/mp4',
   m4v: 'video/mp4',
@@ -96,6 +108,7 @@ async function normalizeUploadUri(sourceUri: string) {
 
     if (getUriScheme(normalizedUri) === 'file') {
       const fileInfo = await FileSystem.getInfoAsync(normalizedUri);
+      console.info('[LiveSafetyVideo] evidence file exists', { exists: fileInfo.exists });
       if (!fileInfo.exists) {
         throw createError('Invalid video file.', 400, 'FILE_NOT_FOUND');
       }
@@ -177,6 +190,21 @@ export const liveVideoService = {
     };
   },
 
+  async getLiveStreamState(incidentId: string): Promise<LiveStreamState> {
+    const res = await api.get(`/api/incidents/${incidentId}/live-stream/state`);
+    return {
+      request: normalizeRequest(res.data?.request),
+      sessionId: res.data?.sessionId == null ? null : String(res.data.sessionId),
+      incidentId: String(res.data?.incidentId ?? incidentId),
+      status: String(res.data?.status || 'NONE').toUpperCase(),
+      canRequest: Boolean(res.data?.canRequest),
+      canRejoin: Boolean(res.data?.canRejoin),
+      canRestart: Boolean(res.data?.canRestart),
+      viewerRole: res.data?.viewerRole || 'responder',
+      victimUserId: String(res.data?.victimUserId || ''),
+    };
+  },
+
   async getLiveStreamIceConfig(incidentId: string): Promise<LiveStreamIceConfig> {
     const res = await api.get(`/api/incidents/${incidentId}/live-stream/ice-config`);
     return {
@@ -216,6 +244,7 @@ export const liveVideoService = {
     const fileSizeBytes = fileInfo.exists && 'size' in fileInfo && typeof fileInfo.size === 'number'
       ? fileInfo.size
       : null;
+    console.info('[LiveSafetyVideo] evidence upload started');
     console.info('[LiveSafetyVideo] clip ready for backend upload', {
       fileSizeMb: fileSizeBytes == null ? null : Number((fileSizeBytes / (1024 * 1024)).toFixed(2)),
       uriScheme: getUriScheme(prepared.uri),
@@ -254,6 +283,7 @@ export const liveVideoService = {
         );
       }
 
+      console.info('[LiveSafetyVideo] evidence upload completed');
       return {
         request: normalizeRequest(data?.request),
         message: data?.message ? normalizeMessage(data.message) : null,

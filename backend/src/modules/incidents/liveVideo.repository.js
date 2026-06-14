@@ -131,6 +131,28 @@ async function findLatestActiveForIncident(incidentId) {
   return formatRequest(rows[0]);
 }
 
+async function findLatestForIncident(incidentId) {
+  await expireStaleRequests(incidentId);
+  const rows = await query(
+    `SELECT ivr.*,
+            TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS requester_name,
+            u.username AS requester_username,
+            u.photo_url AS requester_photo_url
+      FROM incident_video_requests ivr
+      JOIN users u ON u.id = ivr.requester_id
+      WHERE ivr.incident_id = ?
+      ORDER BY CASE
+                 WHEN ivr.status IN ('PENDING', 'APPROVED', 'STREAMING', 'RECORDING') THEN 0
+                 ELSE 1
+               END,
+               ivr.updated_at DESC,
+               ivr.id DESC
+      LIMIT 1`,
+    [incidentId]
+  );
+  return formatRequest(rows[0]);
+}
+
 async function findLatestActiveForRequester(incidentId, requesterId) {
   await expireStaleRequests(incidentId);
   const rows = await query(
@@ -404,6 +426,7 @@ module.exports = {
   findAcceptedResponder,
   findLatestActiveForVictim,
   findLatestActiveForIncident,
+  findLatestForIncident,
   findLatestActiveForRequester,
   findLatestUploadableForVictim,
   findLatestRespondableForVictim,

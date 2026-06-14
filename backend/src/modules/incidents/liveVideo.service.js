@@ -10,6 +10,7 @@ const {
   findAcceptedResponder,
   findLatestActiveForVictim,
   findLatestActiveForIncident,
+  findLatestForIncident,
   findLatestUploadableForVictim,
   findLatestRespondableForVictim,
   findRequestById,
@@ -22,6 +23,7 @@ const {
 const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
 const ACTIVE_STATUSES = new Set(['ACTIVE', 'IN_PROGRESS', 'LIVE']);
 const LIVE_STREAM_ACTIVE_STATUSES = new Set(['APPROVED', 'STREAMING']);
+const REQUEST_ACTIVE_STATUSES = new Set(['PENDING', 'APPROVED', 'STREAMING', 'RECORDING']);
 
 function isActiveIncident(incident) {
   return ACTIVE_STATUSES.has(String(incident?.status || '').toUpperCase());
@@ -122,6 +124,29 @@ async function getPendingLiveVideoRequest(userId, incidentId) {
     request: await findLatestActiveForIncident(incidentId),
     role: 'requester',
     autoStartAllowed: false,
+  };
+}
+
+async function getLiveStreamState(userId, incidentId) {
+  const incident = await getActiveIncidentOrThrow(incidentId);
+  const isVictim = Number(incident.user_id) === Number(userId);
+  if (!isVictim) await ensureAcceptedApprovedResponder(incidentId, userId);
+
+  const request = await findLatestForIncident(incidentId);
+  const status = request ? String(request.status || '').toUpperCase() : 'NONE';
+  const hasActiveRequest = REQUEST_ACTIVE_STATUSES.has(status);
+  const isRequester = Boolean(request && String(request.requesterId) === String(userId));
+
+  return {
+    request,
+    sessionId: request?.id || null,
+    incidentId: String(incident.id),
+    status,
+    canRequest: !isVictim && !request,
+    canRejoin: !isVictim && isRequester && status === 'STREAMING',
+    canRestart: !isVictim && Boolean(request) && !hasActiveRequest,
+    viewerRole: isVictim ? 'victim' : isRequester ? 'requester' : 'responder',
+    victimUserId: String(incident.user_id),
   };
 }
 
@@ -462,6 +487,7 @@ async function stopLiveStreamForIncident(incidentId, message = 'Live Safety Vide
 module.exports = {
   requestLiveVideo,
   getPendingLiveVideoRequest,
+  getLiveStreamState,
   respondToLiveVideoRequest,
   uploadLiveVideo,
   getLiveStreamIceConfig,

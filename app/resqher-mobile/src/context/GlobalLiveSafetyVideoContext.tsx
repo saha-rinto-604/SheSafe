@@ -110,7 +110,7 @@ export function GlobalLiveSafetyVideoProvider({ children }: { children: React.Re
   }, [liveVideoEvent, liveVideoRequest, userId]);
 
   const start = useCallback(async () => {
-    if (!request || !incidentId || startingRef.current || AppState.currentState !== 'active') return;
+    if (!request || !incidentId || startingRef.current || evidenceVisible || AppState.currentState !== 'active') return;
     startingRef.current = true;
     try {
       await liveVideoService.respondLiveVideoRequest(incidentId, request.id, 'APPROVED');
@@ -123,7 +123,7 @@ export function GlobalLiveSafetyVideoProvider({ children }: { children: React.Re
     } finally {
       startingRef.current = false;
     }
-  }, [incidentId, refresh, request, showToast]);
+  }, [evidenceVisible, incidentId, refresh, request, showToast]);
 
   const decline = useCallback(async () => {
     if (request && incidentId) await liveVideoService.respondLiveVideoRequest(incidentId, request.id, 'DECLINED').catch(() => undefined);
@@ -131,7 +131,7 @@ export function GlobalLiveSafetyVideoProvider({ children }: { children: React.Re
   }, [closeFlow, incidentId, request]);
 
   useEffect(() => {
-    if (!promptVisible || !autoStart || !request || AppState.currentState !== 'active') return;
+    if (!promptVisible || !autoStart || !request || evidenceVisible || AppState.currentState !== 'active') return;
     const interval = setInterval(() => setCountdown(value => {
       if (value <= 1) {
         clearInterval(interval);
@@ -141,7 +141,7 @@ export function GlobalLiveSafetyVideoProvider({ children }: { children: React.Re
       return value - 1;
     }), 1000);
     return () => clearInterval(interval);
-  }, [autoStart, promptVisible, request, start]);
+  }, [autoStart, evidenceVisible, promptVisible, request, start]);
 
   const stopBackend = useCallback(async () => {
     if (request && incidentId) await liveVideoService.respondLiveVideoRequest(incidentId, request.id, 'STOPPED').catch(() => undefined);
@@ -158,7 +158,12 @@ export function GlobalLiveSafetyVideoProvider({ children }: { children: React.Re
     await stopBackend();
     setBroadcasterVisible(false);
     setControlVisible(false);
-    setTimeout(() => setEvidenceVisible(true), 700);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    if (AppState.currentState !== 'active') {
+      setRequest(null);
+      return;
+    }
+    setEvidenceVisible(true);
   }, [stopBackend]);
 
   const uploadEvidence = useCallback(async (uri: string) => {

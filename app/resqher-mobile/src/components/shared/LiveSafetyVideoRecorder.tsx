@@ -131,10 +131,12 @@ export default function LiveSafetyVideoRecorder({
     setPhase('recording');
     recordingRef.current = true;
     try {
+      console.info('[LiveSafetyVideo] evidence recording started');
       const result = await camera.recordAsync({
         maxDuration: LIVE_VIDEO_CLIP_SECONDS,
         maxFileSize: LIVE_VIDEO_MAX_BYTES,
       });
+      console.info('[LiveSafetyVideo] evidence recording stopped');
       if (result?.uri && !skipRequestedRef.current) {
         await uploadClip(result.uri, number);
       } else if (skipRequestedRef.current) {
@@ -167,6 +169,7 @@ export default function LiveSafetyVideoRecorder({
 
   useEffect(() => {
     if (!visible) return;
+    console.info('[LiveSafetyVideo] evidence recorder opened');
     stopRequestedRef.current = false;
     skipRequestedRef.current = false;
     endingRef.current = false;

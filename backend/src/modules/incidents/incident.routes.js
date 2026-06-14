@@ -43,6 +43,7 @@ router.get('/:id/messages', controller.messages);
 router.post('/:id/messages', requireActiveAccount, controller.sendMessage);
 router.post('/:incidentId/live-video/request', requireActiveAccount, liveVideoController.request);
 router.get('/:incidentId/live-video/pending', liveVideoController.pending);
+router.get('/:incidentId/live-stream/state', liveVideoController.state);
 router.get('/:incidentId/live-stream/ice-config', liveVideoController.iceConfig);
 router.post('/:incidentId/live-video/respond', requireActiveAccount, liveVideoController.respond);
 router.post('/:incidentId/live-video/upload', requireActiveAccount, handleLiveVideoUpload, liveVideoController.upload);

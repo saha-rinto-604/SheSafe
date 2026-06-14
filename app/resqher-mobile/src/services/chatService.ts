@@ -1,5 +1,13 @@
-import api from './api';
+import * as FileSystem from 'expo-file-system/legacy';
+
+import api, {
+  API_BASE_URL,
+  getAccessToken,
+  NGROK_SKIP_BROWSER_WARNING_HEADER,
+} from './api';
 import type { Message, Incident, Participant } from '../types/chat';
+
+type ChatImageUploadError = Error & { status?: number; code?: string };
 
 function imageMimeType(filename: string) {
   const ext = filename.split('.').pop()?.toLowerCase();
@@ -8,6 +16,20 @@ function imageMimeType(filename: string) {
   if (ext === 'heic') return 'image/heic';
   if (ext === 'heif') return 'image/heif';
   return 'image/jpeg';
+}
+
+function createChatImageUploadError(message: string, status?: number, code?: string): ChatImageUploadError {
+  const error = new Error(message) as ChatImageUploadError;
+  error.status = status;
+  error.code = code;
+  return error;
+}
+
+function backendMessage(data: any) {
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof data?.error?.message === 'string') return data.error.message;
+  if (typeof data?.error === 'string') return data.error;
+  return '';
 }
 
 function toMessage(raw: any): Message {
@@ -81,17 +103,64 @@ export const chatService = {
   },
 
   async sendImage(incidentId: string, localUri: string): Promise<Message> {
-    const formData = new FormData();
+    const endpoint = `/api/chat/${incidentId}/image`;
     const filename = localUri.split('/').pop()?.split('?')[0] || `chat-${Date.now()}.jpg`;
-    formData.append('image', {
-      uri: localUri,
-      name: filename,
-      type: imageMimeType(filename),
-    } as any);
-    const res = await api.post(`/api/chat/${incidentId}/image`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return toMessage(res.data.message);
+    const mimeType = imageMimeType(filename);
+    const token = await getAccessToken();
+
+    if (!API_BASE_URL) {
+      throw createChatImageUploadError('Chat image upload could not reach the server.', undefined, 'API_CONFIG_ERROR');
+    }
+    if (!token) {
+      throw createChatImageUploadError('Your session expired. Please log in again.', 401, 'NO_ACCESS_TOKEN');
+    }
+
+    try {
+      const response = await FileSystem.uploadAsync(`${API_BASE_URL}${endpoint}`, localUri, {
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'image',
+        mimeType,
+        httpMethod: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          [NGROK_SKIP_BROWSER_WARNING_HEADER]: 'true',
+        },
+      });
+
+      let data: any = {};
+      try {
+        data = response.body ? JSON.parse(response.body) : {};
+      } catch {
+        data = {};
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        throw createChatImageUploadError(
+          backendMessage(data) || 'Unable to send chat image.',
+          response.status,
+          'UPLOAD_REJECTED',
+        );
+      }
+      if (!data?.message) {
+        throw createChatImageUploadError('Chat image upload returned an invalid response.', response.status, 'INVALID_RESPONSE');
+      }
+
+      return toMessage(data.message);
+    } catch (error) {
+      const uploadError = error as ChatImageUploadError;
+      console.warn('[Chat] Image upload failed', {
+        endpoint,
+        status: uploadError.status ?? 'no-response',
+        code: uploadError.code ?? 'UPLOAD_NETWORK_ERROR',
+        message: uploadError.message || 'Unknown upload error',
+      });
+      if (uploadError.status || uploadError.code) throw uploadError;
+      throw createChatImageUploadError(
+        'Chat image upload could not reach the server. Please check your connection and try again.',
+        undefined,
+        'UPLOAD_NETWORK_ERROR',
+      );
+    }
   },
 
   async joinIncident(incidentId: string): Promise<Participant[]> {

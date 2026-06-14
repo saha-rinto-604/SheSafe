@@ -402,6 +402,9 @@ export function LiveSafetyWebRTCViewer({
   const createPeer = useCallback(async () => {
     setState('connecting');
     setMessage('Connecting to Live Safety Video...');
+    closePeer(peerRef.current);
+    peerRef.current = null;
+    setRemoteStreamUrl('');
     const iceConfig = await liveVideoService.getLiveStreamIceConfig(incidentId);
     logIceCounts(iceConfig);
     iceConfigRef.current = iceConfig;

@@ -105,6 +105,15 @@ async function pending(req, res, next) {
   }
 }
 
+async function state(req, res, next) {
+  try {
+    const result = await liveVideoService.getLiveStreamState(req.user.id, req.params.incidentId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function respond(req, res, next) {
   try {
     const result = await liveVideoService.respondToLiveVideoRequest(req.user.id, req.params.incidentId, req.body);
@@ -193,6 +202,7 @@ async function iceConfig(req, res, next) {
 module.exports = {
   request,
   pending,
+  state,
   respond,
   upload,
   iceConfig,

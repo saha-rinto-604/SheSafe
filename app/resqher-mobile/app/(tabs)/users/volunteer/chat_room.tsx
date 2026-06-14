@@ -553,6 +553,7 @@ export default function ChatRoom() {
         messages,
         participants,
         liveLocation,
+        isConnected: isChatSocketConnected,
         sendMessage,
         sendImage,
         sendLocationUpdate,
@@ -568,7 +569,8 @@ export default function ChatRoom() {
     const [incident, setIncident] = useState<Incident | null>(null);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [isRequestingLiveVideo, setIsRequestingLiveVideo] = useState(false);
-    const [liveVideoStatus, setLiveVideoStatus] = useState<'idle' | 'waiting' | 'connecting' | 'live' | 'recording' | 'uploading' | 'latest' | 'ended' | 'error'>('idle');
+    const [liveVideoStatus, setLiveVideoStatus] = useState<'idle' | 'waiting' | 'connecting' | 'live' | 'rejoin' | 'recording' | 'uploading' | 'latest' | 'ended' | 'error'>('idle');
+    const [liveStreamAction, setLiveStreamAction] = useState<'request' | 'rejoin' | 'restart' | null>(null);
     const [isLiveStreamViewerVisible, setLiveStreamViewerVisible] = useState(false);
     const [videoPlayer, setVideoPlayer] = useState<{ uri: string; title: string } | null>(null);
     const [victimLiveVideoRequest, setVictimLiveVideoRequest] = useState<LiveVideoRequest | null>(null);
@@ -826,14 +828,20 @@ export default function ChatRoom() {
         && !isReadOnly
         && isAcceptedResponderForIncident;
     const isGloballyManagedVictimVideo = isMyEmergency && managedIncidentId === liveIncidentId;
-    const isVolunteerLiveVideoSessionActive = ['waiting', 'connecting', 'live', 'recording', 'uploading', 'latest'].includes(liveVideoStatus);
-    const canStartLiveVideoRequest = canRequestLiveVideo && !isVolunteerLiveVideoSessionActive;
+    const canStartLiveVideoRequest = canRequestLiveVideo && liveStreamAction !== null;
+    const liveVideoRequestLabel = liveStreamAction === 'rejoin'
+        ? liveVideoStatus === 'error' ? 'Retry Connection' : 'Rejoin Live Stream'
+        : liveStreamAction === 'restart'
+            ? 'Restart Live Stream'
+            : 'Request Live Safety Video';
     const liveVideoStatusText = liveVideoStatus === 'waiting'
-        ? 'Waiting for victim approval'
+        ? 'Waiting for victim...'
         : liveVideoStatus === 'connecting'
             ? 'Connecting to Live Safety Video...'
             : liveVideoStatus === 'live'
                 ? 'Live Safety Video is active.'
+        : liveVideoStatus === 'rejoin'
+            ? 'The victim is still streaming. You can rejoin without requesting again.'
         : liveVideoStatus === 'recording'
             ? 'Live Safety Video is recording evidence. The first clip will appear soon.'
             : liveVideoStatus === 'uploading'
@@ -1363,44 +1371,107 @@ export default function ChatRoom() {
 
     const handleRequestLiveVideo = useCallback(async () => {
         if (!canStartLiveVideoRequest || isRequestingLiveVideo) return;
+        if (liveStreamAction === 'rejoin') {
+            setLiveVideoStatus('connecting');
+            setLiveStreamAction(null);
+            setLiveStreamViewerVisible(true);
+            return;
+        }
         setIsRequestingLiveVideo(true);
         try {
             const result = await liveVideoService.requestLiveVideo(liveIncidentId);
             const status = String(result.request?.status || '').toUpperCase();
             if (status === 'STREAMING') {
                 setLiveVideoStatus('connecting');
+                setLiveStreamAction(null);
                 setLiveStreamViewerVisible(true);
             } else if (status === 'APPROVED') {
                 setLiveVideoStatus('connecting');
+                setLiveStreamAction(null);
             } else if (status === 'RECORDING') {
                 setLiveVideoStatus('recording');
+                setLiveStreamAction(null);
             } else {
                 setLiveVideoStatus('waiting');
+                setLiveStreamAction(null);
             }
         } catch {
             setLiveVideoStatus('error');
+            setLiveStreamAction(liveStreamAction === 'restart' ? 'restart' : 'request');
         } finally {
             setIsRequestingLiveVideo(false);
         }
-    }, [canStartLiveVideoRequest, isRequestingLiveVideo, liveIncidentId]);
+    }, [canStartLiveVideoRequest, isRequestingLiveVideo, liveIncidentId, liveStreamAction]);
+
+    const refreshLiveStreamState = useCallback(async () => {
+        if (!canRequestLiveVideo) return;
+        try {
+            const state = await liveVideoService.getLiveStreamState(liveIncidentId);
+            if (state.canRejoin) {
+                setLiveVideoStatus('rejoin');
+                setLiveStreamAction('rejoin');
+                return;
+            }
+            if (state.status === 'PENDING') {
+                setLiveVideoStatus('waiting');
+                setLiveStreamAction(null);
+                return;
+            }
+            if (state.status === 'APPROVED') {
+                setLiveVideoStatus('connecting');
+                setLiveStreamAction(null);
+                return;
+            }
+            if (state.status === 'RECORDING') {
+                setLiveVideoStatus('recording');
+                setLiveStreamAction(null);
+                return;
+            }
+            if (state.canRestart) {
+                setLiveVideoStatus('ended');
+                setLiveStreamAction('restart');
+                return;
+            }
+            setLiveVideoStatus('idle');
+            setLiveStreamAction(state.canRequest ? 'request' : null);
+        } catch {
+            setLiveStreamAction(null);
+        }
+    }, [canRequestLiveVideo, liveIncidentId]);
 
     useEffect(() => {
-        if (!canRequestLiveVideo) return;
+        if (!canRequestLiveVideo || !isChatFocused) return;
+        const timer = setTimeout(() => void refreshLiveStreamState(), 0);
+        return () => clearTimeout(timer);
+    }, [canRequestLiveVideo, isChatFocused, isChatSocketConnected, refreshLiveStreamState]);
+
+    useEffect(() => {
+        if (!canRequestLiveVideo || !isLiveStreamViewerVisible) return;
         let cancelled = false;
-        liveVideoService.getPendingLiveVideoRequest(liveIncidentId)
-            .then(({ request }) => {
-                if (cancelled) return;
-                const status = String(request?.status || '').toUpperCase();
-                if (status === 'PENDING') setLiveVideoStatus('waiting');
-                else if (status === 'APPROVED') setLiveVideoStatus('connecting');
-                else if (status === 'STREAMING') {
-                    setLiveVideoStatus('connecting');
-                    setLiveStreamViewerVisible(true);
-                } else if (status === 'RECORDING') setLiveVideoStatus('recording');
+        liveVideoService.getLiveStreamState(liveIncidentId)
+            .then(state => {
+                if (cancelled || state.canRejoin) return;
+                setLiveStreamViewerVisible(false);
+                void refreshLiveStreamState();
             })
-            .catch(() => undefined);
+            .catch(() => {
+                if (cancelled) return;
+                setLiveStreamViewerVisible(false);
+                void refreshLiveStreamState();
+            });
         return () => { cancelled = true; };
-    }, [canRequestLiveVideo, liveIncidentId]);
+    }, [canRequestLiveVideo, isLiveStreamViewerVisible, liveIncidentId, refreshLiveStreamState]);
+
+    useEffect(() => {
+        if (!canRequestLiveVideo) {
+            const timer = setTimeout(() => setLiveStreamAction(null), 0);
+            return () => clearTimeout(timer);
+        }
+        const subscription = AppState.addEventListener('change', state => {
+            if (state === 'active' && isChatFocused) void refreshLiveStreamState();
+        });
+        return () => subscription.remove();
+    }, [canRequestLiveVideo, isChatFocused, refreshLiveStreamState]);
 
     const showVictimLiveVideoRequest = useCallback((request: LiveVideoRequest | null, autoStartAllowed: boolean) => {
         if (!isMyEmergency || !request || !isLive || isReadOnly || !isBackendIncidentId || isGloballyManagedVictimVideo) return;
@@ -1420,7 +1491,7 @@ export default function ChatRoom() {
     }, [clearLiveVideoEvent, clearLiveVideoRequest]);
 
     const startVictimLiveVideoRecording = useCallback(async () => {
-        if (!victimLiveVideoRequest || !isMyEmergency || !isLive || isReadOnly || isGloballyManagedVictimVideo || isStartingVictimLiveVideoRef.current) return;
+        if (!victimLiveVideoRequest || !isMyEmergency || !isLive || isReadOnly || isGloballyManagedVictimVideo || isVictimLiveVideoRecorderVisible || isStartingVictimLiveVideoRef.current) return;
         if (AppState.currentState !== 'active' || !isChatFocused) return;
         isStartingVictimLiveVideoRef.current = true;
         try {
@@ -1432,7 +1503,7 @@ export default function ChatRoom() {
         } finally {
             isStartingVictimLiveVideoRef.current = false;
         }
-    }, [isChatFocused, isGloballyManagedVictimVideo, isLive, isMyEmergency, isReadOnly, liveIncidentId, victimLiveVideoRequest]);
+    }, [isChatFocused, isGloballyManagedVictimVideo, isLive, isMyEmergency, isReadOnly, isVictimLiveVideoRecorderVisible, liveIncidentId, victimLiveVideoRequest]);
 
     const declineVictimLiveVideoRequest = useCallback(async () => {
         const request = victimLiveVideoRequest;
@@ -1469,10 +1540,32 @@ export default function ChatRoom() {
         dismissVictimLiveVideoRequest();
     }, [dismissVictimLiveVideoRequest]);
 
-    const handleVictimLiveStreamFallbackEvidence = useCallback(() => {
+    const handleVictimStopStreaming = useCallback(async () => {
+        const request = victimLiveVideoRequest;
+        if (request && isMyEmergency) {
+            await liveVideoService.respondLiveVideoRequest(liveIncidentId, request.id, 'STOPPED').catch(() => undefined);
+        }
         setVictimLiveStreamBroadcasterVisible(false);
+        dismissVictimLiveVideoRequest();
+    }, [dismissVictimLiveVideoRequest, isMyEmergency, liveIncidentId, victimLiveVideoRequest]);
+
+    const handleVictimStopAndSaveEvidence = useCallback(async () => {
+        const request = victimLiveVideoRequest;
+        if (request && isMyEmergency) {
+            await liveVideoService.respondLiveVideoRequest(liveIncidentId, request.id, 'STOPPED').catch(() => undefined);
+        }
+        setVictimLiveStreamBroadcasterVisible(false);
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        if (AppState.currentState !== 'active' || !isChatFocused) return;
         setVictimLiveVideoRecorderVisible(true);
-    }, []);
+    }, [isChatFocused, isMyEmergency, liveIncidentId, victimLiveVideoRequest]);
+
+    const handleVictimLiveStreamFallbackEvidence = useCallback(async () => {
+        setVictimLiveStreamBroadcasterVisible(false);
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        if (AppState.currentState !== 'active' || !isChatFocused) return;
+        setVictimLiveVideoRecorderVisible(true);
+    }, [isChatFocused]);
 
     useEffect(() => {
         const subscription = AppState.addEventListener('change', setVictimLiveVideoAppState);
@@ -1536,16 +1629,19 @@ export default function ChatRoom() {
         const eventTimer = setTimeout(() => {
             if (!isMyEmergency && (liveVideoEvent?.type === 'declined' || liveVideoEvent?.type === 'stopped' || liveVideoEvent?.type === 'completed')) {
                 setLiveVideoStatus('ended');
+                setLiveStreamAction('restart');
                 setLiveStreamViewerVisible(false);
             }
             if (!isMyEmergency && (liveVideoEvent?.type === 'approved' || liveVideoEvent?.type === 'recording')) {
                 setLiveVideoStatus(liveVideoEvent?.type === 'approved' ? 'connecting' : 'recording');
+                setLiveStreamAction(null);
             }
             if (!isMyEmergency && liveVideoEvent?.type === 'uploading') {
                 setLiveVideoStatus('uploading');
             }
             if (!isMyEmergency && liveVideoEvent?.type === 'clip') {
                 setLiveVideoStatus('latest');
+                setLiveStreamAction('restart');
             }
         }, 0);
         return () => clearTimeout(eventTimer);
@@ -1556,27 +1652,32 @@ export default function ChatRoom() {
         const timer = setTimeout(() => {
             if (liveStreamEvent.type === 'live-stream:approved') {
                 setLiveVideoStatus('connecting');
+                setLiveStreamAction(null);
             }
             if (liveStreamEvent.type === 'live-stream:start') {
                 setLiveVideoStatus('connecting');
+                setLiveStreamAction(null);
                 setLiveStreamViewerVisible(true);
             }
             if (liveStreamEvent.type === 'live-stream:offer') {
                 setLiveVideoStatus('live');
+                setLiveStreamAction(null);
             }
             if (liveStreamEvent.type === 'live-stream:declined' || liveStreamEvent.type === 'live-stream:stop') {
                 setLiveVideoStatus('ended');
+                setLiveStreamAction('restart');
                 setLiveStreamViewerVisible(false);
             }
             if (liveStreamEvent.type === 'live-stream:error') {
                 setLiveVideoStatus('error');
+                setLiveStreamAction('rejoin');
                 setLiveStreamViewerVisible(false);
             }
             if (liveStreamEvent.type === 'live-stream:state') {
                 const status = String(liveStreamEvent.payload?.request?.status || '').toUpperCase();
                 if (status === 'STREAMING') {
-                    setLiveVideoStatus('connecting');
-                    setLiveStreamViewerVisible(true);
+                    setLiveVideoStatus('rejoin');
+                    setLiveStreamAction('rejoin');
                 }
             }
         }, 0);
@@ -1739,7 +1840,7 @@ export default function ChatRoom() {
                             onImagePicked={handleSendPhoto}
                             isUploadingImage={isUploadingImage}
                             canRequestLiveVideo={canStartLiveVideoRequest}
-                            liveVideoRequestLabel={liveVideoStatus === 'ended' || liveVideoStatus === 'error' ? 'Restart Live Stream' : 'Request Live Safety Video'}
+                            liveVideoRequestLabel={liveVideoRequestLabel}
                             onRequestLiveVideo={handleRequestLiveVideo}
                             isRequestingLiveVideo={isRequestingLiveVideo}
                         />
@@ -1785,7 +1886,12 @@ export default function ChatRoom() {
                     incidentLabel={`Incident #${liveIncidentId}`}
                     liveStreamEvent={liveStreamEvent}
                     sendSignal={sendLiveStreamSignal}
-                    onClose={() => setLiveStreamViewerVisible(false)}
+                    onClose={() => {
+                        setLiveStreamViewerVisible(false);
+                        setLiveVideoStatus('rejoin');
+                        setLiveStreamAction('rejoin');
+                        void refreshLiveStreamState();
+                    }}
                 />
 
                 <LiveSafetyWebRTCBroadcaster
@@ -1797,6 +1903,8 @@ export default function ChatRoom() {
                     sendSignal={sendLiveStreamSignal}
                     onClose={handleVictimLiveStreamClose}
                     onFallbackEvidence={handleVictimLiveStreamFallbackEvidence}
+                    onStopStreaming={handleVictimStopStreaming}
+                    onStopAndSaveEvidence={handleVictimStopAndSaveEvidence}
                 />
 
                 <LiveSafetyVideoRecorder
